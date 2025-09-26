@@ -1,0 +1,380 @@
+/* Dracula Theme Colors */
+:root {
+  --background: #282a36;
+  --current-line: #44475a;
+  --foreground: #f8f8f2;
+  --comment: #6272a4;
+  --cyan: #8be9fd;
+  --green: #50fa7b;
+  --orange: #ffb86c;
+  --pink: #ff79c6;
+  --purple: #bd93f9;
+  --red: #ff5555;
+  --yellow: #f1fa8c;
+  --selection: #44475a;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  line-height: 1.6;
+  font-size: 14px;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+header {
+  background-color: var(--current-line);
+  padding: 20px 0;
+  margin-bottom: 30px;
+  border-bottom: 2px solid var(--purple);
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+h1 {
+  color: var(--purple);
+  font-size: 2.5em;
+  font-weight: bold;
+}
+
+.subtitle {
+  color: var(--comment);
+  font-size: 1.2em;
+  margin-top: 5px;
+}
+
+nav ul {
+  list-style: none;
+  display: flex;
+  gap: 20px;
+}
+
+nav a {
+  color: var(--cyan);
+  text-decoration: none;
+  padding: 10px 15px;
+  border-radius: 5px;
+  transition: background-color 0.3s ease;
+}
+
+nav a:hover {
+  background-color: var(--selection);
+  color: var(--green);
+}
+
+.search-container {
+  margin: 30px 0;
+  text-align: center;
+}
+
+.search-box {
+  background-color: var(--current-line);
+  border: 2px solid var(--comment);
+  color: var(--foreground);
+  padding: 15px 20px;
+  font-size: 16px;
+  border-radius: 10px;
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto;
+  display: block;
+}
+
+.search-box:focus {
+  outline: none;
+  border-color: var(--purple);
+  box-shadow: 0 0 10px rgba(189, 147, 249, 0.3);
+}
+
+.countries-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 20px;
+  margin-top: 30px;
+}
+
+.country-card {
+  background-color: var(--current-line);
+  border: 2px solid var(--comment);
+  border-radius: 10px;
+  padding: 20px;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.country-card:hover {
+  border-color: var(--purple);
+  transform: translateY(-5px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+}
+
+.country-name {
+  color: var(--green);
+  font-size: 1.4em;
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
+.country-code {
+  color: var(--orange);
+  font-size: 1.1em;
+  font-weight: bold;
+  display: inline-block;
+  background-color: var(--background);
+  padding: 5px 10px;
+  border-radius: 5px;
+  margin-bottom: 10px;
+}
+
+.country-capital {
+  color: var(--cyan);
+  margin-bottom: 10px;
+}
+
+.country-coords {
+  color: var(--comment);
+  font-size: 0.9em;
+  margin-bottom: 10px;
+}
+
+.country-timezones {
+  color: var(--yellow);
+  font-size: 0.9em;
+}
+
+.timezone-count {
+  color: var(--pink);
+  font-weight: bold;
+}
+
+.country-detail {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.country-header {
+  text-align: center;
+  margin-bottom: 40px;
+  padding: 30px;
+  background-color: var(--current-line);
+  border-radius: 15px;
+  border: 2px solid var(--purple);
+}
+
+.country-title {
+  color: var(--green);
+  font-size: 3em;
+  margin-bottom: 10px;
+}
+
+.country-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 20px;
+  margin-bottom: 30px;
+}
+
+.info-section {
+  background-color: var(--current-line);
+  padding: 20px;
+  border-radius: 10px;
+  border: 2px solid var(--comment);
+}
+
+.info-title {
+  color: var(--purple);
+  font-size: 1.3em;
+  margin-bottom: 15px;
+  border-bottom: 1px solid var(--comment);
+  padding-bottom: 5px;
+}
+
+.info-content {
+  color: var(--foreground);
+}
+
+.timezone-list {
+  list-style: none;
+}
+
+.timezone-list li {
+  background-color: var(--background);
+  padding: 8px 12px;
+  margin: 5px 0;
+  border-radius: 5px;
+  color: var(--yellow);
+  border-left: 3px solid var(--pink);
+}
+
+.btn {
+  background-color: var(--purple);
+  color: var(--background);
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  text-decoration: none;
+  display: inline-block;
+  font-weight: bold;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background-color: var(--pink);
+  transform: translateY(-2px);
+}
+
+.btn-secondary {
+  background-color: var(--cyan);
+  color: var(--background);
+}
+
+.btn-secondary:hover {
+  background-color: var(--green);
+}
+
+.error-page {
+  text-align: center;
+  padding: 60px 20px;
+}
+
+.error-code {
+  font-size: 6em;
+  color: var(--red);
+  font-weight: bold;
+  margin-bottom: 20px;
+}
+
+.error-message {
+  font-size: 1.5em;
+  color: var(--comment);
+  margin-bottom: 30px;
+}
+
+.api-info {
+  background-color: var(--current-line);
+  padding: 30px;
+  border-radius: 15px;
+  border: 2px solid var(--cyan);
+  margin-bottom: 30px;
+}
+
+.api-title {
+  color: var(--cyan);
+  font-size: 1.8em;
+  margin-bottom: 15px;
+}
+
+.api-description {
+  color: var(--foreground);
+  margin-bottom: 20px;
+  line-height: 1.8;
+}
+
+.api-endpoints {
+  background-color: var(--background);
+  padding: 20px;
+  border-radius: 10px;
+  margin-top: 20px;
+}
+
+.endpoint {
+  display: flex;
+  align-items: center;
+  margin: 10px 0;
+  padding: 10px;
+  background-color: var(--current-line);
+  border-radius: 5px;
+}
+
+.method {
+  background-color: var(--green);
+  color: var(--background);
+  padding: 5px 10px;
+  border-radius: 3px;
+  font-weight: bold;
+  margin-right: 15px;
+  min-width: 60px;
+  text-align: center;
+}
+
+.path {
+  color: var(--orange);
+  font-family: monospace;
+  margin-right: 15px;
+}
+
+.description {
+  color: var(--comment);
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px;
+  margin: 30px 0;
+}
+
+.stat-card {
+  background-color: var(--current-line);
+  padding: 20px;
+  border-radius: 10px;
+  text-align: center;
+  border: 2px solid var(--comment);
+}
+
+.stat-number {
+  font-size: 2.5em;
+  color: var(--purple);
+  font-weight: bold;
+  display: block;
+}
+
+.stat-label {
+  color: var(--comment);
+  margin-top: 5px;
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 10px;
+  }
+  
+  .header-content {
+    flex-direction: column;
+    gap: 15px;
+  }
+  
+  .countries-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .country-title {
+    font-size: 2em;
+  }
+  
+  .stats {
+    grid-template-columns: 1fr;
+  }
+  
+  nav ul {
+    flex-direction: column;
+    text-align: center;
+  }
+}

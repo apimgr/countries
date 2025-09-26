@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/css/style.css">
+    <meta name="description" content="Find your nearest country using geolocation">
+    <meta name="keywords" content="location, geolocation, nearest country, coordinates">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div>
+                    <h1>🌍 Countries API</h1>
+                    <div class="subtitle">Comprehensive country data at your fingertips</div>
+                </div>
+                <nav>
+                    <ul>
+                        <li><a href="/">🏠 Home</a></li>
+                        <li><a href="/docs">📚 API Docs</a></li>
+                        <li><a href="/api/v1/countries">🔗 API</a></li>
+                        <li><a href="/location" style="color: var(--green);">📍 Location</a></li>
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="api-info">
+            <h2 class="api-title">📍 Find Your Nearest Country</h2>
+            <p class="api-description">
+                Discover which country is closest to your current location using GPS coordinates. 
+                We'll calculate the distance to all countries and show you the nearest one.
+            </p>
+            <div style="background-color: var(--current-line); border-left: 4px solid var(--yellow); padding: 15px; margin: 20px 0; border-radius: 5px;">
+                <strong style="color: var(--yellow);">📍 Location Requirements:</strong><br>
+                <span style="color: var(--comment);">
+                    • Geolocation requires HTTPS in production (localhost works for testing)<br>
+                    • Allow location permissions when prompted<br>
+                    • Use "Try Sample Location" to test without GPS
+                </span>
+            </div>
+        </div>
+
+        <div class="location-controls" style="text-align: center; margin: 40px 0;">
+            <button id="getLocationBtn" class="btn" style="font-size: 1.1em; padding: 15px 30px;">
+                🎯 Get My Location
+            </button>
+            <button id="manualLocationBtn" class="btn btn-secondary" style="font-size: 1.1em; padding: 15px 30px; margin-left: 15px;">
+                📝 Enter Coordinates
+            </button>
+            <button id="testLocationBtn" class="btn" style="background-color: var(--orange); font-size: 1.1em; padding: 15px 30px; margin-left: 15px;">
+                🧪 Try Sample Location
+            </button>
+        </div>
+
+        <div id="loadingIndicator" style="display: none; text-align: center; margin: 30px 0;">
+            <div style="color: var(--purple); font-size: 1.5em; animation: pulse 2s infinite;">
+                🌍 Finding your nearest country...
+            </div>
+        </div>
+
+        <div id="errorMessage" style="display: none; background-color: var(--current-line); border: 2px solid var(--red); border-radius: 10px; padding: 20px; margin: 20px 0; text-align: center;">
+            <div style="color: var(--red); font-size: 1.2em; margin-bottom: 10px;">⚠️ Error</div>
+            <div id="errorText" style="color: var(--foreground);"></div>
+        </div>
+
+        <div id="manualInputForm" style="display: none; background-color: var(--current-line); border-radius: 15px; padding: 30px; margin: 30px 0;">
+            <h3 style="color: var(--purple); margin-bottom: 20px; text-align: center;">🗺️ Enter Coordinates</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 500px; margin: 0 auto;">
+                <div>
+                    <label for="latInput" style="display: block; color: var(--cyan); margin-bottom: 5px;">Latitude:</label>
+                    <input type="number" id="latInput" step="any" min="-90" max="90" placeholder="e.g., 40.7128" 
+                           class="search-box" style="width: 100%; margin: 0;">
+                </div>
+                <div>
+                    <label for="lngInput" style="display: block; color: var(--cyan); margin-bottom: 5px;">Longitude:</label>
+                    <input type="number" id="lngInput" step="any" min="-180" max="180" placeholder="e.g., -74.0060" 
+                           class="search-box" style="width: 100%; margin: 0;">
+                </div>
+            </div>
+            <div style="text-align: center; margin-top: 20px;">
+                <button id="findByCoordinatesBtn" class="btn">🔍 Find Nearest Country</button>
+                <button id="cancelManualBtn" class="btn btn-secondary" style="margin-left: 15px;">❌ Cancel</button>
+            </div>
+            <div style="margin-top: 15px; font-size: 0.9em; color: var(--comment); text-align: center;">
+                💡 Examples: New York (40.7128, -74.0060), London (51.5074, -0.1278), Tokyo (35.6762, 139.6503)
+            </div>
+        </div>
+
+        <div id="locationResult" style="display: none;">
+            <div class="country-detail">
+                <div class="country-header">
+                    <div class="country-title" id="resultCountryName"></div>
+                    <div class="country-code" style="font-size: 1.5em; margin-top: 10px;" id="resultCountryCode"></div>
+                </div>
+
+                <div class="country-info-grid">
+                    <div class="info-section">
+                        <h3 class="info-title">📍 Your Location</h3>
+                        <div class="info-content">
+                            <strong>Coordinates:</strong><br>
+                            <span id="yourCoordinates"></span><br><br>
+                            <strong>Distance to Country:</strong><br>
+                            <span id="distanceInfo" style="color: var(--green); font-size: 1.2em; font-weight: bold;"></span>
+                        </div>
+                    </div>
+
+                    <div class="info-section">
+                        <h3 class="info-title">🏛️ Country Information</h3>
+                        <div class="info-content">
+                            <strong>Capital:</strong><br>
+                            <span id="resultCapital"></span><br><br>
+                            <strong>Country Coordinates:</strong><br>
+                            <span id="countryCoordinates"></span>
+                        </div>
+                    </div>
+
+                    <div class="info-section">
+                        <h3 class="info-title">⏰ Timezones</h3>
+                        <div class="info-content">
+                            <ul id="resultTimezones" class="timezone-list"></ul>
+                        </div>
+                    </div>
+
+                    <div class="info-section">
+                        <h3 class="info-title">🔗 Actions</h3>
+                        <div class="info-content">
+                            <a id="viewCountryBtn" href="#" class="btn" style="display: block; margin-bottom: 10px;">
+                                🔍 View Full Country Details
+                            </a>
+                            <a id="mapLinkBtn" href="#" target="_blank" class="btn btn-secondary" style="display: block;">
+                                🗺️ View on Google Maps
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="text-align: center; margin-top: 30px;">
+                    <button id="findAgainBtn" class="btn">🔄 Find Another Location</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="api-info" style="margin-top: 40px;">
+            <h3 class="api-title">🛠️ API Usage</h3>
+            <p class="api-description">
+                You can also use our API directly to find the nearest country:
+            </p>
+            
+            <div class="api-endpoints">
+                <div class="endpoint">
+                    <span class="method">GET</span>
+                    <span class="path">/api/v1/coordinates?longitude=X&latitude=Y</span>
+                    <span class="description">Find nearest country with query parameters</span>
+                </div>
+                
+                <div class="endpoint">
+                    <span class="method">POST</span>
+                    <span class="path">/api/v1/coordinates</span>
+                    <span class="description">Find nearest country with JSON body</span>
+                </div>
+
+                <div class="endpoint">
+                    <span class="method">GET</span>
+                    <span class="path">/api/data</span>
+                    <span class="description">Get raw countries JSON data</span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer style="margin-top: 60px; text-align: center; padding: 20px; color: var(--comment); border-top: 1px solid var(--current-line);">
+        <p>Countries API v1.0.0 | Built with Express.js and EJS | Dracula Theme</p>
+    </footer>
+
+    <script src="/js/main.js"></script>
+    <script src="/js/location.js"></script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  countries-api:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - HOST=0.0.0.0
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - countries-network
+
+  # Development version with volume mounting for hot reload
+  countries-api-dev:
+    build: .
+    ports:
+      - "3002:3001"
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: ["npm", "run", "dev"]
+    restart: unless-stopped
+    profiles:
+      - dev
+    networks:
+      - countries-network
+
+networks:
+  countries-network:
+    driver: bridge
+
+# Example for running with external monitoring
+volumes:
+  countries-data:

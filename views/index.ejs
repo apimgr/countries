@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/css/style.css">
+    <meta name="description" content="Countries API - Access comprehensive country data including timezones, coordinates, and capitals">
+    <meta name="keywords" content="countries, api, timezone, coordinates, capitals, rest api">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div>
+                    <h1>🌍 Countries API</h1>
+                    <div class="subtitle">Comprehensive country data at your fingertips</div>
+                </div>
+                <nav>
+                    <ul>
+                        <li><a href="/">🏠 Home</a></li>
+                        <li><a href="/docs">📚 API Docs</a></li>
+                        <li><a href="/api/v1/countries">🔗 API</a></li>
+                        <li><a href="/location">📍 Location</a></li>
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="api-info">
+    <h2 class="api-title">🚀 Welcome to Countries API</h2>
+    <p class="api-description">
+        A comprehensive REST API providing detailed information about countries worldwide. 
+        Access data including country names, ISO codes, capitals, coordinates, and timezones for all 249 countries and territories.
+    </p>
+    
+    <div class="api-endpoints">
+        <h3 style="color: var(--purple); margin-bottom: 15px;">📋 Available Endpoints</h3>
+        
+        <div class="endpoint">
+            <span class="method">GET</span>
+            <span class="path">/api/v1/countries</span>
+            <span class="description">Get all countries</span>
+        </div>
+        
+        <div class="endpoint">
+            <span class="method">GET</span>
+            <span class="path">/api/v1/countries/:code</span>
+            <span class="description">Get country by ISO code (e.g., /api/v1/countries/US)</span>
+        </div>
+        
+        <div class="endpoint">
+            <span class="method">GET</span>
+            <span class="path">/api/v1/countries/search/:name</span>
+            <span class="description">Search countries by name</span>
+        </div>
+    </div>
+
+    <div style="text-align: center; margin-top: 20px;">
+        <a href="/docs" class="btn">📖 View Full API Documentation</a>
+        <a href="/api/v1/countries" class="btn btn-secondary">🔍 Try API</a>
+    </div>
+</div>
+
+<div class="stats">
+    <div class="stat-card">
+        <span class="stat-number"><%= countries.length %></span>
+        <div class="stat-label">Countries & Territories</div>
+    </div>
+    
+    <div class="stat-card">
+        <span class="stat-number"><%= countries.filter(c => c.capital).length %></span>
+        <div class="stat-label">With Capitals</div>
+    </div>
+    
+    <div class="stat-card">
+        <span class="stat-number"><%= countries.reduce((sum, c) => sum + c.timezones.length, 0) %></span>
+        <div class="stat-label">Total Timezones</div>
+    </div>
+    
+    <div class="stat-card">
+        <span class="stat-number">7</span>
+        <div class="stat-label">Continents Covered</div>
+    </div>
+</div>
+
+<div class="search-container">
+    <input type="text" id="searchInput" class="search-box" placeholder="🔍 Search countries... (e.g., 'United', 'Japan', 'BR')">
+</div>
+
+<div class="countries-grid" id="countriesGrid">
+    <% countries.slice(0, 12).forEach(function(country) { %>
+        <div class="country-card" onclick="window.location.href='/country/<%= country.country_code %>'">
+            <div class="country-name"><%= country.name %></div>
+            <div class="country-code"><%= country.country_code %></div>
+            <div class="country-capital">
+                🏛️ Capital: <%= country.capital || 'N/A' %>
+            </div>
+            <div class="country-coords">
+                🌐 Coordinates: <%= country.latlng[0] %>, <%= country.latlng[1] %>
+            </div>
+            <div class="country-timezones">
+                ⏰ Timezones: <span class="timezone-count"><%= country.timezones.length %></span>
+            </div>
+        </div>
+    <% }); %>
+</div>
+
+<div style="text-align: center; margin-top: 40px;">
+    <button id="loadMore" class="btn">📄 Load More Countries</button>
+</div>
+
+<script>
+    let currentPage = 1;
+    const pageSize = 12;
+    const allCountries = <%- JSON.stringify(countries) %>;
+    
+    document.getElementById('loadMore').addEventListener('click', function() {
+        const startIndex = currentPage * pageSize;
+        const endIndex = Math.min(startIndex + pageSize, allCountries.length);
+        const countriesGrid = document.getElementById('countriesGrid');
+        
+        for (let i = startIndex; i < endIndex; i++) {
+            const country = allCountries[i];
+            const countryCard = document.createElement('div');
+            countryCard.className = 'country-card';
+            countryCard.onclick = () => window.location.href = `/country/${country.country_code}`;
+            countryCard.innerHTML = `
+                <div class="country-name">${country.name}</div>
+                <div class="country-code">${country.country_code}</div>
+                <div class="country-capital">🏛️ Capital: ${country.capital || 'N/A'}</div>
+                <div class="country-coords">🌐 Coordinates: ${country.latlng[0]}, ${country.latlng[1]}</div>
+                <div class="country-timezones">⏰ Timezones: <span class="timezone-count">${country.timezones.length}</span></div>
+            `;
+            countriesGrid.appendChild(countryCard);
+        }
+        
+        currentPage++;
+        
+        if (endIndex >= allCountries.length) {
+            this.style.display = 'none';
+        }
+    });
+    
+    // Search functionality
+    document.getElementById('searchInput').addEventListener('input', function(e) {
+        const searchTerm = e.target.value.toLowerCase();
+        const filteredCountries = allCountries.filter(country => 
+            country.name.toLowerCase().includes(searchTerm) ||
+            country.country_code.toLowerCase().includes(searchTerm) ||
+            (country.capital && country.capital.toLowerCase().includes(searchTerm))
+        );
+        
+        const countriesGrid = document.getElementById('countriesGrid');
+        countriesGrid.innerHTML = '';
+        
+        filteredCountries.slice(0, 24).forEach(country => {
+            const countryCard = document.createElement('div');
+            countryCard.className = 'country-card';
+            countryCard.onclick = () => window.location.href = `/country/${country.country_code}`;
+            countryCard.innerHTML = `
+                <div class="country-name">${country.name}</div>
+                <div class="country-code">${country.country_code}</div>
+                <div class="country-capital">🏛️ Capital: ${country.capital || 'N/A'}</div>
+                <div class="country-coords">🌐 Coordinates: ${country.latlng[0]}, ${country.latlng[1]}</div>
+                <div class="country-timezones">⏰ Timezones: <span class="timezone-count">${country.timezones.length}</span></div>
+            `;
+            countriesGrid.appendChild(countryCard);
+        });
+        
+        const loadMoreBtn = document.getElementById('loadMore');
+        if (searchTerm === '' || filteredCountries.length <= 24) {
+            loadMoreBtn.style.display = searchTerm === '' ? 'inline-block' : 'none';
+        } else {
+            loadMoreBtn.style.display = 'none';
+        }
+    });
+</script>
+    </main>
+
+    <footer style="margin-top: 60px; text-align: center; padding: 20px; color: var(--comment); border-top: 1px solid var(--current-line);">
+        <p>Countries API v1.0.0 | Built with Express.js and EJS | Dracula Theme</p>
+    </footer>
+
+    <script src="/js/main.js"></script>
+</body>
+</html>
