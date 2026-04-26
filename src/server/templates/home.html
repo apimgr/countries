@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Countries API - World Country Database</title>
+    <meta name="description" content="Access data for {{.TotalCountries}} countries with capitals, timezones, and geolocation">
+    <meta name="theme-color" content="#6366f1">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="nav-brand">
+                <div class="nav-brand-icon">🌐</div>
+                <span>Countries</span>
+            </a>
+            <div class="nav-links">
+                <a href="/" class="nav-link active">Home</a>
+                <a href="/search" class="nav-link">Search</a>
+                <a href="/coordinates" class="nav-link">Location</a>
+                <a href="/openapi" class="nav-link">API Docs</a>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <!-- Hero Section -->
+        <section class="hero">
+            <div class="container">
+                <div class="hero-content">
+                    <div class="hero-badge">
+                        <span class="hero-badge-dot"></span>
+                        <span>API v1.0 - Live</span>
+                    </div>
+                    <h1 class="hero-title">
+                        World Countries <span class="hero-title-gradient">Database</span>
+                    </h1>
+                    <p class="hero-description">
+                        Access comprehensive country data including capitals, timezones, coordinates, and more. Search, filter, and discover countries with powerful geolocation capabilities.
+                    </p>
+                    <div class="hero-actions">
+                        <a href="/search" class="btn btn-primary btn-lg">
+                            Start Searching
+                        </a>
+                        <a href="/openapi" class="btn btn-secondary btn-lg">
+                            View API Docs
+                        </a>
+                    </div>
+                    <div class="hero-stats">
+                        <div class="hero-stat">
+                            <div class="hero-stat-value">{{.TotalCountries}}</div>
+                            <div class="hero-stat-label">Countries</div>
+                        </div>
+                        <div class="hero-stat">
+                            <div class="hero-stat-value">100+</div>
+                            <div class="hero-stat-label">Timezones</div>
+                        </div>
+                        <div class="hero-stat">
+                            <div class="hero-stat-value">100%</div>
+                            <div class="hero-stat-label">Free & Open</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Features Section -->
+        <section class="features">
+            <div class="container">
+                <div class="section-header">
+                    <h2 class="section-title">Powerful Features</h2>
+                    <p class="section-description">Everything you need to work with country data</p>
+                </div>
+                <div class="features-grid">
+                    <a href="/search" class="feature-card">
+                        <div class="feature-icon">🔍</div>
+                        <h3 class="feature-title">Smart Search</h3>
+                        <p class="feature-description">Search countries by name with instant results. Find any country from our comprehensive database.</p>
+                    </a>
+                    <a href="/coordinates" class="feature-card">
+                        <div class="feature-icon">📍</div>
+                        <h3 class="feature-title">Geolocation</h3>
+                        <p class="feature-description">Find the nearest country to any coordinates. Perfect for location-based applications.</p>
+                    </a>
+                    <a href="/openapi" class="feature-card">
+                        <div class="feature-icon">⚡</div>
+                        <h3 class="feature-title">REST API</h3>
+                        <p class="feature-description">Full-featured REST API with JSON responses. Easy to integrate with any application.</p>
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- API Preview Section -->
+        <section class="search-section">
+            <div class="container container-sm">
+                <div class="section-header">
+                    <h2 class="section-title">Quick Start</h2>
+                    <p class="section-description">Try the API with these examples</p>
+                </div>
+
+                <div class="code-block">
+                    <div class="code-header">
+                        <span class="code-lang">Get All Countries</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                    </div>
+                    <div class="code-content">
+                        <pre>curl "{{.BaseURL}}/api/v1/countries"</pre>
+                    </div>
+                </div>
+
+                <div class="code-block">
+                    <div class="code-header">
+                        <span class="code-lang">Search Countries</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                    </div>
+                    <div class="code-content">
+                        <pre>curl "{{.BaseURL}}/api/v1/countries/search?q=united"</pre>
+                    </div>
+                </div>
+
+                <div class="code-block">
+                    <div class="code-header">
+                        <span class="code-lang">Get by Country Code</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                    </div>
+                    <div class="code-content">
+                        <pre>curl "{{.BaseURL}}/api/v1/countries/US"</pre>
+                    </div>
+                </div>
+
+                <div class="code-block">
+                    <div class="code-header">
+                        <span class="code-lang">Find Nearest Country</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                    </div>
+                    <div class="code-content">
+                        <pre>curl "{{.BaseURL}}/api/v1/coordinates?lat=40.71&lon=-74.01"</pre>
+                    </div>
+                </div>
+
+                <div class="code-block">
+                    <div class="code-header">
+                        <span class="code-lang">Random Country</span>
+                        <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                    </div>
+                    <div class="code-content">
+                        <pre>curl "{{.BaseURL}}/random"</pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-brand">
+                <div class="footer-logo">🌐</div>
+                <span class="footer-text">Countries API - Part of apimgr</span>
+            </div>
+            <div class="footer-links">
+                <a href="/openapi" class="footer-link">API Docs</a>
+                <a href="/healthz" class="footer-link">Status</a>
+                <a href="https://github.com/apimgr" class="footer-link">GitHub</a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="/static/js/main.js"></script>
+    <script>
+        function copyCode(btn) {
+            const code = btn.closest('.code-block').querySelector('pre').textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = 'Copy', 2000);
+            });
+        }
+    </script>
+</body>
+</html>
