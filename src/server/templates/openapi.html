@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Documentation - Countries API</title>
+    <meta name="description" content="OpenAPI documentation for Countries API - 249 countries with timezones and geolocation">
+    <meta name="theme-color" content="#6366f1">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <nav class="nav">
+            <a href="/" class="nav-brand">
+                <div class="nav-brand-icon">🌐</div>
+                <span>Countries</span>
+            </a>
+            <div class="nav-links">
+                <a href="/" class="nav-link">Home</a>
+                <a href="/search" class="nav-link">Search</a>
+                <a href="/coordinates" class="nav-link">Location</a>
+                <a href="/openapi" class="nav-link active">API Docs</a>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <!-- API Overview Section -->
+        <section class="search-section">
+            <div class="container">
+                <div class="section-header">
+                    <h1 class="section-title">API Documentation</h1>
+                    <p class="section-description">Complete REST API reference for the Countries API</p>
+                </div>
+
+                <div class="api-overview">
+                    <div class="api-overview-card">
+                        <div class="api-overview-icon">🌐</div>
+                        <div class="api-overview-content">
+                            <h3>249 Countries</h3>
+                            <p>Comprehensive country database</p>
+                        </div>
+                    </div>
+                    <div class="api-overview-card">
+                        <div class="api-overview-icon">🏛️</div>
+                        <div class="api-overview-content">
+                            <h3>Capitals</h3>
+                            <p>Capital cities included</p>
+                        </div>
+                    </div>
+                    <div class="api-overview-card">
+                        <div class="api-overview-icon">🕐</div>
+                        <div class="api-overview-content">
+                            <h3>Timezones</h3>
+                            <p>100+ timezone mappings</p>
+                        </div>
+                    </div>
+                    <div class="api-overview-card">
+                        <div class="api-overview-icon">⚡</div>
+                        <div class="api-overview-content">
+                            <h3>Fast & Free</h3>
+                            <p>No authentication required</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="api-download">
+                    <a href="/api/openapi.json" class="btn btn-secondary">
+                        <span class="btn-icon">📄</span>
+                        Download OpenAPI Spec
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- Endpoints Section -->
+        <section class="api-docs">
+            <div class="container">
+                <h2 class="api-section-title">Countries API</h2>
+
+                <!-- Get All Countries -->
+                <div class="api-endpoint">
+                    <div class="api-endpoint-header">
+                        <span class="api-method api-method-get">GET</span>
+                        <code class="api-path">/api/v1/countries</code>
+                    </div>
+                    <div class="api-endpoint-body">
+                        <p class="api-endpoint-description">Get all countries from the database.</p>
+                    </div>
+                </div>
+
+                <!-- Search Countries -->
+                <div class="api-endpoint">
+                    <div class="api-endpoint-header">
+                        <span class="api-method api-method-get">GET</span>
+                        <code class="api-path">/api/v1/countries/search?q={query}</code>
+                    </div>
+                    <div class="api-endpoint-body">
+                        <p class="api-endpoint-description">Search countries by name with case-insensitive matching.</p>
+                        <div class="api-params">
+                            <h4 class="api-params-title">Query Parameters</h4>
+                            <table class="api-params-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Type</th>
+                                        <th>Description</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><code>q</code> <span class="api-required">required</span></td>
+                                        <td>string</td>
+                                        <td>Search query (min 2 characters)</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Get Country by Code -->
+                <div class="api-endpoint">
+                    <div class="api-endpoint-header">
+                        <span class="api-method api-method-get">GET</span>
+                        <code class="api-path">/api/v1/countries/{code}</code>
+                    </div>
+                    <div class="api-endpoint-body">
+                        <p class="api-endpoint-description">Get a country by ISO 3166-1 alpha-2 code.</p>
+                        <div class="api-params">
+                            <h4 class="api-params-title">Path Parameters</h4>
+                            <table class="api-params-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Type</th>
+                                        <th>Description</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><code>code</code> <span class="api-required">required</span></td>
+                                        <td>string</td>
+                                        <td>Country code (e.g., US, GB, JP)</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <h2 class="api-section-title">Geolocation API</h2>
+
+                <!-- Find Nearest Country (GET) -->
+                <div class="api-endpoint">
+                    <div class="api-endpoint-header">
+                        <span class="api-method api-method-get">GET</span>
+                        <code class="api-path">/api/v1/coordinates?lat={lat}&lon={lon}</code>
+                    </div>
+                    <div class="api-endpoint-body">
+                        <p class="api-endpoint-description">Find the nearest country to given coordinates.</p>
+                        <div class="api-params">
+                            <h4 class="api-params-title">Query Parameters</h4>
+                            <table class="api-params-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Type</th>
+                                        <th>Description</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><code>lat</code> <span class="api-required">required</span></td>
+                                        <td>number</td>
+                                        <td>Latitude (-90 to 90)</td>
+                                    </tr>
+                                    <tr>
+                                        <td><code>lon</code> <span class="api-required">required</span></td>
+                                        <td>number</td>
+                                        <td>Longitude (-180 to 180)</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Find Nearest Country (POST) -->
+                <div class="api-endpoint">
+                    <div class="api-endpoint-header">
+                        <span class="api-method api-method-post">POST</span>
+                        <code class="api-path">/api/v1/coordinates</code>
+                    </div>
+                    <div class="api-endpoint-body">
+                        <p class="api-endpoint-description">Find the nearest country (JSON body).</p>
+                        <p class="api-note">Request body: <code>{"lat": float, "lon": float}</code></p>
+                    </div>
+                </div>
+
+                <!-- Find Nearby Countries -->
+                <div class="api-endpoint">
+                    <div class="api-endpoint-header">
+                        <span class="api-method api-method-get">GET</span>
+                        <code class="api-path">/api/v1/nearby?lat={lat}&lon={lon}&radius={km}</code>
+                    </div>
+                    <div class="api-endpoint-body">
+                        <p class="api-endpoint-description">Find countries within a radius of given coordinates.</p>
+                        <div class="api-params">
+                            <h4 class="api-params-title">Query Parameters</h4>
+                            <table class="api-params-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Type</th>
+                                        <th>Default</th>
+                                        <th>Description</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><code>lat</code> <span class="api-required">required</span></td>
+                                        <td>number</td>
+                                        <td>-</td>
+                                        <td>Latitude (-90 to 90)</td>
+                                    </tr>
+                                    <tr>
+                                        <td><code>lon</code> <span class="api-required">required</span></td>
+                                        <td>number</td>
+                                        <td>-</td>
+                                        <td>Longitude (-180 to 180)</td>
+                                    </tr>
+                                    <tr>
+                                        <td><code>radius</code></td>
+                                        <td>number</td>
+                                        <td>500</td>
+                                        <td>Search radius in km</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <h2 class="api-section-title">Statistics & Utility</h2>
+
+                <!-- Stats -->
+                <div class="api-endpoint">
+                    <div class="api-endpoint-header">
+                        <span class="api-method api-method-get">GET</span>
+                        <code class="api-path">/api/v1/stats</code>
+                    </div>
+                    <div class="api-endpoint-body">
+                        <p class="api-endpoint-description">Get API statistics including country count.</p>
+                        <p class="api-note">Also available as <code>/api/v1/stats.txt</code> for plain text format.</p>
+                    </div>
+                </div>
+
+                <!-- Count -->
+                <div class="api-endpoint">
+                    <div class="api-endpoint-header">
+                        <span class="api-method api-method-get">GET</span>
+                        <code class="api-path">/api/v1/count</code>
+                    </div>
+                    <div class="api-endpoint-body">
+                        <p class="api-endpoint-description">Get total country count.</p>
+                        <p class="api-note">Also available as <code>/api/v1/count.txt</code> for plain text format.</p>
+                    </div>
+                </div>
+
+                <!-- Random -->
+                <div class="api-endpoint">
+                    <div class="api-endpoint-header">
+                        <span class="api-method api-method-get">GET</span>
+                        <code class="api-path">/random</code>
+                    </div>
+                    <div class="api-endpoint-body">
+                        <p class="api-endpoint-description">Get a random country.</p>
+                        <p class="api-note">Also available as <code>/random.txt</code> for plain text format.</p>
+                    </div>
+                </div>
+
+                <!-- Raw Data -->
+                <div class="api-endpoint">
+                    <div class="api-endpoint-header">
+                        <span class="api-method api-method-get">GET</span>
+                        <code class="api-path">/data</code>
+                    </div>
+                    <div class="api-endpoint-body">
+                        <p class="api-endpoint-description">Get the raw country database as JSON.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Response Format Section -->
+        <section class="api-docs">
+            <div class="container">
+                <h2 class="api-section-title">Response Formats</h2>
+
+                <div class="api-response-examples">
+                    <div class="api-response-example">
+                        <h3 class="api-response-title">Country Object</h3>
+                        <div class="code-block">
+                            <div class="code-header">
+                                <span class="code-lang">JSON</span>
+                                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                            </div>
+                            <div class="code-content">
+<pre>{
+  "success": true,
+  "data": {
+    "name": "United States",
+    "country_code": "US",
+    "capital": "Washington, D.C.",
+    "timezones": ["UTC-12:00", "UTC-11:00", ...],
+    "latlng": [38.0, -97.0]
+  }
+}</pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="api-response-example">
+                        <h3 class="api-response-title">Country with Distance</h3>
+                        <div class="code-block">
+                            <div class="code-header">
+                                <span class="code-lang">JSON</span>
+                                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                            </div>
+                            <div class="code-content">
+<pre>{
+  "success": true,
+  "data": {
+    "name": "United States",
+    "country_code": "US",
+    "capital": "Washington, D.C.",
+    "latlng": [38.0, -97.0],
+    "distance": 234.56
+  }
+}</pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="api-response-example">
+                        <h3 class="api-response-title">Stats Response</h3>
+                        <div class="code-block">
+                            <div class="code-header">
+                                <span class="code-lang">JSON</span>
+                                <button class="code-copy" onclick="copyCode(this)">Copy</button>
+                            </div>
+                            <div class="code-content">
+<pre>{
+  "success": true,
+  "data": {
+    "total_countries": 249
+  }
+}</pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-brand">
+                <div class="footer-logo">🌐</div>
+                <span class="footer-text">Countries API - Part of apimgr</span>
+            </div>
+            <div class="footer-links">
+                <a href="/openapi" class="footer-link">API Docs</a>
+                <a href="/healthz" class="footer-link">Status</a>
+                <a href="https://github.com/apimgr" class="footer-link">GitHub</a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="/static/js/main.js"></script>
+    <script>
+        function copyCode(btn) {
+            const code = btn.closest('.code-block').querySelector('pre').textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = 'Copy', 2000);
+            });
+        }
+    </script>
+</body>
+</html>

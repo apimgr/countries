@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/css/style.css">
+    <meta name="description" content="<%= country.name %> - Country information including capital, coordinates, and timezones">
+    <meta name="keywords" content="<%= country.name.toLowerCase() %>, <%= country.country_code %>, country, capital, timezones">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div>
+                    <h1>🌍 Countries API</h1>
+                    <div class="subtitle">Comprehensive country data at your fingertips</div>
+                </div>
+                <nav>
+                    <ul>
+                        <li><a href="/">🏠 Home</a></li>
+                        <li><a href="/docs">📚 API Docs</a></li>
+                        <li><a href="/api/v1/countries">🔗 API</a></li>
+                        <li><a href="/location">📍 Location</a></li>
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="country-detail">
+    <div class="country-header">
+        <div class="country-title"><%= country.name %></div>
+        <div class="country-code" style="font-size: 1.5em; margin-top: 10px;"><%= country.country_code %></div>
+    </div>
+
+    <div class="country-info-grid">
+        <div class="info-section">
+            <h3 class="info-title">🏛️ Capital Information</h3>
+            <div class="info-content">
+                <strong>Capital City:</strong><br>
+                <%= country.capital || 'No official capital' %>
+            </div>
+        </div>
+
+        <div class="info-section">
+            <h3 class="info-title">🌐 Geographic Coordinates</h3>
+            <div class="info-content">
+                <strong>Latitude:</strong> <%= country.latlng[0] %>°<br>
+                <strong>Longitude:</strong> <%= country.latlng[1] %>°<br>
+                <br>
+                <a href="https://www.google.com/maps?q=<%= country.latlng[0] %>,<%= country.latlng[1] %>" 
+                   target="_blank" class="btn" style="font-size: 0.9em; padding: 8px 12px;">
+                    🗺️ View on Google Maps
+                </a>
+            </div>
+        </div>
+
+        <div class="info-section">
+            <h3 class="info-title">⏰ Time Zones (<%= country.timezones.length %>)</h3>
+            <div class="info-content">
+                <ul class="timezone-list">
+                    <% country.timezones.forEach(function(timezone) { %>
+                        <li><%= timezone %></li>
+                    <% }); %>
+                </ul>
+            </div>
+        </div>
+
+        <div class="info-section">
+            <h3 class="info-title">🔧 API Information</h3>
+            <div class="info-content">
+                <strong>Country Code:</strong> <%= country.country_code %><br>
+                <strong>API Endpoint:</strong><br>
+                <code style="background-color: var(--background); padding: 5px; border-radius: 3px; display: inline-block; margin-top: 5px; color: var(--yellow);">
+                    /api/v1/countries/<%= country.country_code %>
+                </code>
+                <br><br>
+                <a href="/api/v1/countries/<%= country.country_code %>" 
+                   target="_blank" class="btn btn-secondary" style="font-size: 0.9em; padding: 8px 12px;">
+                    📡 View JSON Data
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div style="text-align: center; margin-top: 40px;">
+        <a href="/" class="btn">⬅️ Back to All Countries</a>
+        <a href="/docs" class="btn btn-secondary">📚 API Documentation</a>
+    </div>
+    
+    <div class="info-section" style="margin-top: 30px;">
+        <h3 class="info-title">📊 Quick Facts</h3>
+        <div class="info-content">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px;">
+                <div style="background-color: var(--background); padding: 15px; border-radius: 8px;">
+                    <strong style="color: var(--green);">Timezone Count</strong><br>
+                    <%= country.timezones.length %> zone<%= country.timezones.length !== 1 ? 's' : '' %>
+                </div>
+                <div style="background-color: var(--background); padding: 15px; border-radius: 8px;">
+                    <strong style="color: var(--cyan);">Hemisphere</strong><br>
+                    <%= country.latlng[0] >= 0 ? 'Northern' : 'Southern' %>
+                </div>
+                <div style="background-color: var(--background); padding: 15px; border-radius: 8px;">
+                    <strong style="color: var(--orange);">Longitude Zone</strong><br>
+                    <%= country.latlng[1] >= 0 ? 'Eastern' : 'Western' %>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Add some interactive features
+    document.addEventListener('DOMContentLoaded', function() {
+        // Copy API endpoint to clipboard when clicked
+        const apiCode = document.querySelector('code');
+        if (apiCode) {
+            apiCode.style.cursor = 'pointer';
+            apiCode.title = 'Click to copy API endpoint';
+            
+            apiCode.addEventListener('click', function() {
+                const endpoint = `${window.location.origin}/api/v1/countries/<%= country.country_code %>`;
+                navigator.clipboard.writeText(endpoint).then(function() {
+                    // Show a temporary success message
+                    const originalText = apiCode.textContent;
+                    apiCode.textContent = '✅ Copied!';
+                    apiCode.style.color = 'var(--green)';
+                    
+                    setTimeout(function() {
+                        apiCode.textContent = originalText;
+                        apiCode.style.color = 'var(--yellow)';
+                    }, 2000);
+                });
+            });
+        }
+    });
+</script>
+        </div>
+    </main>
+
+    <footer style="margin-top: 60px; text-align: center; padding: 20px; color: var(--comment); border-top: 1px solid var(--current-line);">
+        <p>Countries API v1.0.0 | Built with Express.js and EJS | Dracula Theme</p>
+    </footer>
+
+    <script src="/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/css/style.css">
+    <meta name="description" content="404 - Page not found">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div>
+                    <h1>🌍 Countries API</h1>
+                    <div class="subtitle">Comprehensive country data at your fingertips</div>
+                </div>
+                <nav>
+                    <ul>
+                        <li><a href="/">🏠 Home</a></li>
+                        <li><a href="/docs">📚 API Docs</a></li>
+                        <li><a href="/api/v1/countries">🔗 API</a></li>
+                        <li><a href="/location">📍 Location</a></li>
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="error-page">
+    <div class="error-code">404</div>
+    <div class="error-message">
+        Oops! The page you're looking for doesn't exist.
+    </div>
+    <p style="color: var(--comment); margin-bottom: 30px; max-width: 500px; margin-left: auto; margin-right: auto;">
+        The country or page you requested could not be found. This might be because:
+    </p>
+    
+    <div style="background-color: var(--current-line); padding: 20px; border-radius: 10px; margin: 20px auto; max-width: 600px; text-align: left;">
+        <ul style="color: var(--foreground); list-style: none; padding: 0;">
+            <li style="margin: 10px 0;">🔍 The country code doesn't exist</li>
+            <li style="margin: 10px 0;">🌍 The URL was typed incorrectly</li>
+            <li style="margin: 10px 0;">📄 The page has been moved or deleted</li>
+        </ul>
+    </div>
+
+    <div style="margin-top: 40px;">
+        <a href="/" class="btn">🏠 Back to Home</a>
+        <a href="/api/v1/countries" class="btn btn-secondary">🔍 Browse All Countries</a>
+    </div>
+    
+    <div style="margin-top: 30px; font-size: 0.9em; color: var(--comment);">
+        <p>Need help? Check out our <a href="/docs" style="color: var(--cyan);">API documentation</a></p>
+    </div>
+        </div>
+    </main>
+
+    <footer style="margin-top: 60px; text-align: center; padding: 20px; color: var(--comment); border-top: 1px solid var(--current-line);">
+        <p>Countries API v1.0.0 | Built with Express.js and EJS | Dracula Theme</p>
+    </footer>
+
+    <script src="/js/main.js"></script>
+</body>
+</html>

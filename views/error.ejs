@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/css/style.css">
+    <meta name="description" content="Server Error">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div>
+                    <h1>🌍 Countries API</h1>
+                    <div class="subtitle">Comprehensive country data at your fingertips</div>
+                </div>
+                <nav>
+                    <ul>
+                        <li><a href="/">🏠 Home</a></li>
+                        <li><a href="/docs">📚 API Docs</a></li>
+                        <li><a href="/api/v1/countries">🔗 API</a></li>
+                        <li><a href="/location">📍 Location</a></li>
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="error-page">
+    <div class="error-code">⚠️</div>
+    <div class="error-message">
+        Something went wrong!
+    </div>
+    <p style="color: var(--comment); margin-bottom: 30px; max-width: 500px; margin-left: auto; margin-right: auto;">
+        An unexpected error occurred while processing your request.
+    </p>
+    
+    <div style="background-color: var(--current-line); padding: 20px; border-radius: 10px; margin: 20px auto; max-width: 600px;">
+        <h3 style="color: var(--red); margin-bottom: 15px;">Error Details:</h3>
+        <pre style="color: var(--foreground); font-family: monospace; font-size: 0.9em; white-space: pre-wrap; word-wrap: break-word;">
+<%= error || 'Internal Server Error' %>
+        </pre>
+    </div>
+
+    <div style="margin-top: 40px;">
+        <a href="/" class="btn">🏠 Back to Home</a>
+        <a href="/docs" class="btn btn-secondary">📚 API Docs</a>
+    </div>
+    
+    <div style="margin-top: 30px; font-size: 0.9em; color: var(--comment);">
+        <p>If this problem persists, please check the server logs or contact the administrator.</p>
+    </div>
+        </div>
+    </main>
+
+    <footer style="margin-top: 60px; text-align: center; padding: 20px; color: var(--comment); border-top: 1px solid var(--current-line);">
+        <p>Countries API v1.0.0 | Built with Express.js and EJS | Dracula Theme</p>
+    </footer>
+
+    <script src="/js/main.js"></script>
+</body>
+</html>

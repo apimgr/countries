@@ -1,0 +1,25 @@
+name: countries
+
+services:
+  countries:
+    image: ghcr.io/apimgr/countries:latest
+    container_name: countries
+    restart: unless-stopped
+    environment:
+      # Hardcoded with sane defaults - NO .env files
+      - MODE=production
+      - TZ=America/New_York
+      # ENABLE_TOR=true is default, no need to specify
+    ports:
+      # Production: bound to Docker bridge only
+      - "172.17.0.1:64580:80"
+    volumes:
+      - ./rootfs/config/countries:/config
+      - ./rootfs/data/countries:/data
+    networks:
+      - countries
+
+networks:
+  countries:
+    name: countries
+    external: false
