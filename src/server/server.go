@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/apimgr/countries/src/admin"
 	"github.com/apimgr/countries/src/config"
 	"github.com/apimgr/countries/src/countries"
 	"github.com/go-chi/chi/v5"
@@ -36,7 +35,6 @@ type Server struct {
 	countriesService *countries.Service
 	config           *config.Config
 	templates        *template.Template
-	adminHandler     *admin.Handler
 	version          string
 	buildDate        string
 	commit           string
@@ -59,22 +57,6 @@ func New(countriesService *countries.Service, cfg *config.Config, address, port,
 	}
 	s.templates = tmpl
 
-	// Create admin handler
-	sessionTimeout := cfg.Server.Session.Timeout
-	if sessionTimeout == 0 {
-		sessionTimeout = 3600
-	}
-	s.adminHandler = admin.NewHandler(
-		cfg.Server.Admin.Username,
-		cfg.Server.Admin.Password,
-		cfg.Server.Admin.APIToken,
-		sessionTimeout,
-		false, // SSL enabled - will be updated when SSL is configured
-		version,
-		commit,
-		buildDate,
-	)
-
 	s.setupRoutes()
 	return s
 }
@@ -87,9 +69,6 @@ func (s *Server) setupRoutes() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RealIP)
 	r.Use(s.corsMiddleware)
-
-	// Admin routes (session auth for web, bearer token for API)
-	s.adminHandler.RegisterRoutes(r)
 
 	// Health check endpoints
 	r.Get("/healthz", s.handleHealthz)
