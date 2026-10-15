@@ -25,7 +25,7 @@ client_binary: countries-cli
 - Server pages: `/server/about`, `/server/help`, `/server/healthz`, `/server/privacy`, `/server/terms`
 - CLI client (`countries-cli`) for queries from the terminal
 - OpenAPI/Swagger docs at `/api/{api_version}/server/swagger`
-- GraphQL at `/graphql`
+- GraphQL at `/api/graphql` (with its explorer at `/server/docs/graphql`)
 
 **Non-goals:**
 - No user accounts, registration, or login of any kind

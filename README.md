@@ -1,228 +1,40 @@
-# Countries API 🌍
+# Countries API
 
-A comprehensive REST API providing detailed information about countries worldwide, built with Express.js and featuring a beautiful Dracula-themed frontend.
+[![License](https://img.shields.io/github/license/apimgr/countries)](LICENSE.md)
 
-## Features
+Countries is a Go service that embeds a static country dataset and exposes it through a versioned REST API and server-rendered web interface. It has no runtime dependency on external data services.
 
-- ✅ **REST API** with versioning (`/api/v1`)
-- 🔒 **Security** with Helmet middleware
-- ⏰ **Rate limiting** (1000 requests/hour)
-- 🌐 **CORS** enabled for all origins
-- 📚 **Swagger documentation**
-- 🎨 **EJS frontend** with Dracula theme
-- 🐳 **Docker support** with health checks
-- 📊 **249 countries** with comprehensive data
+## Current dataset
 
-## Quick Start
+The embedded records currently provide a common name, two-letter country code, capital, timezones, and representative latitude/longitude. The richer fields listed in `IDEA.md` (official names, region, currencies, languages, population, area, flags, borders, and top-level domains) are not present in the embedded source yet. The source and redistribution terms for the current dataset also need to be established before expanding it; see `TODO.AI.md`.
 
-### Using Docker (Recommended)
+## Run
 
-```bash
-# Build and run with Docker
-docker build -t countries-api .
-docker run -p 3000:3000 countries-api
+The `make dev` target builds the server and CLI in an isolated temporary directory with the `casjaysdev/go:latest` container image. It prints the output directory when the build finishes. Start the server binary from that directory; it listens on `0.0.0.0:8080` by default. Configuration is read from `server.yml` in the config directory, and the server creates a default file on first start.
 
-# Or use Docker Compose
-docker-compose up -d
-```
+## HTTP endpoints
 
-### Local Development
+| Method | Path | Description |
+|---|---|---|
+| GET | `/` | Country search home page |
+| GET | `/search` | Search page |
+| GET | `/coordinates` | Nearest-country lookup page |
+| GET | `/server/docs/swagger` | OpenAPI documentation page |
+| GET | `/server/docs/graphql` | GraphQL explorer |
+| GET | `/server/healthz` | Human-readable service health page |
+| GET | `/api/v1/server/healthz` | Versioned JSON health endpoint |
+| GET | `/api/v1/server/swagger` | OpenAPI 3.1 JSON document |
+| POST | `/api/v1/server/graphql` | Read-only GraphQL endpoint |
+| POST | `/api/graphql` | GraphQL alias |
+| GET | `/api/v1/countries` | List country records |
+| GET | `/api/v1/countries/{code}` | Read a record by two-letter code |
+| GET | `/api/v1/countries/search?q={query}` | Search names |
+| GET | `/api/v1/coordinates?lat={lat}&lon={lon}` | Find nearest country |
+| GET | `/api/v1/nearby?lat={lat}&lon={lon}&radius={km}` | Find nearby country centroids |
+| GET | `/api/v1/stats` | Dataset count and build version |
 
-```bash
-# Install dependencies
-npm install
+The `/server/about`, `/server/help`, `/server/privacy`, and `/server/terms` pages are available. The `countries-cli` client supports list, get, search, nearest, nearby, and stats commands. The dataset and client still do not cover all IDEA.md requirements; see `TODO.AI.md` for the exact remaining scope.
 
-# Start the server
-npm start
-```
+## License and data
 
-## API Endpoints
-
-### Base URL: `/api/v1`
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/countries` | Get all countries |
-| GET | `/countries/:code` | Get country by ISO code |
-| GET | `/countries/search/:name` | Search countries by name |
-
-## Documentation
-
-- **Swagger UI**: [http://localhost:3000/docs](http://localhost:3000/docs)
-- **Swagger JSON**: [http://localhost:3000/api/docs](http://localhost:3000/api/docs)
-- **Frontend**: [http://localhost:3000/](http://localhost:3000/)
-
-## Example API Calls
-
-```bash
-# Get all countries
-curl http://localhost:3000/api/v1/countries
-
-# Get specific country (USA)
-curl http://localhost:3000/api/v1/countries/US
-
-# Search for countries containing "United"
-curl http://localhost:3000/api/v1/countries/search/United
-```
-
-## Response Format
-
-```json
-{
-  "timezones": ["America/New_York", "America/Chicago", "..."],
-  "latlng": [38, -97],
-  "name": "United States",
-  "country_code": "US",
-  "capital": "Washington D.C."
-}
-```
-
-## Security Features
-
-- **Helmet**: Security headers protection
-- **Rate Limiting**: 1000 requests per hour per IP
-- **CORS**: Cross-origin resource sharing enabled
-- **Health Checks**: Built-in health monitoring
-- **Non-root User**: Docker container runs as non-root user
-
-## Development
-
-### Project Structure
-
-```
-countries/
-├── server.js              # Main application file
-├── countries.json          # Countries data
-├── healthcheck.js          # Health check script
-├── package.json           # Dependencies
-├── Dockerfile             # Docker configuration
-├── docker-compose.yml     # Docker Compose setup
-├── .dockerignore          # Docker ignore file
-├── public/                # Static assets
-│   ├── css/style.css      # Dracula theme styles
-│   └── js/main.js         # Frontend JavaScript
-└── views/                 # EJS templates
-    ├── index.ejs          # Homepage
-    ├── country.ejs        # Country detail page
-    ├── 404.ejs            # 404 error page
-    └── error.ejs          # Error page
-```
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3000` | Server port |
-| `NODE_ENV` | `production` | Environment mode |
-
-### Docker Commands
-
-```bash
-# Build image
-docker build -t countries-api .
-
-# Run container
-docker run -d --name countries-api -p 3000:3000 countries-api
-
-# Check health
-docker exec countries-api node healthcheck.js
-
-# View logs
-docker logs countries-api
-
-# Stop and remove
-docker stop countries-api && docker rm countries-api
-```
-
-### Docker Compose Commands
-
-```bash
-# Start services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop services
-docker-compose down
-
-# Rebuild and restart
-docker-compose up -d --build
-```
-
-### Development Mode
-
-For development with hot reload:
-
-```bash
-# Start development version
-docker-compose --profile dev up -d
-
-# This will run on port 3001 with volume mounting
-```
-
-## Health Monitoring
-
-The application includes built-in health checks:
-
-- **Health endpoint**: Internal health check script
-- **Docker health check**: Automatic container health monitoring
-- **API status**: Monitors API endpoint availability
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Port already in use**
-   ```bash
-   # Find process using port 3000
-   lsof -i :3000
-   
-   # Kill process
-   kill -9 <PID>
-   ```
-
-2. **Docker build issues**
-   ```bash
-   # Clean Docker cache
-   docker system prune -a
-   
-   # Rebuild without cache
-   docker build --no-cache -t countries-api .
-   ```
-
-3. **Rate limiting**
-   - Default limit: 1000 requests/hour
-   - Wait for limit reset or modify in `server.js`
-
-### Performance Tips
-
-- Use Docker for consistent environments
-- Enable Docker health checks for monitoring
-- Consider adding Redis for caching in production
-- Monitor API response times with built-in logging
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make changes
-4. Test with Docker
-5. Submit a pull request
-
-## License
-
-ISC License - see package.json for details
-
-## Tech Stack
-
-- **Backend**: Node.js, Express.js
-- **Frontend**: EJS, Custom CSS (Dracula theme)
-- **Security**: Helmet, Rate limiting, CORS
-- **Documentation**: Swagger/OpenAPI
-- **Containerization**: Docker, Docker Compose
-- **Data**: JSON file with 249 countries
-
----
-
-🚀 **Ready to explore the world's countries?** Start the server and visit [http://localhost:3000](http://localhost:3000)!
+Application code is MIT licensed. Third-party Go dependency licenses are listed in `LICENSE.md`. The embedded country data is separate from the application code; its source and redistribution license must be documented before any new data is added.
