@@ -28,10 +28,21 @@ SOFTWARE.
 |---|---:|---|---|
 | github.com/graph-gophers/graphql-go | v1.10.0 | MIT | GraphQL for Go contributors |
 | github.com/go-chi/chi/v5 | v5.3.0 | MIT | Peter Kieltyka and contributors |
+| github.com/dustin/go-humanize | v1.1.0 | MIT | Dustin Sallings |
+| github.com/google/uuid | v1.6.0 | BSD-3-Clause | Google Inc. |
+| github.com/mattn/go-isatty | v0.0.24 | MIT | Yasuhiro Matsumoto |
+| github.com/ncruces/go-strftime | v1.1.0 | MIT | Nuno Cruces |
+| github.com/remyoudompheng/bigfft | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | The Go Authors |
 | golang.org/x/crypto | v0.51.0 | BSD-3-Clause | The Go Authors |
 | golang.org/x/net | v0.55.0 | BSD-3-Clause | The Go Authors |
-| golang.org/x/sys | v0.45.0 | BSD-3-Clause | The Go Authors |
+| golang.org/x/sys | v0.49.0 | BSD-3-Clause | The Go Authors |
 | golang.org/x/text | v0.39.0 | BSD-3-Clause | The Go Authors |
 | gopkg.in/yaml.v3 | v3.0.1 | MIT | Canonical Ltd. |
+| modernc.org/libc | v1.79.0 | BSD-3-Clause | The Libc Authors |
+| modernc.org/mathutil | v1.7.1 | BSD-3-Clause | The mathutil Authors |
+| modernc.org/memory | v1.12.1 | BSD-3-Clause | The Memory Authors |
+| modernc.org/sqlite | v1.61.1 | BSD-3-Clause | The Sqlite Authors |
 
-The country dataset is embedded content, separate from this software license. Its source and redistribution terms are not yet documented; see `TODO.AI.md`.
+## Embedded country data
+
+The generated country database in `src/data/countries.json` is distributed under the Open Database License 1.0 (ODbL). It includes World Bank population values under CC BY 4.0, with attribution retained in [`src/data/README.md`](src/data/README.md). IANA tzdb data is public domain. These data licenses are separate from the MIT-licensed application code. Full license texts and field-level provenance are in `src/data/`.
