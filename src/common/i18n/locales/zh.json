@@ -1,0 +1,9 @@
+{
+  "meta": {"language":"zh","name":"Chinese","native_name":"中文","direction":"ltr"},
+  "nav.skip_main":"跳转到主要内容","nav.home":"首页","nav.search":"搜索","nav.location":"位置","nav.api_docs":"API 文档","nav.status":"状态","nav.language":"语言",
+  "theme.label":"主题","theme.dark":"深色","theme.light":"浅色","theme.auto":"自动","theme.save":"保存",
+  "search.title":"搜索国家","search.description":"查找可用记录中的国家","search.label":"国家名称","search.placeholder":"输入国家名称、代码、地区、货币或语言","search.hint":"按名称、代码、地区、货币或语言搜索","search.submit":"搜索国家","search.results":"搜索结果","search.no_results":"没有符合条件的国家。","search.count":"个匹配国家",
+  "coordinates.title":"查找最近的国家","coordinates.description":"查找最接近这些地理坐标的国家","coordinates.latitude":"纬度","coordinates.longitude":"经度","coordinates.submit":"查找最近的国家","coordinates.use_location":"使用我的位置","coordinates.error":"请输入 -90 到 90 的纬度和 -180 到 180 的经度。","coordinates.distance":"与指定位置的距离",
+  "home.title":"世界国家数据库","home.description":"浏览国家数据，按名称搜索并比较代表性坐标。","home.start_searching":"开始搜索","home.view_api":"查看 API 文档","home.countries":"个国家",
+  "graphql.title":"GraphQL 浏览器","graphql.description":"查询发送到 GraphQL 端点。此 API 仅支持读取。","graphql.query":"查询","graphql.run":"运行查询","graphql.response":"响应","graphql.initial":"运行查询以查看响应。","common.save":"保存","common.dark":"深色","common.light":"浅色","common.auto":"自动"
+}

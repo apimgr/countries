@@ -1,3 +1,4 @@
+// Package scheduler runs and tracks recurring application tasks.
 package scheduler
 
 import (

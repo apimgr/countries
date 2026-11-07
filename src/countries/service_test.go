@@ -9,9 +9,9 @@ import (
 // fixtureJSON is a small, hand-crafted dataset with known coordinates so
 // distance/nearest calculations can be checked against expected output.
 const fixtureJSON = `[
-	{"name":"Testland","country_code":"tl","capital":"Test City","timezones":["UTC"],"latlng":[0,0]},
-	{"name":"Otherland","country_code":"OL","capital":"Other City","timezones":["UTC+1"],"latlng":[10,10]},
-	{"name":"NoCoords","country_code":"NC","capital":"Nowhere","timezones":[]}
+	{"name":{"common":"Testland","official":"Republic of Testland"},"cca2":"TL","cca3":"TST","ccn3":"001","capital":["Test City"],"region":"Europe","subregion":"Northern Europe","currencies":{"TST":{"name":"Test dollar","symbol":"$"}},"languages":{"eng":"English"},"timezones":["UTC"],"latlng":[0,0]},
+	{"name":{"common":"Otherland","official":"Republic of Otherland"},"cca2":"OL","cca3":"OTH","ccn3":"002","capital":["Other City"],"region":"Asia","subregion":"Eastern Asia","currencies":{"OTH":{"name":"Other yen","symbol":"¥"}},"languages":{"oth":"Otherish"},"timezones":["UTC+1"],"latlng":[10,10]},
+	{"name":{"common":"NoCoords","official":"Republic of NoCoords"},"cca2":"NC","cca3":"NOC","capital":["Nowhere"],"timezones":[]}
 ]`
 
 func newFixtureService(t *testing.T) *Service {
@@ -51,24 +51,54 @@ func TestGetAll(t *testing.T) {
 func TestGetByCode(t *testing.T) {
 	svc := newFixtureService(t)
 
-	if got := svc.GetByCode("tl"); got == nil || got.Name != "Testland" {
+	if got := svc.GetByCode("tl"); got == nil || got.Name.Common != "Testland" {
 		t.Errorf("GetByCode(tl) = %+v, want Testland", got)
 	}
-	if got := svc.GetByCode("TL"); got == nil || got.Name != "Testland" {
+	if got := svc.GetByCode("TL"); got == nil || got.Name.Common != "Testland" {
 		t.Errorf("GetByCode(TL) = %+v, want Testland", got)
 	}
-	if got := svc.GetByCode("ol"); got == nil || got.Name != "Otherland" {
+	if got := svc.GetByCode("ol"); got == nil || got.Name.Common != "Otherland" {
 		t.Errorf("GetByCode(ol) = %+v, want Otherland", got)
+	}
+	if got := svc.GetByCode("001"); got == nil || got.Name.Common != "Testland" {
+		t.Errorf("GetByCode(001) = %+v, want Testland", got)
 	}
 	if got := svc.GetByCode("zz"); got != nil {
 		t.Errorf("GetByCode(zz) = %+v, want nil", got)
 	}
 }
 
+func TestSearchFiltered(t *testing.T) {
+	svc := newFixtureService(t)
+	tests := []struct {
+		name   string
+		filter SearchFilters
+		want   string
+	}{
+		{"alpha-3 code", SearchFilters{Code: "tst"}, "Testland"},
+		{"numeric code", SearchFilters{Query: "001"}, "Testland"},
+		{"region", SearchFilters{Region: "northern"}, "Testland"},
+		{"currency", SearchFilters{Currency: "test dollar"}, "Testland"},
+		{"language", SearchFilters{Language: "eng"}, "Testland"},
+		{"combined filters", SearchFilters{Region: "europe", Language: "English"}, "Testland"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := svc.SearchFiltered(test.filter)
+			if len(got) != 1 || got[0].Name.Common != test.want {
+				t.Fatalf("SearchFiltered(%+v) = %+v, want [%s]", test.filter, got, test.want)
+			}
+		})
+	}
+	if got := svc.SearchFiltered(SearchFilters{Currency: "missing"}); len(got) != 0 {
+		t.Errorf("missing currency filter = %+v, want no matches", got)
+	}
+}
+
 func TestSearch(t *testing.T) {
 	svc := newFixtureService(t)
 
-	if got := svc.Search("test"); len(got) != 1 || got[0].Name != "Testland" {
+	if got := svc.Search("test"); len(got) != 1 || got[0].Name.Common != "Testland" {
 		t.Errorf("Search(test) = %+v, want [Testland]", got)
 	}
 	// Case-insensitivity.
@@ -104,15 +134,15 @@ func TestFindNearest(t *testing.T) {
 	if got == nil {
 		t.Fatal("FindNearest(0,0) = nil, want Testland")
 	}
-	if got.Name != "Testland" {
-		t.Errorf("FindNearest(0,0).Name = %q, want Testland", got.Name)
+	if got.Name.Common != "Testland" {
+		t.Errorf("FindNearest(0,0).Name.Common = %q, want Testland", got.Name.Common)
 	}
 	if got.Distance != 0 {
 		t.Errorf("FindNearest(0,0).Distance = %v, want 0", got.Distance)
 	}
 
 	got2 := svc.FindNearest(9, 9)
-	if got2 == nil || got2.Name != "Otherland" {
+	if got2 == nil || got2.Name.Common != "Otherland" {
 		t.Errorf("FindNearest(9,9) = %+v, want Otherland", got2)
 	}
 }
@@ -122,7 +152,7 @@ func TestFindNearby(t *testing.T) {
 
 	// A tiny radius around (0,0) should only capture Testland.
 	got := svc.FindNearby(0, 0, 100)
-	if len(got) != 1 || got[0].Name != "Testland" {
+	if len(got) != 1 || got[0].Name.Common != "Testland" {
 		t.Errorf("FindNearby(0,0,100) = %+v, want [Testland]", got)
 	}
 
@@ -132,8 +162,8 @@ func TestFindNearby(t *testing.T) {
 	if len(all) != 2 {
 		t.Fatalf("FindNearby(0,0,20000) len = %d, want 2", len(all))
 	}
-	if all[0].Name != "Testland" || all[1].Name != "Otherland" {
-		t.Errorf("FindNearby() order = [%s %s], want [Testland Otherland]", all[0].Name, all[1].Name)
+	if all[0].Name.Common != "Testland" || all[1].Name.Common != "Otherland" {
+		t.Errorf("FindNearby() order = [%s %s], want [Testland Otherland]", all[0].Name.Common, all[1].Name.Common)
 	}
 	if all[0].Distance > all[1].Distance {
 		t.Errorf("FindNearby() not sorted ascending: %v > %v", all[0].Distance, all[1].Distance)
@@ -179,7 +209,7 @@ func TestGetRandom(t *testing.T) {
 		}
 		found := false
 		for _, c := range svc.GetAll() {
-			if c.CountryCode == got.CountryCode {
+			if c.CCA2 == got.CCA2 {
 				found = true
 				break
 			}

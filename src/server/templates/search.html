@@ -1,18 +1,17 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="{{.Lang}}" dir="{{.Dir}}" data-theme="{{.Theme}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Search Countries - Countries API</title>
-    <meta name="description" content="Search countries by name from our database of 249 countries">
+    <meta name="description" content="Search countries by name from the embedded country records">
+    <meta name="api-base-path" content="{{.APIBasePath}}">
     <meta name="theme-color" content="#6366f1">
     <link rel="manifest" href="/manifest.json">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/main.css">
 </head>
 <body>
+    <a class="skip-link" href="#main-content">{{t .Lang "nav.skip_main"}}</a>
     <!-- Header -->
     <header class="header">
         <nav class="nav">
@@ -21,52 +20,81 @@
                 <span>Countries</span>
             </a>
             <div class="nav-links">
-                <a href="/" class="nav-link">Home</a>
-                <a href="/search" class="nav-link active">Search</a>
-                <a href="/coordinates" class="nav-link">Location</a>
-                <a href="/openapi" class="nav-link">API Docs</a>
+                <a href="/" class="nav-link">{{t .Lang "nav.home"}}</a>
+                <a href="/search" class="nav-link active">{{t .Lang "nav.search"}}</a>
+                <a href="/coordinates" class="nav-link">{{t .Lang "nav.location"}}</a>
+                <a href="/server/docs/swagger" class="nav-link">{{t .Lang "nav.api_docs"}}</a>
             </div>
+            {{template "theme-preference" .}}
+            {{template "language-selector" .}}
         </nav>
     </header>
 
-    <main>
+    <main id="main-content">
         <!-- Search Section -->
         <section class="search-section">
             <div class="container container-sm">
                 <div class="section-header">
-                    <h1 class="section-title">Search Countries</h1>
-                    <p class="section-description">Find any country from our comprehensive database of 249 countries</p>
+                    <h1 class="section-title">{{t .Lang "search.title"}}</h1>
+                    <p class="section-description">{{t .Lang "search.description"}}</p>
                 </div>
 
-                <form id="searchForm" class="search-form">
+                <form id="searchForm" class="search-form" method="get" action="/search">
                     <div class="form-group">
-                        <label for="query" class="form-label">Country Name</label>
+                        <label for="query" class="form-label">{{t .Lang "search.label"}}</label>
                         <input
                             type="text"
                             id="query"
                             name="q"
                             class="form-input form-input-lg"
-                            placeholder="Enter country name (e.g., United States, Japan)"
+                            placeholder="{{t .Lang "search.placeholder"}}"
+                            value="{{.Query}}"
                             required
                             minlength="2"
                             autocomplete="off"
                         >
-                        <p class="form-hint">Minimum 2 characters required</p>
+                        <p class="form-hint">{{t .Lang "search.hint"}}</p>
                     </div>
                     <button type="submit" class="btn btn-primary btn-lg btn-block">
                         <span class="btn-icon">🔍</span>
-                        Search Countries
+                        {{t .Lang "search.submit"}}
                     </button>
                 </form>
 
+                {{if .HasSearch}}
+                <section class="results-section" aria-labelledby="server-results-title">
+                    <div class="results-header">
+                        <h2 class="results-title" id="server-results-title">{{t .Lang "search.results"}}</h2>
+                        <span class="results-count">{{len .Results}} {{t .Lang "search.count"}}</span>
+                    </div>
+                    {{if .Results}}
+                    <div class="results-grid">
+                        {{range .Results}}
+                        <article class="result-card">
+                            <div class="result-card-header">
+                                <h3 class="result-card-title">{{.Flag}} {{.Name.Common}}</h3>
+                                <span class="result-card-badge">{{.CCA2}}</span>
+                            </div>
+                            <p>{{.Name.Official}}</p>
+                            <p>{{.Region}}{{if .Subregion}} · {{.Subregion}}{{end}}</p>
+                            <a href="/search?q={{urlquery .CCA2}}">View matching record</a>
+                        </article>
+                        {{end}}
+                    </div>
+                    {{else}}
+                    <p>{{t .Lang "search.no_results"}}</p>
+                    {{end}}
+                </section>
+                {{end}}
+
                 <!-- Loading State -->
-                <div id="loading" class="loading-state" style="display: none;">
+                <div id="loading" class="loading-state" aria-live="polite" hidden>
                     <div class="loading-spinner"></div>
                     <p>Searching countries...</p>
                 </div>
 
                 <!-- Results Section -->
-                <section id="results" class="results-section" style="display: none;">
+                <section id="results" class="results-section" aria-live="polite" hidden>
                     <div class="results-header">
                         <h2 class="results-title">Search Results</h2>
                         <span id="resultCount" class="results-count"></span>
@@ -75,7 +103,7 @@
                 </section>
 
                 <!-- Empty State -->
-                <div id="emptyState" class="empty-state" style="display: none;">
+                <div id="emptyState" class="empty-state" hidden>
                     <div class="empty-state-icon">🔍</div>
                     <h3 class="empty-state-title">No countries found</h3>
                     <p class="empty-state-description">Try a different search term or check the spelling</p>
@@ -92,105 +120,16 @@
                 <span class="footer-text">Countries API - Part of apimgr</span>
             </div>
             <div class="footer-links">
-                <a href="/openapi" class="footer-link">API Docs</a>
-                <a href="/healthz" class="footer-link">Status</a>
-                <a href="https://github.com/apimgr" class="footer-link">GitHub</a>
+                <a href="/server/docs/swagger" class="footer-link">API Docs</a>
+                <a href="/server/healthz" class="footer-link">Status</a>
+                <a href="https://github.com/apimgr/countries" class="footer-link">GitHub</a>
             </div>
         </div>
     </footer>
 
     <script src="/static/js/main.js"></script>
-    <script>
-        const searchForm = document.getElementById('searchForm');
-        const loading = document.getElementById('loading');
-        const results = document.getElementById('results');
-        const resultsList = document.getElementById('resultsList');
-        const resultCount = document.getElementById('resultCount');
-        const emptyState = document.getElementById('emptyState');
+    <script src="/static/js/search.js" defer></script>
 
-        searchForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
 
-            const query = document.getElementById('query').value.trim();
-
-            // Show loading state
-            loading.style.display = 'flex';
-            results.style.display = 'none';
-            emptyState.style.display = 'none';
-
-            try {
-                const response = await fetch(`/api/v1/countries/search?q=${encodeURIComponent(query)}`);
-                const data = await response.json();
-
-                loading.style.display = 'none';
-
-                if (!data.success || !data.data || data.data.length === 0) {
-                    emptyState.style.display = 'flex';
-                    return;
-                }
-
-                results.style.display = 'block';
-                resultCount.textContent = `${data.data.length} ${data.data.length === 1 ? 'country' : 'countries'} found`;
-
-                resultsList.innerHTML = data.data.map(country => `
-                    <div class="result-card">
-                        <div class="result-card-header">
-                            <h3 class="result-card-title">${escapeHtml(country.name)}</h3>
-                            <span class="result-card-badge">${escapeHtml(country.country_code)}</span>
-                        </div>
-                        <div class="result-card-body">
-                            <div class="result-card-stat">
-                                <span class="result-card-stat-label">Capital</span>
-                                <span class="result-card-stat-value">${country.capital ? escapeHtml(country.capital) : 'N/A'}</span>
-                            </div>
-                            <div class="result-card-stat">
-                                <span class="result-card-stat-label">Latitude</span>
-                                <span class="result-card-stat-value">${country.latlng && country.latlng[0] ? country.latlng[0].toFixed(2) : 'N/A'}</span>
-                            </div>
-                            <div class="result-card-stat">
-                                <span class="result-card-stat-label">Longitude</span>
-                                <span class="result-card-stat-value">${country.latlng && country.latlng[1] ? country.latlng[1].toFixed(2) : 'N/A'}</span>
-                            </div>
-                        </div>
-                        ${country.timezones && country.timezones.length > 0 ? `
-                        <div class="result-card-footer">
-                            <span class="result-card-stat-label">Timezones</span>
-                            <span class="result-card-timezones">${country.timezones.slice(0, 3).join(', ')}${country.timezones.length > 3 ? '...' : ''}</span>
-                        </div>
-                        ` : ''}
-                    </div>
-                `).join('');
-            } catch (error) {
-                loading.style.display = 'none';
-                console.error('Search error:', error);
-                emptyState.querySelector('.empty-state-title').textContent = 'Search Error';
-                emptyState.querySelector('.empty-state-description').textContent = 'Unable to search countries. Please try again.';
-                emptyState.style.display = 'flex';
-            }
-        });
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        // Focus input on page load
-        document.getElementById('query').focus();
-    </script>
-    <style>
-        .result-card-footer {
-            margin-top: var(--space-3);
-            padding-top: var(--space-3);
-            border-top: 1px solid var(--color-border);
-        }
-        .result-card-timezones {
-            display: block;
-            font-size: var(--font-size-xs);
-            color: var(--color-text-secondary);
-            font-family: var(--font-mono);
-            margin-top: var(--space-1);
-        }
-    </style>
 </body>
 </html>

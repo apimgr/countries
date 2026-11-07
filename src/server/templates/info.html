@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="{{.Lang}}" dir="{{.Dir}}" data-theme="{{.Theme}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{{.Description}}">
+  <title>{{.Title}} · Countries</title>
+  <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">{{t .Lang "nav.skip_main"}}</a>
+  <header class="header"><nav class="nav"><a class="nav-brand" href="/">Countries</a><div class="nav-links"><a class="nav-link" href="/search">{{t .Lang "nav.search"}}</a><a class="nav-link" href="/coordinates">{{t .Lang "nav.location"}}</a><a class="nav-link" href="/server/docs/swagger">REST API</a><a class="nav-link" href="/server/docs/graphql">GraphQL</a></div></nav>
+  {{template "theme-preference" .}}{{template "language-selector" .}}</header>
+  <main class="container server-info" id="main-content">
+    <h1>{{.Title}}</h1>
+    <p class="server-info-description">{{.Description}}</p>
+    {{range .Sections}}
+    <section>
+      <h2>{{.Title}}</h2>
+      {{if .Text}}<p>{{.Text}}</p>{{end}}
+      {{if .Bullets}}<ul>{{range .Bullets}}<li>{{.}}</li>{{end}}</ul>{{end}}
+    </section>
+    {{end}}
+    {{if .Version}}<p class="server-info-version">Version: {{.Version}}{{if .BuildDate}} · Built: {{.BuildDate}}{{end}}</p>{{end}}
+  </main>
+  <footer class="footer"><div class="footer-content"><a class="footer-link" href="/server/privacy">Privacy</a><a class="footer-link" href="/server/terms">Terms</a><a class="footer-link" href="/server/security">Security</a><a class="footer-link" href="/server/contact">Contact</a><a class="footer-link" href="/server/help">Help</a></div></footer>
+</body>
+</html>

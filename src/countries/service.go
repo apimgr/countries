@@ -1,3 +1,4 @@
+// Package countries provides country data lookup and geographic search.
 package countries
 
 import (
@@ -7,12 +8,35 @@ import (
 	"strings"
 )
 
+type CountryName struct {
+	Common   string `json:"common"`
+	Official string `json:"official"`
+}
+
+type Currency struct {
+	Name   string `json:"name"`
+	Symbol string `json:"symbol"`
+}
+
 type Country struct {
-	Name        string    `json:"name"`
-	CountryCode string    `json:"country_code"`
-	Capital     string    `json:"capital"`
-	Timezones   []string  `json:"timezones"`
-	LatLng      []float64 `json:"latlng"`
+	Name           CountryName         `json:"name"`
+	CCA2           string              `json:"cca2"`
+	CCA3           string              `json:"cca3"`
+	NumericCode    string              `json:"ccn3"`
+	Capital        []string            `json:"capital"`
+	Region         string              `json:"region"`
+	Subregion      string              `json:"subregion"`
+	Currencies     map[string]Currency `json:"currencies"`
+	Languages      map[string]string   `json:"languages"`
+	Population     *int64              `json:"population,omitempty"`
+	PopulationYear int                 `json:"population_year,omitempty"`
+	Area           float64             `json:"area"`
+	Flag           string              `json:"flag"`
+	FlagSVGURL     string              `json:"flag_svg_url"`
+	Timezones      []string            `json:"timezones"`
+	LatLng         []float64           `json:"latlng"`
+	Borders        []string            `json:"borders"`
+	TLD            []string            `json:"tld"`
 }
 
 type CountryWithDistance struct {
@@ -21,9 +45,9 @@ type CountryWithDistance struct {
 }
 
 type Service struct {
-	countries   []Country
-	byCode      map[string]*Country
-	rawData     json.RawMessage
+	countries []Country
+	byCode    map[string]*Country
+	rawData   json.RawMessage
 }
 
 func NewService(jsonData []byte) (*Service, error) {
@@ -35,8 +59,11 @@ func NewService(jsonData []byte) (*Service, error) {
 	// Build index by country code
 	byCode := make(map[string]*Country)
 	for i := range countries {
-		code := strings.ToUpper(countries[i].CountryCode)
-		byCode[code] = &countries[i]
+		for _, code := range []string{countries[i].CCA2, countries[i].CCA3, countries[i].NumericCode} {
+			if code != "" {
+				byCode[strings.ToUpper(code)] = &countries[i]
+			}
+		}
 	}
 
 	return &Service{
@@ -59,16 +86,85 @@ func (s *Service) GetByCode(code string) *Country {
 }
 
 func (s *Service) Search(query string) []Country {
-	query = strings.ToLower(query)
+	return s.SearchFiltered(SearchFilters{Query: query})
+}
+
+type SearchFilters struct {
+	Query    string
+	Code     string
+	Region   string
+	Currency string
+	Language string
+}
+
+func (s *Service) SearchFiltered(filters SearchFilters) []Country {
+	filters.Query = strings.ToLower(strings.TrimSpace(filters.Query))
+	filters.Code = strings.ToLower(strings.TrimSpace(filters.Code))
+	filters.Region = strings.ToLower(strings.TrimSpace(filters.Region))
+	filters.Currency = strings.ToLower(strings.TrimSpace(filters.Currency))
+	filters.Language = strings.ToLower(strings.TrimSpace(filters.Language))
 	var results []Country
 
 	for _, country := range s.countries {
-		if strings.Contains(strings.ToLower(country.Name), query) {
-			results = append(results, country)
+		if filters.Query != "" && !countryMatches(country, filters.Query) {
+			continue
 		}
+		if filters.Code != "" && !containsAny(filters.Code, country.CCA2, country.CCA3, country.NumericCode) {
+			continue
+		}
+		if filters.Region != "" && !containsAny(filters.Region, country.Region, country.Subregion) {
+			continue
+		}
+		if filters.Currency != "" && !matchesCurrency(country, filters.Currency) {
+			continue
+		}
+		if filters.Language != "" && !matchesLanguage(country, filters.Language) {
+			continue
+		}
+		results = append(results, country)
 	}
 
 	return results
+}
+
+func countryMatches(country Country, query string) bool {
+	if containsAny(query, country.Name.Common, country.Name.Official, country.CCA2, country.CCA3, country.NumericCode, country.Region, country.Subregion, country.Flag) {
+		return true
+	}
+	if containsAny(query, country.Capital...) || containsAny(query, country.Timezones...) || containsAny(query, country.Borders...) || containsAny(query, country.TLD...) {
+		return true
+	}
+	if matchesCurrency(country, query) || matchesLanguage(country, query) {
+		return true
+	}
+	return false
+}
+
+func containsAny(query string, values ...string) bool {
+	for _, value := range values {
+		if strings.Contains(strings.ToLower(value), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesCurrency(country Country, query string) bool {
+	for code, currency := range country.Currencies {
+		if containsAny(query, code, currency.Name, currency.Symbol) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesLanguage(country Country, query string) bool {
+	for code, language := range country.Languages {
+		if containsAny(query, code, language) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) FindNearest(lat, lon float64) *CountryWithDistance {

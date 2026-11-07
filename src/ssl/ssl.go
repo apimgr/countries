@@ -1,3 +1,4 @@
+// Package ssl configures TLS and automatic certificate management.
 package ssl
 
 import (

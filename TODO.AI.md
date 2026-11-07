@@ -35,3 +35,5 @@ AI.md is authoritative; IDEA.md defines country-specific behavior. Items stay op
 - [ ] Synchronize README.md, docs/, OpenAPI, GraphQL, CLI help, config examples, IDEA.md, and project rules with verified behavior.
 - [ ] Run all required container-based tests, linters, cross-platform builds, documentation checks, workflow checks, and container checks; resolve all failures.
 - [ ] Reconcile this backlog and AUDIT.AI.md with the final verified state, then follow the gitcommit workflow and check the pushed CI run.
+- countries: replace log.Fatalf/os.Exit(1) with sysexits codes in src/main.go, src/client/main.go, src/countrydata/main.go
+- countries: tracked ELF binary ./countries at repo root should be git rm'd and ignored

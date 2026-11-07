@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Countries globe">
+  <rect width="512" height="512" rx="112" fill="#0a0a0f"/>
+  <circle cx="256" cy="256" r="166" fill="none" stroke="#818cf8" stroke-width="24"/>
+  <path d="M90 256h332M256 90c46 46 70 101 70 166s-24 120-70 166c-46-46-70-101-70-166s24-120 70-166Z" fill="none" stroke="#818cf8" stroke-linecap="round" stroke-linejoin="round" stroke-width="20"/>
+</svg>

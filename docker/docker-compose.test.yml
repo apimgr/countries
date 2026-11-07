@@ -1,0 +1,61 @@
+name: countries
+
+x-logging: &default-logging
+  options:
+    max-size: "5m"
+    max-file: "1"
+  driver: json-file
+
+services:
+  countries:
+    image: ghcr.io/apimgr/countries:devel
+    pull_policy: always
+    container_name: countries-app
+    hostname: countries
+    restart: "no"
+    logging: *default-logging
+    environment:
+      PORT: 80
+      DEBUG: true
+      MODE: development
+      TZ: ${TZ:-America/New_York}
+      DATABASE_DIR: /data/db/sqlite
+      CACHE_URL: valkey://countries-cache:6379
+    volumes:
+      - ./volumes/config:/config:z
+      - ./volumes/data:/data:z
+    ports:
+      - "172.17.0.1:64581:80"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/countries", "--port", "80", "--status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    depends_on:
+      countries-cache:
+        condition: service_healthy
+    networks:
+      - countries
+
+  countries-cache:
+    image: valkey/valkey:alpine
+    pull_policy: always
+    container_name: countries-cache
+    restart: "no"
+    logging: *default-logging
+    tmpfs:
+      - /data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - countries
+
+networks:
+  countries:
+    name: countries
+    external: false

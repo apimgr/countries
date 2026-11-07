@@ -13,23 +13,6 @@ if ('serviceWorker' in navigator) {
     });
 }
 
-// Theme toggle functionality (if needed)
-function toggleTheme() {
-    const html = document.documentElement;
-    const currentTheme = html.getAttribute('data-theme');
-    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-    html.setAttribute('data-theme', newTheme);
-    localStorage.setItem('theme', newTheme);
-}
-
-// Load saved theme
-document.addEventListener('DOMContentLoaded', () => {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme) {
-        document.documentElement.setAttribute('data-theme', savedTheme);
-    }
-});
-
 // Helper function to format numbers
 function formatNumber(num) {
     return new Intl.NumberFormat().format(num);

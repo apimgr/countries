@@ -1,0 +1,40 @@
+name: countries
+
+x-logging: &default-logging
+  options:
+    max-size: "5m"
+    max-file: "1"
+  driver: json-file
+
+services:
+  countries:
+    image: ghcr.io/apimgr/countries:devel
+    container_name: countries-app
+    hostname: countries
+    restart: always
+    pull_policy: always
+    logging: *default-logging
+    environment:
+      PORT: 80
+      DEBUG: true
+      MODE: development
+      TZ: ${TZ:-America/New_York}
+      DATABASE_DIR: /data/db/sqlite
+    volumes:
+      - ./volumes/config:/config
+      - ./volumes/data:/data
+    ports:
+      - "64580:80"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/countries", "--port", "80", "--status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    networks:
+      - countries
+
+networks:
+  countries:
+    name: countries
+    external: false

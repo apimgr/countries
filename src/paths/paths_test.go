@@ -30,6 +30,13 @@ func TestGetLogsDir_EnvOverride(t *testing.T) {
 	}
 }
 
+func TestGetDatabaseDirEnvOverride(t *testing.T) {
+	t.Setenv("DATABASE_DIR", "/custom/database")
+	if got := GetDatabaseDir("/data"); got != "/custom/database" {
+		t.Errorf("GetDatabaseDir() = %q, want /custom/database", got)
+	}
+}
+
 // Empty overrides must fall through to the normal resolution logic
 // rather than being treated as a valid explicit path.
 func TestGetConfigDir_EmptyEnvFallsThrough(t *testing.T) {

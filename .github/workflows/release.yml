@@ -73,7 +73,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          LDFLAGS="-s -w -X 'main.Version=${{ env.VERSION }}' -X 'main.Commit=${{ env.COMMIT_ID }}' -X 'main.BuildDate=${{ env.BUILD_DATE }}'"
+          LDFLAGS="-s -w -X 'main.Version=${{ env.VERSION }}' -X 'main.CommitID=${{ env.COMMIT_ID }}' -X 'main.BuildEpoch=${{ env.BUILD_EPOCH }}'"
           go build -buildvcs=false -trimpath -ldflags "${LDFLAGS}" -o ${{ env.PROJECT_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} ./src
 
       # CLI build - only if src/client/ directory exists
@@ -84,7 +84,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          LDFLAGS="-s -w -X 'main.Version=${{ env.VERSION }}' -X 'main.Commit=${{ env.COMMIT_ID }}' -X 'main.BuildDate=${{ env.BUILD_DATE }}'"
+          LDFLAGS="-s -w -X 'main.Version=${{ env.VERSION }}' -X 'main.CommitID=${{ env.COMMIT_ID }}' -X 'main.BuildEpoch=${{ env.BUILD_EPOCH }}'"
           go build -buildvcs=false -trimpath -ldflags "${LDFLAGS}" -o ${{ env.PROJECT_NAME }}-cli-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} ./src/client
 
       - name: Upload server artifact

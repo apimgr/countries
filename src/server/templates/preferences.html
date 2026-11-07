@@ -1,0 +1,24 @@
+{{define "theme-preference"}}
+<form class="theme-form" method="post" action="/server/preferences">
+  <label for="theme">{{t .Lang "theme.label"}}</label>
+  <select id="theme" name="theme">
+    <option value="dark" {{if eq .Theme "dark"}}selected{{end}}>{{t .Lang "theme.dark"}}</option>
+    <option value="light" {{if eq .Theme "light"}}selected{{end}}>{{t .Lang "theme.light"}}</option>
+    <option value="auto" {{if eq .Theme "auto"}}selected{{end}}>{{t .Lang "theme.auto"}}</option>
+  </select>
+  <input type="hidden" name="return_to" value="{{.Path}}">
+  <button type="submit">{{t .Lang "theme.save"}}</button>
+</form>
+{{end}}
+
+{{define "language-selector"}}
+<form class="language-form" method="get" action="{{.Path}}">
+  <label for="lang">{{t .Lang "nav.language"}}</label>
+  <select id="lang" name="lang">
+    {{range .Languages}}
+    <option value="{{.Code}}" {{if eq .Code $.Lang}}selected{{end}}>{{.NativeName}}</option>
+    {{end}}
+  </select>
+  <button type="submit">{{t .Lang "theme.save"}}</button>
+</form>
+{{end}}

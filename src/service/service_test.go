@@ -1,103 +1,71 @@
 package service
 
 import (
-	"runtime"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// DetectServiceManager is a pure runtime.GOOS switch plus read-only stat
-// checks; only the current OS's branch is deterministically verifiable in
-// CI, so assert the contract that matters on Linux (never panics, returns
-// a defined ServiceType) and the fixed mappings for the other platforms
-// via the exported constants.
-func TestDetectServiceManager_ReturnsKnownType(t *testing.T) {
-	got := DetectServiceManager()
-
-	switch runtime.GOOS {
-	case "linux":
-		if got != ServiceSystemd && got != ServiceRunit && got != ServiceUnknown {
-			t.Errorf("DetectServiceManager() on linux = %v, want systemd/runit/unknown", got)
-		}
-	case "darwin":
-		if got != ServiceLaunchd {
-			t.Errorf("DetectServiceManager() on darwin = %v, want ServiceLaunchd", got)
-		}
-	case "windows":
-		if got != ServiceWindows {
-			t.Errorf("DetectServiceManager() on windows = %v, want ServiceWindows", got)
-		}
-	default:
-		// freebsd/openbsd/netbsd/other: just must not panic.
-		_ = got
+func TestServicePathsAndUnsupportedManager(t *testing.T) {
+	if got, want := GetBinaryPath(), "/usr/local/bin/countries"; got != want {
+		t.Errorf("GetBinaryPath() = %q, want %q", got, want)
+	}
+	if got := DetectServiceManager(); got != ServiceUnknown {
+		t.Skipf("container exposes service manager %v; unsupported-manager paths do not apply", got)
+	}
+	for name, operation := range map[string]func() error{
+		"install":   Install,
+		"uninstall": Uninstall,
+		"start":     Start,
+		"stop":      Stop,
+		"restart":   Restart,
+		"reload":    Reload,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := operation(); err == nil {
+				t.Errorf("%s() returned nil for an unsupported service manager", name)
+			}
+		})
 	}
 }
 
-// GetBinaryPath must return a platform-appropriate absolute install path
-// containing the app name.
-func TestGetBinaryPath(t *testing.T) {
-	got := GetBinaryPath()
-	if got == "" {
-		t.Fatal("GetBinaryPath() returned empty string")
+func TestServiceControlUsesSelectedManager(t *testing.T) {
+	binDir := t.TempDir()
+	logPath := t.TempDir() + "/systemctl.log"
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$TEST_SYSTEMCTL_LOG"
+`
+	if err := os.WriteFile(filepath.Join(binDir, "systemctl"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(got, "countries") {
-		t.Errorf("GetBinaryPath() = %q, want it to contain the app name", got)
-	}
+	t.Setenv("TEST_SYSTEMCTL_LOG", logPath)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	oldDetect := detectServiceManager
+	detectServiceManager = func() ServiceType { return ServiceSystemd }
+	t.Cleanup(func() { detectServiceManager = oldDetect })
 
-	if runtime.GOOS == "windows" {
-		if !strings.Contains(got, `Program Files`) {
-			t.Errorf("GetBinaryPath() on windows = %q, want a Program Files path", got)
+	for name, operation := range map[string]func() error{
+		"start":   Start,
+		"stop":    Stop,
+		"restart": Restart,
+		"reload":  Reload,
+		"status":  Status,
+		"disable": Disable,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := operation(); err != nil {
+				t.Fatalf("%s() error = %v", name, err)
+			}
+		})
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"start countries", "stop countries", "restart countries", "reload countries", "status countries", "disable countries"} {
+		if !strings.Contains(string(log), want) {
+			t.Errorf("systemctl log %q missing %q", log, want)
 		}
-	} else {
-		if !strings.HasPrefix(got, "/usr/local/bin/") {
-			t.Errorf("GetBinaryPath() on %s = %q, want /usr/local/bin/ prefix", runtime.GOOS, got)
-		}
-	}
-}
-
-// The ServiceType constants must remain distinct — a collision here would
-// silently break DetectServiceManager()'s callers' switch statements.
-func TestServiceTypeConstantsAreDistinct(t *testing.T) {
-	types := []ServiceType{ServiceUnknown, ServiceSystemd, ServiceRunit, ServiceLaunchd, ServiceWindows, ServiceBSDRC}
-	seen := make(map[ServiceType]bool)
-	for _, ty := range types {
-		if seen[ty] {
-			t.Errorf("duplicate ServiceType value: %v", ty)
-		}
-		seen[ty] = true
-	}
-}
-
-// Install and Uninstall are thin dispatchers over DetectServiceManager's
-// result. In the containerized test environment there is no
-// /run/systemd/system, /run/runit, or /etc/systemd, so on Linux
-// DetectServiceManager reliably returns ServiceUnknown and both functions
-// take their "unsupported service manager" error branch without touching
-// the filesystem or shelling out — the install*/uninstall* branches for a
-// real service manager are out of scope (they write real unit files and
-// invoke systemctl/etc.).
-func TestInstall_UnsupportedServiceManager(t *testing.T) {
-	if runtime.GOOS != "linux" || DetectServiceManager() != ServiceUnknown {
-		t.Skip("only safe to exercise the unsupported-manager branch on a plain Linux container")
-	}
-
-	if err := Install(); err == nil {
-		t.Error("Install() with no detected service manager: error = nil, want non-nil")
-	} else if !strings.Contains(err.Error(), "unsupported service manager") {
-		t.Errorf("Install() error = %v, want 'unsupported service manager'", err)
-	}
-}
-
-// See TestInstall_UnsupportedServiceManager for why this branch is safe to
-// exercise here.
-func TestUninstall_UnsupportedServiceManager(t *testing.T) {
-	if runtime.GOOS != "linux" || DetectServiceManager() != ServiceUnknown {
-		t.Skip("only safe to exercise the unsupported-manager branch on a plain Linux container")
-	}
-
-	if err := Uninstall(); err == nil {
-		t.Error("Uninstall() with no detected service manager: error = nil, want non-nil")
-	} else if !strings.Contains(err.Error(), "unsupported service manager") {
-		t.Errorf("Uninstall() error = %v, want 'unsupported service manager'", err)
 	}
 }

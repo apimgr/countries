@@ -11,25 +11,49 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/apimgr/countries/src/common/api"
 	"github.com/apimgr/countries/src/config"
 	"github.com/apimgr/countries/src/countries"
+	"github.com/apimgr/countries/src/database"
 	"github.com/apimgr/countries/src/paths"
 	"github.com/apimgr/countries/src/server"
+	"github.com/apimgr/countries/src/service"
+	"github.com/apimgr/countries/src/updater"
 )
 
 //go:embed data/countries.json
 var countryData embed.FS
 
 var (
-	Version   = "dev"
-	Commit    = "unknown"
-	BuildDate = "unknown"
+	Version      = "devel"
+	CommitID     = "N/A"
+	BuildDate    = "N/A"
+	BuildEpoch   = "0"
+	OfficialSite = ""
 )
 
+func buildEpoch() int64 {
+	n, err := strconv.ParseInt(BuildEpoch, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func init() {
+	if epoch := buildEpoch(); epoch > 0 {
+		BuildDate = time.Unix(epoch, 0).UTC().Format("2006-01-02T15:04:05Z")
+	}
+}
+
 const projectName = "countries"
+
+var updaterReleaseURL = "https://api.github.com/repos/apimgr/countries/releases?per_page=100"
 
 func main() {
 	configDir, dataDir, logsDir := paths.GetDefaultDirs(projectName)
@@ -38,17 +62,37 @@ func main() {
 	address := flag.String("address", "", "Server address (overrides config)")
 	configDirFlag := flag.String("config", "", "Configuration directory")
 	dataDirFlag := flag.String("data", "", "Data directory")
-	logsDirFlag := flag.String("logs", "", "Logs directory")
+	logsDirFlag := flag.String("log", "", "Logs directory")
 	version := flag.Bool("version", false, "Print version information")
+	debug := flag.Bool("debug", false, "Enable debug logging")
+	color := flag.String("color", "auto", "Color output: auto, yes, no")
 	status := flag.Bool("status", false, "Check service status (for healthcheck)")
 	help := flag.Bool("help", false, "Show help")
+	flag.BoolVar(help, "h", false, "Show help")
+	flag.BoolVar(version, "v", false, "Print version information")
 
 	serviceCmd := flag.String("service", "", "Service commands: start, stop, restart, reload, status, --install, --uninstall, --disable, --help")
 	maintenanceCmd := flag.String("maintenance", "", "Maintenance commands: backup, restore, update, mode, setup")
 	modeFlag := flag.String("mode", "", "Application mode: production, development")
-	updateCmd := flag.String("update", "", "Update commands: check, yes, branch {stable|beta|daily}")
+	var updateCmd optionalUpdateFlag
+	flag.Var(&updateCmd, "update", "Update commands: check, yes, branch {stable|beta|devel}")
 
 	flag.Parse()
+
+	switch strings.ToLower(*color) {
+	case "auto":
+	case "yes":
+		os.Unsetenv("NO_COLOR")
+	case "no":
+		os.Setenv("NO_COLOR", "1")
+	default:
+		fmt.Fprintf(os.Stderr, "invalid --color value %q; choose auto, yes, or no\n", *color)
+		os.Exit(64)
+	}
+	if *debug {
+		log.SetFlags(log.LstdFlags | log.Lshortfile)
+		os.Setenv("DEBUG", "1")
+	}
 
 	if *help {
 		printHelp()
@@ -91,10 +135,7 @@ func main() {
 	}
 
 	if *status {
-		checkPort := cfg.Server.Port
-		if checkPort == "" {
-			checkPort = "8080"
-		}
+		checkPort := resolveServerPort(*port, os.Getenv("PORT"), cfg.Server.Port)
 		if err := checkHealth(checkPort); err != nil {
 			fmt.Fprintf(os.Stderr, "Health check failed: %v\n", err)
 			os.Exit(1)
@@ -108,8 +149,12 @@ func main() {
 		return
 	}
 
-	if *updateCmd != "" {
-		handleUpdateCommand(*updateCmd, cfg)
+	if updateCmd.set {
+		command, args := resolveUpdateInvocation(updateCmd.value, flag.Args())
+		if err := handleUpdateCommandWithArgs(command, cfg, args, configPath); err != nil {
+			log.Printf("Update command failed: %v", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -123,15 +168,7 @@ func main() {
 		return
 	}
 
-	serverPort := cfg.Server.Port
-	if *port != "" {
-		serverPort = *port
-	} else if envPort := os.Getenv("PORT"); envPort != "" {
-		serverPort = envPort
-	}
-	if serverPort == "" {
-		serverPort = "8080"
-	}
+	serverPort := resolveServerPort(*port, os.Getenv("PORT"), cfg.Server.Port)
 
 	serverAddress := cfg.Server.Address
 	if *address != "" {
@@ -156,10 +193,28 @@ func main() {
 	log.Printf("Loaded %d countries", countriesService.Count())
 
 	server.Version = Version
-	server.Commit = Commit
+	server.Commit = CommitID
 	server.BuildDate = BuildDate
 
-	srv := server.New(countriesService, cfg, serverAddress, serverPort, Version, BuildDate, Commit)
+	driver := strings.ToLower(strings.TrimSpace(cfg.Server.Database.Driver))
+	if driver == "" || driver == "sqlite2" || driver == "sqlite3" {
+		driver = "sqlite"
+	}
+	if driver != "sqlite" {
+		fmt.Fprintf(os.Stderr, "Unsupported database driver %q\n", cfg.Server.Database.Driver)
+		os.Exit(78)
+	}
+	databasePath := strings.ReplaceAll(cfg.Server.Database.URL, "{data_dir}", dataDir)
+	if cfg.Server.Database.URL == "" || cfg.Server.Database.URL == "{data_dir}/db/server.db" {
+		databasePath = filepath.Join(paths.GetDatabaseDir(dataDir), "server.db")
+	}
+	db, err := database.Open(databasePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize server database: %v\n", err)
+		os.Exit(70)
+	}
+	defer db.Close()
+	srv := server.New(countriesService, cfg, serverAddress, serverPort, Version, BuildDate, CommitID, db)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -203,19 +258,19 @@ Options:
   --address ADDRESS    Server address (default: from config or 0.0.0.0)
   --config DIR         Configuration directory
   --data DIR           Data directory
-  --logs DIR           Logs directory
-  --version            Print version information
+  --log DIR            Logs directory
+  -v, --version        Print version information
+  --debug              Enable debug logging
+  --color auto|yes|no  Color output (NO_COLOR is honored in auto mode)
   --status             Check service status (for healthcheck)
-  --help               Show this help message
+  -h, --help           Show this help message
 
 Mode Commands:
   --mode production    Set production mode
   --mode development   Set development mode
 
 Update Commands:
-  --update check       Check for available updates
-  --update yes         Install available updates
-  --update branch {stable|beta|daily}  Set update branch
+  --update [check|yes|branch {stable|beta|devel}]  Check or install updates
 
 Service Commands:
   --service start      Start the service
@@ -237,8 +292,17 @@ Maintenance Commands:
 `, Version)
 }
 
+func resolveServerPort(flagPort, envPort, configPort string) string {
+	for _, port := range []string{flagPort, envPort, configPort} {
+		if port = strings.TrimSpace(port); port != "" {
+			return port
+		}
+	}
+	return "8080"
+}
+
 func checkHealth(port string) error {
-	url := fmt.Sprintf("http://127.0.0.1:%s/api/v1/health", port)
+	url := fmt.Sprintf("http://127.0.0.1:%s%s", port, api.APIPath("server/healthz"))
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -252,32 +316,34 @@ func checkHealth(port string) error {
 }
 
 func handleServiceCommand(cmd, configDir string) {
+	var err error
 	switch cmd {
 	case "start":
-		runCmd("systemctl", "start", "countries")
+		err = service.Start()
 	case "stop":
-		runCmd("systemctl", "stop", "countries")
+		err = service.Stop()
 	case "restart":
-		runCmd("systemctl", "restart", "countries")
+		err = service.Restart()
 	case "reload":
-		runCmd("systemctl", "reload", "countries")
+		err = service.Reload()
 	case "status":
-		runCmd("systemctl", "status", "countries")
+		err = service.Status()
 	case "--install":
 		fmt.Println("Installing countries service...")
-		runCmd("systemctl", "daemon-reload")
-		runCmd("systemctl", "enable", "countries")
-		runCmd("systemctl", "start", "countries")
+		err = service.Install()
 	case "--uninstall":
 		fmt.Println("Uninstalling countries service...")
-		runCmd("systemctl", "stop", "countries")
-		runCmd("systemctl", "disable", "countries")
+		err = service.Uninstall()
 	case "--disable":
-		runCmd("systemctl", "disable", "countries")
+		err = service.Disable()
 	case "--help":
 		fmt.Println("Service commands: start, stop, restart, reload, status, --install, --uninstall, --disable")
 	default:
 		fmt.Printf("Unknown service command: %s\n", cmd)
+		os.Exit(1)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Service command %q failed: %v\n", cmd, err)
 		os.Exit(1)
 	}
 }
@@ -308,8 +374,19 @@ func handleMaintenanceCommand(cmd, configDir, dataDir, logsDir, configPath strin
 		exec.Command("tar", "-xzf", args[0], "-C", "/").Run()
 		fmt.Println("Restore completed")
 	case "update":
-		fmt.Printf("Current version: %s\n", Version)
-		fmt.Println("Update feature not yet implemented")
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			log.Printf("Failed to load configuration: %v", err)
+			os.Exit(1)
+		}
+		command := "yes"
+		if len(args) > 0 {
+			command = args[0]
+		}
+		if err := handleUpdateCommand(command, cfg, configPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Update command failed: %v\n", err)
+			os.Exit(1)
+		}
 	case "mode":
 		cfg, _ := config.Load(configPath)
 		mode := cfg.Server.Mode
@@ -341,29 +418,104 @@ func setApplicationMode(mode, configPath string) {
 	fmt.Printf("Application mode set to: %s\n", mode)
 }
 
-func handleUpdateCommand(cmd string, cfg *config.Config) {
-	args := flag.Args()
+type optionalUpdateFlag struct {
+	value string
+	set   bool
+}
+
+func (f *optionalUpdateFlag) String() string { return f.value }
+
+func (f *optionalUpdateFlag) Set(value string) error {
+	f.value = value
+	f.set = true
+	return nil
+}
+
+func (f *optionalUpdateFlag) IsBoolFlag() bool { return true }
+
+func resolveUpdateInvocation(value string, positional []string) (string, []string) {
+	if value != "" && value != "true" {
+		return value, positional
+	}
+	if len(positional) > 0 {
+		switch positional[0] {
+		case "check", "yes", "branch":
+			return positional[0], positional[1:]
+		}
+	}
+	return "yes", positional
+}
+
+func handleUpdateCommand(cmd string, cfg *config.Config, configPaths ...string) error {
+	return handleUpdateCommandWithArgs(cmd, cfg, flag.Args(), configPaths...)
+}
+
+func handleUpdateCommandWithArgs(cmd string, cfg *config.Config, args []string, configPaths ...string) error {
 	switch cmd {
 	case "check":
-		fmt.Printf("Current version: %s\n", Version)
-		fmt.Printf("Update branch: %s\n", cfg.Server.UpdateBranch)
-		fmt.Println("No updates available")
+		release, err := checkUpdate(cfg)
+		if err != nil {
+			return err
+		}
+		if release == nil {
+			fmt.Printf("%s is up to date on the %s channel.\n", Version, cfg.Server.Update.Branch)
+			return nil
+		}
+		fmt.Printf("Update available: %s (current: %s)\n", release.TagName, Version)
 	case "yes":
-		fmt.Println("Update installation not implemented")
+		release, err := checkUpdate(cfg)
+		if err != nil {
+			return err
+		}
+		if release == nil {
+			fmt.Printf("%s is up to date.\n", Version)
+			return nil
+		}
+		binaryPath, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolve current binary: %w", err)
+		}
+		binaryName := updater.BinaryName(projectName, "")
+		if err := updater.Install(context.Background(), nil, release, binaryName, binaryPath); err != nil {
+			return err
+		}
+		fmt.Printf("Installed %s; restarting.\n", release.TagName)
+		return updater.RestartSelf()
 	case "branch":
 		if len(args) == 0 {
-			fmt.Printf("Current branch: %s\n", cfg.Server.UpdateBranch)
-			return
+			fmt.Printf("Current branch: %s\n", cfg.Server.Update.Branch)
+			return nil
 		}
-		if args[0] != "stable" && args[0] != "beta" && args[0] != "daily" {
-			fmt.Printf("Invalid branch: %s\n", args[0])
-			os.Exit(1)
+		branch := normalizeUpdateBranch(args[0])
+		if branch != "stable" && branch != "beta" && branch != "devel" {
+			return fmt.Errorf("invalid update branch %q; choose stable, beta, or devel", args[0])
 		}
-		cfg.Server.UpdateBranch = args[0]
-		fmt.Printf("Branch set to: %s\n", args[0])
+		cfg.Server.Update.Branch = branch
+		if len(configPaths) > 0 {
+			if err := config.Save(configPaths[0], cfg); err != nil {
+				return fmt.Errorf("save update branch: %w", err)
+			}
+		}
+		fmt.Printf("Branch set to: %s\n", branch)
 	default:
-		fmt.Printf("Unknown update command: %s\n", cmd)
-		os.Exit(1)
+		return fmt.Errorf("unknown update command %q", cmd)
+	}
+	return nil
+}
+
+func checkUpdate(cfg *config.Config) (*updater.Release, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	buildEpoch, _ := strconv.ParseInt(BuildEpoch, 10, 64)
+	return updater.Check(ctx, nil, updaterReleaseURL, cfg.Server.Update.Branch, Version, buildEpoch)
+}
+
+func normalizeUpdateBranch(branch string) string {
+	switch strings.ToLower(strings.TrimSpace(branch)) {
+	case "daily", "rolling", "dev", "development":
+		return "devel"
+	default:
+		return strings.ToLower(strings.TrimSpace(branch))
 	}
 }
 

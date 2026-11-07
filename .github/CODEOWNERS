@@ -1,0 +1,7 @@
+* @apimgr
+/.github/ @apimgr
+/docker/ @apimgr
+/Makefile @apimgr
+/src/server/security.go @apimgr
+/src/server/trustedproxy.go @apimgr
+/src/ssl/ @apimgr

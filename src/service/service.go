@@ -1,3 +1,4 @@
+// Package service installs and controls the application as an OS service.
 package service
 
 import (
@@ -6,8 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 )
+
+var detectServiceManager = DetectServiceManager
 
 const (
 	appName = "countries"
@@ -60,7 +62,7 @@ func DetectServiceManager() ServiceType {
 
 // Install installs the service for the detected service manager
 func Install() error {
-	serviceType := DetectServiceManager()
+	serviceType := detectServiceManager()
 
 	switch serviceType {
 	case ServiceSystemd:
@@ -80,7 +82,7 @@ func Install() error {
 
 // Uninstall removes the service
 func Uninstall() error {
-	serviceType := DetectServiceManager()
+	serviceType := detectServiceManager()
 
 	switch serviceType {
 	case ServiceSystemd:
@@ -359,7 +361,7 @@ func installWindows() error {
 	}
 
 	// Create service using sc.exe
-	displayName := strings.Title(appName) + " API"
+	displayName := "Countries API"
 	cmd := exec.Command("sc.exe", "create", appName,
 		"binPath=", binaryPath,
 		"DisplayName=", displayName,
@@ -475,7 +477,7 @@ func copyBinary(src, dst string) error {
 
 // Start starts the service
 func Start() error {
-	serviceType := DetectServiceManager()
+	serviceType := detectServiceManager()
 
 	switch serviceType {
 	case ServiceSystemd:
@@ -496,7 +498,7 @@ func Start() error {
 
 // Stop stops the service
 func Stop() error {
-	serviceType := DetectServiceManager()
+	serviceType := detectServiceManager()
 
 	switch serviceType {
 	case ServiceSystemd:
@@ -517,7 +519,7 @@ func Stop() error {
 
 // Restart restarts the service
 func Restart() error {
-	serviceType := DetectServiceManager()
+	serviceType := detectServiceManager()
 
 	switch serviceType {
 	case ServiceSystemd:
@@ -539,7 +541,7 @@ func Restart() error {
 
 // Reload sends reload signal to the service
 func Reload() error {
-	serviceType := DetectServiceManager()
+	serviceType := detectServiceManager()
 
 	switch serviceType {
 	case ServiceSystemd:
@@ -550,4 +552,51 @@ func Reload() error {
 		// For others, restart is the fallback
 		return Restart()
 	}
+}
+
+// Status reports service state through the detected platform manager.
+func Status() error {
+	switch detectServiceManager() {
+	case ServiceSystemd:
+		return runServiceCommand("systemctl", "status", appName)
+	case ServiceRunit:
+		return runServiceCommand("sv", "status", appName)
+	case ServiceLaunchd:
+		return runServiceCommand("launchctl", "list", "com."+orgName+"."+appName)
+	case ServiceWindows:
+		return runServiceCommand("sc.exe", "query", appName)
+	case ServiceBSDRC:
+		return runServiceCommand("service", appName, "status")
+	default:
+		return fmt.Errorf("unsupported service manager")
+	}
+}
+
+// Disable prevents the service manager from starting the application automatically.
+func Disable() error {
+	switch detectServiceManager() {
+	case ServiceSystemd:
+		return runServiceCommand("systemctl", "disable", appName)
+	case ServiceRunit:
+		linkPath := filepath.Join("/var/service", appName)
+		if err := os.Remove(linkPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove runit service link: %w", err)
+		}
+		return nil
+	case ServiceLaunchd:
+		return runServiceCommand("launchctl", "disable", "system/com."+orgName+"."+appName)
+	case ServiceWindows:
+		return runServiceCommand("sc.exe", "config", appName, "start=", "disabled")
+	case ServiceBSDRC:
+		return runServiceCommand("sysrc", appName+"_enable=NO")
+	default:
+		return fmt.Errorf("unsupported service manager")
+	}
+}
+
+func runServiceCommand(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }

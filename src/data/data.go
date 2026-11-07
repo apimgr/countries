@@ -1,3 +1,4 @@
+// Package data embeds and serves the application country dataset.
 package data
 
 import "embed"

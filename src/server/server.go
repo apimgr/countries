@@ -1,19 +1,26 @@
+// Package server exposes country data through HTTP APIs and web pages.
 package server
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"log"
-	"math/rand"
+	"math"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/apimgr/countries/src/common/api"
+	"github.com/apimgr/countries/src/common/i18n"
 	"github.com/apimgr/countries/src/config"
 	"github.com/apimgr/countries/src/countries"
+	graphqlapi "github.com/apimgr/countries/src/graphql"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -38,9 +45,16 @@ type Server struct {
 	version          string
 	buildDate        string
 	commit           string
+	trustedProxies   []*net.IPNet
+	graphqlHandler   http.Handler
+	rateLimiter      *rateLimiter
 }
 
-func New(countriesService *countries.Service, cfg *config.Config, address, port, version, buildDate, commit string) *Server {
+func New(countriesService *countries.Service, cfg *config.Config, address, port, version, buildDate, commit string, databases ...*sql.DB) *Server {
+	var db *sql.DB
+	if len(databases) > 0 {
+		db = databases[0]
+	}
 	s := &Server{
 		router:           chi.NewRouter(),
 		countriesService: countriesService,
@@ -48,14 +62,24 @@ func New(countriesService *countries.Service, cfg *config.Config, address, port,
 		version:          version,
 		buildDate:        buildDate,
 		commit:           commit,
+		trustedProxies:   buildTrustedProxies(address, cfg.Server.TrustedProxies.Additional),
+		rateLimiter:      newRateLimiter(cfg.Server.RateLimit, db),
 	}
 
 	// Parse templates
-	tmpl, err := template.ParseFS(templatesFS, "templates/*.html")
+	tmpl, err := template.New("pages").Funcs(template.FuncMap{
+		"t": i18n.Translate,
+	}).ParseFS(templatesFS, "templates/*.html")
 	if err != nil {
 		log.Printf("Warning: could not parse templates: %v", err)
 	}
 	s.templates = tmpl
+	graphqlHandler, err := graphqlapi.NewHandler(countriesService, version)
+	if err != nil {
+		log.Printf("Warning: could not initialize GraphQL schema: %v", err)
+	} else {
+		s.graphqlHandler = graphqlHandler
+	}
 
 	s.setupRoutes()
 	return s
@@ -65,15 +89,24 @@ func (s *Server) setupRoutes() {
 	r := s.router
 
 	// Middleware
-	r.Use(middleware.Logger)
+	r.Use(requestIDMiddleware)
+	r.Use(requestLogMiddleware)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.RealIP)
+	r.Use(s.trustedProxyMiddleware)
+	r.Use(s.securityHeadersMiddleware)
+	r.Use(s.rateLimiter.middleware)
 	r.Use(s.corsMiddleware)
 
-	// Health check endpoints
-	r.Get("/healthz", s.handleHealthz)
-	r.Get("/health", s.handleHealthz)
-	r.Get("/status", s.handleHealthz)
+	// Canonical server status page.
+	r.Get("/server/healthz", s.handleHealthPage)
+	r.Get("/server/about", s.handleInfoPage)
+	r.Get("/server/help", s.handleInfoPage)
+	r.Get("/server/privacy", s.handleInfoPage)
+	r.Get("/server/terms", s.handleInfoPage)
+	r.Get("/server/security", s.handleInfoPage)
+	r.Get("/server/contact", s.handleInfoPage)
+	r.Get("/server/docs/graphql", s.handleGraphQLPage)
+	r.Post("/server/preferences", s.handleSavePreferences)
 
 	// Static files
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
@@ -82,17 +115,28 @@ func (s *Server) setupRoutes() {
 	r.Get("/", s.handleHome)
 	r.Get("/search", s.handleSearchPage)
 	r.Get("/coordinates", s.handleCoordinatesPage)
-	r.Get("/openapi", s.handleOpenAPIPage)
+	r.Get("/server/docs/swagger", s.handleOpenAPIPage)
 
 	// PWA support
 	r.Get("/manifest.json", s.handleManifest)
 	r.Get("/sw.js", s.handleServiceWorker)
 	r.Get("/robots.txt", s.handleRobots)
-	r.Get("/security.txt", s.handleSecurity)
 	r.Get("/.well-known/security.txt", s.handleSecurity)
+	r.Get("/llms.txt", s.handleLLMS)
+	r.Get("/.well-known/llms.txt", s.handleLLMS)
 
 	// API v1 routes
-	r.Route("/api/v1", func(r chi.Router) {
+	r.Route(api.APIBasePath(), func(r chi.Router) {
+		r.Get("/server/healthz", s.handleHealthz)
+		r.Get("/server/about", s.handleInfoAPI)
+		r.Get("/server/help", s.handleInfoAPI)
+		r.Get("/server/privacy", s.handleInfoAPI)
+		r.Get("/server/terms", s.handleInfoAPI)
+		r.Get("/server/security", s.handleInfoAPI)
+		r.Get("/server/contact", s.handleInfoAPI)
+		r.Post("/server/graphql", s.graphqlEndpoint())
+		r.Get("/server/swagger", s.handleOpenAPISpec)
+		r.Post("/server/reports/{report}", s.handleSecurityReport)
 		r.Get("/countries", s.handleGetCountries)
 		r.Get("/countries/search", s.handleSearchCountries)
 		r.Get("/countries/{code}", s.handleGetCountryByCode)
@@ -105,25 +149,18 @@ func (s *Server) setupRoutes() {
 		r.Get("/count.txt", s.handleCountTxt)
 	})
 
-	// Raw data endpoint
-	r.Get("/api/data", s.handleRawData)
+	// Stable discovery aliases serve the same handlers directly.
+	r.Get("/api/healthz", s.handleHealthz)
+	r.Get("/api/swagger", s.handleOpenAPISpec)
+	r.Post("/api/graphql", s.graphqlEndpoint())
 
-	// Shorthand routes
-	r.Get("/random", s.handleRandomCountry)
-	r.Get("/random.txt", s.handleRandomCountryTxt)
-	r.Get("/countries", s.handleGetCountries)
-	r.Get("/countries/search/{query}", s.handleSearchCountriesPath)
-	r.Get("/countries/{code}", s.handleGetCountryByCode)
-	r.Get("/coordinates", s.handleFindNearestCountry)
-	r.Post("/coordinates", s.handleFindNearestCountryPost)
-	r.Get("/data", s.handleRawData)
 }
 
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", s.config.WebSecurity.CORS)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, X-Request-ID, X-Correlation-ID, X-Trace-ID")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -160,9 +197,13 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 // Health check handler
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, map[string]interface{}{
-		"status":  "ok",
-		"service": "countries",
-		"version": s.version,
+		"ok": true,
+		"data": map[string]interface{}{
+			"status":        "healthy",
+			"service":       "countries",
+			"version":       s.version,
+			"country_count": s.countriesService.Count(),
+		},
 	})
 }
 
@@ -173,11 +214,10 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := map[string]interface{}{
-		"TotalCountries": s.countriesService.Count(),
-		"Version":        s.version,
-		"Theme":          s.config.WebUI.Theme,
-	}
+	data := s.pageContext(w, r, "/")
+	data["TotalCountries"] = s.countriesService.Count()
+	data["Version"] = s.version
+	data["BaseURL"] = s.reportOrigin(r)
 
 	if err := s.templates.ExecuteTemplate(w, "home.html", data); err != nil {
 		log.Printf("Template error: %v", err)
@@ -191,8 +231,16 @@ func (s *Server) handleSearchPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := map[string]interface{}{
-		"Theme": s.config.WebUI.Theme,
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	data := s.pageContext(w, r, "/search")
+	data["Query"], data["HasSearch"] = query, query != ""
+	if query != "" {
+		filters, err := searchFiltersFromRequest(r)
+		if err != nil {
+			s.errorResponse(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		data["Results"] = s.countriesService.SearchFiltered(filters)
 	}
 
 	if err := s.templates.ExecuteTemplate(w, "search.html", data); err != nil {
@@ -207,8 +255,18 @@ func (s *Server) handleCoordinatesPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := map[string]interface{}{
-		"Theme": s.config.WebUI.Theme,
+	data := s.pageContext(w, r, "/coordinates")
+	latText, lonText := strings.TrimSpace(r.URL.Query().Get("lat")), strings.TrimSpace(r.URL.Query().Get("lon"))
+	if latText != "" || lonText != "" {
+		lat, latErr := strconv.ParseFloat(latText, 64)
+		lon, lonErr := strconv.ParseFloat(lonText, 64)
+		if latErr != nil || lonErr != nil || !validCoordinates(lat, lon) {
+			data["Error"] = "Enter a latitude from -90 to 90 and a longitude from -180 to 180."
+			w.WriteHeader(http.StatusBadRequest)
+		} else {
+			data["Latitude"], data["Longitude"] = latText, lonText
+			data["Nearest"] = s.countriesService.FindNearest(lat, lon)
+		}
 	}
 
 	if err := s.templates.ExecuteTemplate(w, "coordinates.html", data); err != nil {
@@ -223,9 +281,7 @@ func (s *Server) handleOpenAPIPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := map[string]interface{}{
-		"Theme": s.config.WebUI.Theme,
-	}
+	data := s.pageContext(w, r, "/server/docs/swagger")
 
 	if err := s.templates.ExecuteTemplate(w, "openapi.html", data); err != nil {
 		log.Printf("Template error: %v", err)
@@ -244,8 +300,7 @@ func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
 		"background_color": "#1a1a2e",
 		"theme_color":      "#0f3460",
 		"icons": []map[string]interface{}{
-			{"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
-			{"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+			{"src": "/static/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"},
 		},
 	}
 	w.Header().Set("Content-Type", "application/manifest+json")
@@ -283,51 +338,151 @@ func (s *Server) handleRobots(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSecurity(w http.ResponseWriter, r *http.Request) {
-	security := "Contact: mailto:" + s.config.WebSecurity.Admin + "\nPreferred-Languages: en\n"
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(security))
+	security := "Contact: https://github.com/apimgr/countries/security/advisories/new\n" +
+		"Policy: " + s.reportOrigin(r) + "/server/security\n" +
+		"Expires: " + time.Now().UTC().AddDate(1, 0, 0).Format(time.RFC3339) + "\n"
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(security))
+}
+
+func (s *Server) handleLLMS(w http.ResponseWriter, r *http.Request) {
+	origin := s.reportOrigin(r)
+	content := "# Countries\n" +
+		"> Public, read-only country reference data and geographic lookups.\n\n" +
+		"## API\n" +
+		"Base URL: " + origin + api.APIBasePath() + "\n" +
+		"Authentication: None\n" +
+		"Rate limit: See server response headers and deployment policy.\n\n" +
+		"## Endpoints\n" +
+		"- GET /countries — list and filter country records\n" +
+		"- GET /countries/{code} — read a country by ISO code\n" +
+		"- GET /countries/search — search country fields\n" +
+		"- GET /coordinates — find the nearest country\n" +
+		"- POST /coordinates — find the nearest country from JSON coordinates\n" +
+		"- GET /nearby — find nearby country centroids\n" +
+		"- GET /stats — read dataset statistics\n" +
+		"\nSee " + origin + "/server/docs/swagger for the complete API reference.\n"
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(content))
 }
 
 // API handlers
 func (s *Server) handleGetCountries(w http.ResponseWriter, r *http.Request) {
-	countries := s.countriesService.GetAll()
+	filters, err := searchFiltersFromRequest(r)
+	if err != nil {
+		s.errorResponse(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	allCountries := s.countriesService.GetAll()
+	if filters != (countries.SearchFilters{}) {
+		allCountries = s.countriesService.SearchFiltered(filters)
+	}
+	page, limit, err := paginationFromRequest(r)
+	if err != nil {
+		s.errorResponse(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	start := (page - 1) * limit
+	end := start + limit
+	if start >= len(allCountries) {
+		start = len(allCountries)
+	}
+	if end > len(allCountries) {
+		end = len(allCountries)
+	}
+	items := allCountries[start:end]
 	s.jsonResponse(w, map[string]interface{}{
-		"success": true,
-		"data":    countries,
-		"count":   len(countries),
+		"ok":   true,
+		"data": items,
+		"pagination": map[string]int{
+			"page": page, "limit": limit, "total": len(allCountries),
+			"pages": (len(allCountries) + limit - 1) / limit,
+		},
 	})
 }
 
 func (s *Server) handleSearchCountries(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query().Get("q")
-	if query == "" {
-		s.errorResponse(w, "Query parameter 'q' is required", http.StatusBadRequest)
+	filters, err := searchFiltersFromRequest(r)
+	if err != nil {
+		s.errorResponse(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	results := s.countriesService.Search(query)
+	if filters == (countries.SearchFilters{}) {
+		s.errorResponse(w, "At least one search filter is required", http.StatusBadRequest)
+		return
+	}
+	results := s.countriesService.SearchFiltered(filters)
+	page, limit, err := paginationFromRequest(r)
+	if err != nil {
+		s.errorResponse(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	total := len(results)
+	start := (page - 1) * limit
+	if start > total {
+		start = total
+	}
+	end := start + limit
+	if end > total {
+		end = total
+	}
 	s.jsonResponse(w, map[string]interface{}{
-		"success": true,
-		"data":    results,
-		"count":   len(results),
-		"query":   query,
+		"ok":   true,
+		"data": results[start:end],
+		"pagination": map[string]int{
+			"page": page, "limit": limit, "total": total,
+			"pages": (total + limit - 1) / limit,
+		},
 	})
 }
 
-func (s *Server) handleSearchCountriesPath(w http.ResponseWriter, r *http.Request) {
-	query := chi.URLParam(r, "query")
-	if query == "" {
-		s.errorResponse(w, "Search query is required", http.StatusBadRequest)
-		return
+func searchFiltersFromRequest(r *http.Request) (countries.SearchFilters, error) {
+	values := r.URL.Query()
+	read := func(key string) (string, error) {
+		value := strings.TrimSpace(values.Get(key))
+		if len(value) > 256 {
+			return "", fmt.Errorf("query parameter %q exceeds 256 characters", key)
+		}
+		return value, nil
 	}
+	var filters countries.SearchFilters
+	var err error
+	if filters.Query, err = read("q"); err != nil {
+		return filters, err
+	}
+	if filters.Code, err = read("code"); err != nil {
+		return filters, err
+	}
+	if filters.Region, err = read("region"); err != nil {
+		return filters, err
+	}
+	if filters.Currency, err = read("currency"); err != nil {
+		return filters, err
+	}
+	if filters.Language, err = read("language"); err != nil {
+		return filters, err
+	}
+	return filters, nil
+}
 
-	results := s.countriesService.Search(query)
-	s.jsonResponse(w, map[string]interface{}{
-		"success": true,
-		"data":    results,
-		"count":   len(results),
-		"query":   query,
-	})
+func paginationFromRequest(r *http.Request) (int, int, error) {
+	page := 1
+	limit := 250
+	if value := strings.TrimSpace(r.URL.Query().Get("page")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 1000000 {
+			return 0, 0, fmt.Errorf("page must be between 1 and 1000000")
+		}
+		page = parsed
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 1000 {
+			return 0, 0, fmt.Errorf("limit must be between 1 and 1000")
+		}
+		limit = parsed
+	}
+	return page, limit, nil
 }
 
 func (s *Server) handleGetCountryByCode(w http.ResponseWriter, r *http.Request) {
@@ -344,8 +499,8 @@ func (s *Server) handleGetCountryByCode(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.jsonResponse(w, map[string]interface{}{
-		"success": true,
-		"data":    country,
+		"ok":   true,
+		"data": country,
 	})
 }
 
@@ -369,6 +524,10 @@ func (s *Server) handleFindNearestCountry(w http.ResponseWriter, r *http.Request
 		s.errorResponse(w, "Invalid longitude", http.StatusBadRequest)
 		return
 	}
+	if !validCoordinates(lat, lon) {
+		s.errorResponse(w, "Latitude or longitude is outside its valid range", http.StatusBadRequest)
+		return
+	}
 
 	nearest := s.countriesService.FindNearest(lat, lon)
 	if nearest == nil {
@@ -377,31 +536,40 @@ func (s *Server) handleFindNearestCountry(w http.ResponseWriter, r *http.Request
 	}
 
 	s.jsonResponse(w, map[string]interface{}{
-		"success": true,
-		"data":    nearest,
+		"ok":   true,
+		"data": nearest,
 	})
 }
 
 func (s *Server) handleFindNearestCountryPost(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Lat float64 `json:"lat"`
-		Lon float64 `json:"lon"`
+		Lat *float64 `json:"lat"`
+		Lon *float64 `json:"lon"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	defer r.Body.Close()
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
 		s.errorResponse(w, "Invalid JSON body", http.StatusBadRequest)
 		return
 	}
 
-	nearest := s.countriesService.FindNearest(req.Lat, req.Lon)
+	if req.Lat == nil || req.Lon == nil {
+		s.errorResponse(w, "Latitude and longitude are required", http.StatusBadRequest)
+		return
+	}
+	if !validCoordinates(*req.Lat, *req.Lon) {
+		s.errorResponse(w, "Latitude or longitude is outside its valid range", http.StatusBadRequest)
+		return
+	}
+	nearest := s.countriesService.FindNearest(*req.Lat, *req.Lon)
 	if nearest == nil {
 		s.errorResponse(w, "No countries found", http.StatusNotFound)
 		return
 	}
 
 	s.jsonResponse(w, map[string]interface{}{
-		"success": true,
-		"data":    nearest,
+		"ok":   true,
+		"data": nearest,
 	})
 }
 
@@ -426,6 +594,10 @@ func (s *Server) handleFindNearby(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, "Invalid longitude", http.StatusBadRequest)
 		return
 	}
+	if !validCoordinates(lat, lon) {
+		s.errorResponse(w, "Latitude or longitude is outside its valid range", http.StatusBadRequest)
+		return
+	}
 
 	radius := 500.0 // Default 500km
 	if radiusStr != "" {
@@ -436,34 +608,38 @@ func (s *Server) handleFindNearby(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if math.IsNaN(radius) || math.IsInf(radius, 0) || radius < 0 || radius > 20038 {
+		s.errorResponse(w, "Radius must be between 0 and 20038 kilometers", http.StatusBadRequest)
+		return
+	}
 	results := s.countriesService.FindNearby(lat, lon, radius)
 	s.jsonResponse(w, map[string]interface{}{
-		"success": true,
-		"data":    results,
-		"count":   len(results),
+		"ok":    true,
+		"data":  results,
+		"count": len(results),
 	})
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, map[string]interface{}{
-		"success": true,
+		"ok": true,
 		"data": map[string]interface{}{
 			"total_countries": s.countriesService.Count(),
 			"version":         s.version,
-			"data_source":     "REST Countries",
+			"data_source":     "embedded country dataset",
 		},
 	})
 }
 
 func (s *Server) handleStatsTxt(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte("Total Countries: " + strconv.Itoa(s.countriesService.Count()) + "\nVersion: " + s.version + "\nData Source: REST Countries\n"))
+	w.Write([]byte("Total Countries: " + strconv.Itoa(s.countriesService.Count()) + "\nVersion: " + s.version + "\nData Source: embedded country dataset\n"))
 }
 
 func (s *Server) handleCount(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, map[string]interface{}{
-		"success": true,
-		"count":   s.countriesService.Count(),
+		"ok":   true,
+		"data": map[string]interface{}{"count": s.countriesService.Count()},
 	})
 }
 
@@ -472,49 +648,34 @@ func (s *Server) handleCountTxt(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(strconv.Itoa(s.countriesService.Count())))
 }
 
-func (s *Server) handleRawData(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(s.countriesService.GetRaw())
-}
-
-func (s *Server) handleRandomCountry(w http.ResponseWriter, r *http.Request) {
-	allCountries := s.countriesService.GetAll()
-	if len(allCountries) == 0 {
-		s.errorResponse(w, "No countries available", http.StatusNotFound)
-		return
-	}
-
-	idx := rand.Intn(len(allCountries))
-	s.jsonResponse(w, map[string]interface{}{
-		"success": true,
-		"data":    allCountries[idx],
-	})
-}
-
-func (s *Server) handleRandomCountryTxt(w http.ResponseWriter, r *http.Request) {
-	allCountries := s.countriesService.GetAll()
-	if len(allCountries) == 0 {
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("No countries available"))
-		return
-	}
-
-	idx := rand.Intn(len(allCountries))
-	country := allCountries[idx]
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(country.Name + " (" + country.CountryCode + ") - Capital: " + country.Capital))
+func validCoordinates(lat, lon float64) bool {
+	return !math.IsNaN(lat) && !math.IsInf(lat, 0) && lat >= -90 && lat <= 90 &&
+		!math.IsNaN(lon) && !math.IsInf(lon, 0) && lon >= -180 && lon <= 180
 }
 
 func (s *Server) jsonResponse(w http.ResponseWriter, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	writeJSON(w, http.StatusOK, data)
 }
 
 func (s *Server) errorResponse(w http.ResponseWriter, message string, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": false,
-		"error":   message,
+	code := "BAD_REQUEST"
+	if status == http.StatusNotFound {
+		code = "NOT_FOUND"
+	}
+	writeJSON(w, status, map[string]interface{}{
+		"ok":      false,
+		"error":   code,
+		"message": message,
 	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, value interface{}) {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(append(data, '\n'))
 }

@@ -1,6 +1,8 @@
 package ssl
 
 import (
+	"crypto/x509"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -187,5 +189,63 @@ func writeFixture(t *testing.T, path string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte("fixture"), 0644); err != nil {
 		t.Fatalf("failed to write fixture %q: %v", path, err)
+	}
+}
+
+func TestGetTLSConfigManualCertificateAndHTTPHandler(t *testing.T) {
+	dir := t.TempDir()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	certificate := server.TLS.Certificates[0]
+	certPath := filepath.Join(dir, "example.com.crt")
+	keyPath := filepath.Join(dir, "example.com.key")
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Certificate[0]}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	key, err := x509.MarshalPKCS8PrivateKey(certificate.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewManager(Config{Enabled: true, CertPath: dir})
+	tlsConfig, err := manager.GetTLSConfig([]string{"example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tlsConfig.MinVersion != 0x0303 || len(tlsConfig.Certificates) != 1 {
+		t.Fatalf("TLS config = %+v", tlsConfig)
+	}
+	fallback := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) })
+	recorder := httptest.NewRecorder()
+	manager.GetHTTPHandler(fallback).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("fallback handler status = %d", recorder.Code)
+	}
+}
+
+func TestGetTLSConfigLetsEncryptConfiguration(t *testing.T) {
+	manager := NewManager(Config{
+		Enabled:     true,
+		CertPath:    t.TempDir(),
+		LetsEncrypt: LetsEncryptConfig{Enabled: true, Email: "ops@example.test"},
+	})
+	tlsConfig, err := manager.GetTLSConfig([]string{"example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tlsConfig == nil || manager.certManager == nil {
+		t.Fatal("Let's Encrypt manager was not initialized")
+	}
+}
+
+func TestGetHTTPHandlerWithoutACME(t *testing.T) {
+	fallback := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) })
+	recorder := httptest.NewRecorder()
+	NewManager(Config{}).GetHTTPHandler(fallback).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("fallback handler status = %d", recorder.Code)
 	}
 }

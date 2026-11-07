@@ -1,3 +1,4 @@
+// Package mode manages the process application mode and mode-aware behavior.
 package mode
 
 import (
@@ -6,8 +7,6 @@ import (
 	"runtime/debug"
 	"sync"
 )
-
-const appName = "countries"
 
 // Mode represents the application mode
 type Mode string

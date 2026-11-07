@@ -14,6 +14,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.Port != "8080" {
 		t.Errorf("Server.Port = %q, want 8080", cfg.Server.Port)
 	}
+	if cfg.Server.Database.Driver != "sqlite" || cfg.Server.Database.URL != "{data_dir}/db/server.db" {
+		t.Errorf("Server.Database = %+v, want SQLite at the data directory", cfg.Server.Database)
+	}
 	if cfg.Server.FQDN != "localhost" {
 		t.Errorf("Server.FQDN = %q, want localhost", cfg.Server.FQDN)
 	}
@@ -40,6 +43,76 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.WebSecurity.CORS != "*" {
 		t.Errorf("WebSecurity.CORS = %q, want *", cfg.WebSecurity.CORS)
+	}
+}
+
+func TestLoadReplacesInvalidRateLimitValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.yml")
+	contents := "server:\n  rate_limit:\n    read:\n      requests: 0\n      window: -1\n    global_burst: 0\n"
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	defaults := DefaultConfig().Server.RateLimit
+	if cfg.Server.RateLimit.Read != defaults.Read || cfg.Server.RateLimit.GlobalBurst != defaults.GlobalBurst {
+		t.Fatalf("invalid limits were not replaced by defaults: %+v", cfg.Server.RateLimit)
+	}
+}
+
+func TestLoadNormalizesUpdateChannelAndDeferral(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.yml")
+	if err := os.WriteFile(path, []byte("server:\n  update:\n    branch: daily\n    defer_days: 400\n    cli_min_version: ' 1.2.3 '\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Server.Update.Branch != "devel" || cfg.Server.Update.DeferDays != 0 || cfg.Server.Update.CLIMinVersion != "1.2.3" {
+		t.Fatalf("update config = %+v, want normalized channel, deferral, and minimum version", cfg.Server.Update)
+	}
+}
+
+func TestParseBoolSupportsConfiguredTruthValues(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		want  bool
+	}{
+		{value: " YES ", want: true},
+		{value: "enable", want: true},
+		{value: "oui", want: true},
+		{value: "off", want: false},
+		{value: "disabled", want: false},
+		{value: "nein", want: false},
+	} {
+		got, err := ParseBool(test.value, !test.want)
+		if err != nil || got != test.want {
+			t.Errorf("ParseBool(%q) = (%v, %v), want (%v, nil)", test.value, got, err, test.want)
+		}
+	}
+	if _, err := ParseBool("maybe", false); err == nil {
+		t.Error("ParseBool accepted an invalid value")
+	}
+	if got, err := ParseBool("", true); err != nil || !got {
+		t.Errorf("ParseBool(empty) = (%v, %v), want (true, nil)", got, err)
+	}
+}
+
+func TestLoadParsesFlexibleBooleanValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.yml")
+	contents := "server:\n  metrics:\n    enabled: enable\n  rate_limit:\n    enabled: yes\nweb-ui:\n  notifications:\n    enabled: off\n"
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Server.Metrics.Enabled || !cfg.Server.RateLimit.Enabled || cfg.WebUI.Notifications.Enabled {
+		t.Fatalf("flexible booleans were not parsed: metrics=%t rate_limit=%t notifications=%t", cfg.Server.Metrics.Enabled, cfg.Server.RateLimit.Enabled, cfg.WebUI.Notifications.Enabled)
 	}
 }
 
@@ -114,6 +187,23 @@ func TestSave(t *testing.T) {
 	// (Save does not create parent directories).
 	if err := Save(path, DefaultConfig()); err == nil {
 		t.Error("Save() into missing directory expected error, got nil")
+	}
+}
+
+func TestSaveUsesRestrictivePermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.yml")
+	if err := os.WriteFile(path, []byte("existing"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(path, DefaultConfig()); err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Errorf("config permissions = %04o, want 0600", info.Mode().Perm())
 	}
 }
 

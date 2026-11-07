@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,8 +16,8 @@ import (
 // fixtureJSON is a minimal, deterministic country dataset so handler tests
 // do not depend on the real embedded countries.json.
 const fixtureJSON = `[
-	{"name": "Testland", "country_code": "TL", "capital": "Testville", "latlng": [10, 20]},
-	{"name": "Otherland", "country_code": "OL", "capital": "Othertown", "latlng": [30, 40]}
+	{"name": {"common": "Testland", "official": "Republic of Testland"}, "cca2": "TL", "cca3": "TST", "capital": ["Testville"], "region": "Europe", "latlng": [10, 20]},
+	{"name": {"common": "Otherland", "official": "Republic of Otherland"}, "cca2": "OL", "cca3": "OTH", "capital": ["Othertown"], "region": "Asia", "latlng": [30, 40]}
 ]`
 
 // newTestServer builds a fully wired Server backed by fixture data and the
@@ -24,11 +25,15 @@ const fixtureJSON = `[
 // network — requests are dispatched in-process via httptest.
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
+	return newTestServerWithConfig(t, config.DefaultConfig())
+}
+
+func newTestServerWithConfig(t *testing.T, cfg *config.Config) *Server {
+	t.Helper()
 	svc, err := countries.NewService([]byte(fixtureJSON))
 	if err != nil {
 		t.Fatalf("countries.NewService() unexpected error: %v", err)
 	}
-	cfg := config.DefaultConfig()
 	return New(svc, cfg, "0.0.0.0", "8080", "test-version", "2024-01-01", "abc123")
 }
 
@@ -46,7 +51,7 @@ func doRequest(s *Server, method, path string, body []byte) *httptest.ResponseRe
 
 func TestHandleHealthz(t *testing.T) {
 	s := newTestServer(t)
-	for _, path := range []string{"/healthz", "/health", "/status"} {
+	for _, path := range []string{"/server/healthz", "/api/v1/server/healthz", "/api/healthz"} {
 		rec := doRequest(s, http.MethodGet, path, nil)
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s: status = %d, want 200", path, rec.Code)
@@ -55,9 +60,64 @@ func TestHandleHealthz(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatalf("%s: invalid JSON body: %v", path, err)
 		}
-		if got["status"] != "ok" {
-			t.Errorf("%s: status field = %v, want ok", path, got["status"])
+		data, _ := got["data"].(map[string]interface{})
+		if got["ok"] != true || data["status"] != "healthy" {
+			t.Errorf("%s: response = %v, want ok=true and data.status=healthy", path, got)
 		}
+	}
+}
+
+func TestSecurityHeadersAndReportEndpoint(t *testing.T) {
+	s := newTestServer(t)
+	record := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/server/about", nil)
+	req.RemoteAddr = "192.0.2.10:1234"
+	s.router.ServeHTTP(record, req)
+	for name, want := range map[string]string{
+		"X-Content-Type-Options":            "nosniff",
+		"X-Frame-Options":                   "SAMEORIGIN",
+		"Referrer-Policy":                   "strict-origin-when-cross-origin",
+		"X-Permitted-Cross-Domain-Policies": "none",
+	} {
+		if got := record.Header().Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	if !strings.Contains(record.Header().Get("Content-Security-Policy"), "script-src 'self'") {
+		t.Errorf("CSP does not disallow inline scripts: %q", record.Header().Get("Content-Security-Policy"))
+	}
+	if record.Header().Get("X-Request-ID") == "" {
+		t.Error("response is missing X-Request-ID")
+	}
+
+	report := httptest.NewRecorder()
+	reportRequest := httptest.NewRequest(http.MethodPost, "/api/v1/server/reports/csp", strings.NewReader(`{"csp-report":{}}`))
+	reportRequest.Header.Set("Content-Type", "application/csp-report")
+	s.router.ServeHTTP(report, reportRequest)
+	if report.Code != http.StatusNoContent {
+		t.Errorf("CSP report status = %d, want 204", report.Code)
+	}
+}
+
+func TestRateLimitMiddlewareOnPublicAPI(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Server.RateLimit.Read.Requests = 1
+	cfg.Server.RateLimit.Read.Window = 60
+	cfg.Server.RateLimit.GlobalBurst = 10
+	s := newTestServerWithConfig(t, cfg)
+	first := httptest.NewRequest(http.MethodGet, "/api/v1/countries", nil)
+	first.RemoteAddr = "203.0.113.8:1234"
+	firstResult := httptest.NewRecorder()
+	s.router.ServeHTTP(firstResult, first)
+	if firstResult.Code != http.StatusOK {
+		t.Fatalf("first API request status = %d, want 200", firstResult.Code)
+	}
+	second := httptest.NewRequest(http.MethodGet, "/api/v1/countries", nil)
+	second.RemoteAddr = first.RemoteAddr
+	secondResult := httptest.NewRecorder()
+	s.router.ServeHTTP(secondResult, second)
+	if secondResult.Code != http.StatusTooManyRequests || secondResult.Header().Get("Retry-After") == "" {
+		t.Fatalf("limited request returned status %d and Retry-After %q", secondResult.Code, secondResult.Header().Get("Retry-After"))
 	}
 }
 
@@ -68,14 +128,43 @@ func TestHandleGetCountries(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	var got struct {
-		Success bool `json:"success"`
-		Count   int  `json:"count"`
+		OK   bool `json:"ok"`
+		Data []struct {
+			CCA2 string `json:"cca2"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("invalid JSON body: %v", err)
 	}
-	if !got.Success || got.Count != 2 {
-		t.Errorf("got %+v, want success=true count=2", got)
+	if !got.OK || len(got.Data) != 2 {
+		t.Errorf("got %+v, want ok=true and two country results", got)
+	}
+	page := doRequest(s, http.MethodGet, "/api/v1/countries?page=2&limit=1", nil)
+	var pageBody struct {
+		OK   bool `json:"ok"`
+		Data []struct {
+			CCA2 string `json:"cca2"`
+		} `json:"data"`
+		Pagination struct {
+			Page  int `json:"page"`
+			Limit int `json:"limit"`
+			Total int `json:"total"`
+			Pages int `json:"pages"`
+		} `json:"pagination"`
+	}
+	if err := json.Unmarshal(page.Body.Bytes(), &pageBody); err != nil {
+		t.Fatalf("invalid paginated JSON body: %v", err)
+	}
+	if page.Code != http.StatusOK || !pageBody.OK || pageBody.Pagination.Total != 2 || pageBody.Pagination.Page != 2 || pageBody.Pagination.Limit != 1 || pageBody.Pagination.Pages != 2 || len(pageBody.Data) != 1 {
+		t.Errorf("paginated response = status %d, %+v", page.Code, pageBody)
+	}
+	filtered := doRequest(s, http.MethodGet, "/api/v1/countries?region=Europe", nil)
+	if filtered.Code != http.StatusOK || !strings.Contains(filtered.Body.String(), "Testland") || strings.Contains(filtered.Body.String(), "Otherland") {
+		t.Errorf("region-filtered response = status %d, body %s", filtered.Code, filtered.Body.String())
+	}
+	invalidPage := doRequest(s, http.MethodGet, "/api/v1/countries?page=0", nil)
+	if invalidPage.Code != http.StatusBadRequest {
+		t.Errorf("invalid page: status = %d, want 400", invalidPage.Code)
 	}
 }
 
@@ -94,17 +183,6 @@ func TestHandleSearchCountries(t *testing.T) {
 	recMissing := doRequest(s, http.MethodGet, "/api/v1/countries/search", nil)
 	if recMissing.Code != http.StatusBadRequest {
 		t.Errorf("missing q: status = %d, want 400", recMissing.Code)
-	}
-}
-
-func TestHandleSearchCountriesPath(t *testing.T) {
-	s := newTestServer(t)
-	rec := doRequest(s, http.MethodGet, "/countries/search/Other", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "Otherland") {
-		t.Errorf("body = %s, want it to contain Otherland", rec.Body.String())
 	}
 }
 
@@ -223,13 +301,16 @@ func TestHandleCount(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	var got struct {
-		Count int `json:"count"`
+		OK   bool `json:"ok"`
+		Data struct {
+			Count int `json:"count"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("invalid JSON body: %v", err)
 	}
-	if got.Count != 2 {
-		t.Errorf("count = %d, want 2", got.Count)
+	if !got.OK || got.Data.Count != 2 {
+		t.Errorf("response = %+v, want ok=true and data.count=2", got)
 	}
 }
 
@@ -241,33 +322,6 @@ func TestHandleCountTxt(t *testing.T) {
 	}
 	if rec.Body.String() != "2" {
 		t.Errorf("body = %q, want %q", rec.Body.String(), "2")
-	}
-}
-
-func TestHandleRawData(t *testing.T) {
-	s := newTestServer(t)
-	rec := doRequest(s, http.MethodGet, "/api/data", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "Testland") {
-		t.Errorf("body = %s, want raw fixture JSON", rec.Body.String())
-	}
-}
-
-func TestHandleRandomCountry(t *testing.T) {
-	s := newTestServer(t)
-	rec := doRequest(s, http.MethodGet, "/random", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-
-	recTxt := doRequest(s, http.MethodGet, "/random.txt", nil)
-	if recTxt.Code != http.StatusOK {
-		t.Fatalf("random.txt: status = %d, want 200", recTxt.Code)
-	}
-	if recTxt.Body.Len() == 0 {
-		t.Error("random.txt: body is empty")
 	}
 }
 
@@ -308,7 +362,7 @@ func TestHandleRobots(t *testing.T) {
 
 func TestHandleSecurity(t *testing.T) {
 	s := newTestServer(t)
-	for _, path := range []string{"/security.txt", "/.well-known/security.txt"} {
+	for _, path := range []string{"/.well-known/security.txt"} {
 		rec := doRequest(s, http.MethodGet, path, nil)
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s: status = %d, want 200", path, rec.Code)
@@ -316,20 +370,32 @@ func TestHandleSecurity(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), "Contact:") {
 			t.Errorf("%s: body = %q, want a Contact line", path, rec.Body.String())
 		}
+		for _, required := range []string{"Policy:", "Expires:"} {
+			if !strings.Contains(rec.Body.String(), required) {
+				t.Errorf("%s: body = %q, want %s line", path, rec.Body.String(), required)
+			}
+		}
+	}
+	if rec := doRequest(s, http.MethodGet, "/security.txt", nil); rec.Code != http.StatusNotFound {
+		t.Errorf("/security.txt status = %d, want 404", rec.Code)
+	}
+}
+
+func TestHandleLLMS(t *testing.T) {
+	s := newTestServer(t)
+	for _, path := range []string{"/llms.txt", "/.well-known/llms.txt"} {
+		rec := doRequest(s, http.MethodGet, path, nil)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Base URL:") || !strings.Contains(rec.Body.String(), "GET /countries") {
+			t.Errorf("%s: status=%d body=%q", path, rec.Code, rec.Body.String())
+		}
 	}
 }
 
 // The Web UI pages render through the embedded templates; a status of 200
 // confirms the templates parsed and executed without error.
-//
-// "/coordinates" is intentionally excluded: setupRoutes registers GET
-// /coordinates twice (once for handleCoordinatesPage as a web UI page,
-// once for handleFindNearestCountry as a shorthand API route), and chi
-// keeps the later registration — so the page handler is unreachable at
-// that path. Documented below in TestCoordinatesRouteShadowing.
 func TestHandleWebUIPages(t *testing.T) {
 	s := newTestServer(t)
-	for _, path := range []string{"/", "/search", "/openapi"} {
+	for _, path := range []string{"/", "/search", "/coordinates", "/server/docs/swagger", "/server/about", "/server/help", "/server/privacy", "/server/terms", "/server/security", "/server/contact", "/server/docs/graphql"} {
 		rec := doRequest(s, http.MethodGet, path, nil)
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s: status = %d, want 200, body: %s", path, rec.Code, rec.Body.String())
@@ -337,20 +403,13 @@ func TestHandleWebUIPages(t *testing.T) {
 	}
 }
 
-// setupRoutes registers GET /coordinates twice: once for the HTML page
-// (handleCoordinatesPage) and once, later, as a shorthand for the API's
-// nearest-country lookup (handleFindNearestCountry). chi keeps the later
-// registration, so the page is unreachable and GET /coordinates actually
-// behaves like the API handler (400 without lat/lon query params). This
-// test pins the current, buggy-looking behavior so a future route change
-// is a deliberate decision, not a silent regression.
-func TestCoordinatesRouteShadowing(t *testing.T) {
+// The coordinates path serves the server-rendered location finder. API lookup
+// requests use the versioned `/api/v1/coordinates` endpoint.
+func TestCoordinatesRouteServesWebPage(t *testing.T) {
 	s := newTestServer(t)
 	rec := doRequest(s, http.MethodGet, "/coordinates", nil)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("GET /coordinates = %d, want 400 (shadowed by handleFindNearestCountry); "+
-			"if this now returns 200 the duplicate route registration in setupRoutes was fixed "+
-			"and this test should be updated/removed", rec.Code)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Find Nearest Country") {
+		t.Errorf("GET /coordinates = %d, want the location finder page", rec.Code)
 	}
 }
 
@@ -359,7 +418,7 @@ func TestCoordinatesRouteShadowing(t *testing.T) {
 func TestCorsMiddleware(t *testing.T) {
 	s := newTestServer(t)
 
-	rec := doRequest(s, http.MethodOptions, "/healthz", nil)
+	rec := doRequest(s, http.MethodOptions, "/api/healthz", nil)
 	if rec.Code != http.StatusOK {
 		t.Errorf("OPTIONS status = %d, want 200", rec.Code)
 	}
@@ -367,8 +426,28 @@ func TestCorsMiddleware(t *testing.T) {
 		t.Errorf("Access-Control-Allow-Origin = %q, want *", rec.Header().Get("Access-Control-Allow-Origin"))
 	}
 
-	recGet := doRequest(s, http.MethodGet, "/healthz", nil)
+	recGet := doRequest(s, http.MethodGet, "/api/healthz", nil)
 	if recGet.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Errorf("GET Access-Control-Allow-Origin = %q, want *", recGet.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestCoordinatesWebPageHandler(t *testing.T) {
+	s := newTestServer(t)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/coordinates", nil)
+	s.handleCoordinatesPage(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("coordinates page status = %d, want 200", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "Find Nearest Country") {
+		t.Errorf("coordinates page body lacks its heading: %q", recorder.Body.String())
+	}
+}
+
+func TestRunReturnsListenError(t *testing.T) {
+	s := newTestServer(t)
+	if err := s.Run(context.Background(), "invalid-address"); err == nil {
+		t.Fatal("Run() with an invalid listen address returned nil")
 	}
 }

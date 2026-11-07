@@ -1,0 +1,9 @@
+{
+  "meta": {"language":"ar","name":"Arabic","native_name":"العربية","direction":"rtl"},
+  "nav.skip_main":"انتقل إلى المحتوى الرئيسي","nav.home":"الرئيسية","nav.search":"بحث","nav.location":"الموقع","nav.api_docs":"توثيق API","nav.status":"الحالة","nav.language":"اللغة",
+  "theme.label":"السمة","theme.dark":"داكن","theme.light":"فاتح","theme.auto":"تلقائي","theme.save":"حفظ",
+  "search.title":"البحث عن البلدان","search.description":"اعثر على أي بلد من السجلات المتاحة","search.label":"اسم البلد","search.placeholder":"أدخل الاسم أو الرمز أو المنطقة أو العملة أو اللغة","search.hint":"ابحث بالاسم أو الرمز أو المنطقة أو العملة أو اللغة","search.submit":"البحث عن البلدان","search.results":"نتائج البحث","search.no_results":"لم يتم العثور على بلدان مطابقة.","search.count":"بلدان مطابقة",
+  "coordinates.title":"العثور على أقرب بلد","coordinates.description":"اكتشف البلد الأقرب إلى هذه الإحداثيات الجغرافية","coordinates.latitude":"خط العرض","coordinates.longitude":"خط الطول","coordinates.submit":"العثور على أقرب بلد","coordinates.use_location":"استخدام موقعي","coordinates.error":"أدخل خط عرض بين -90 و90 وخط طول بين -180 و180.","coordinates.distance":"المسافة من النقطة المطلوبة",
+  "home.title":"قاعدة بيانات بلدان العالم","home.description":"استعرض بيانات البلدان وابحث بالاسم وقارن الإحداثيات التمثيلية.","home.start_searching":"ابدأ البحث","home.view_api":"عرض توثيق API","home.countries":"بلدًا",
+  "graphql.title":"مستكشف GraphQL","graphql.description":"تُرسل الاستعلامات إلى نقطة GraphQL. API للقراءة فقط.","graphql.query":"استعلام","graphql.run":"تشغيل الاستعلام","graphql.response":"الاستجابة","graphql.initial":"شغّل استعلامًا لعرض الاستجابة.","common.save":"حفظ","common.dark":"داكن","common.light":"فاتح","common.auto":"تلقائي"
+}

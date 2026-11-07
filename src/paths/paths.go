@@ -1,3 +1,4 @@
+// Package paths resolves platform-specific application directories.
 package paths
 
 import (
@@ -105,6 +106,17 @@ func GetLogsDir(appName string) string {
 		home, _ := os.UserHomeDir()
 		return filepath.Join(home, ".local", "state", orgName, appName, "logs")
 	}
+}
+
+// GetDatabaseDir resolves the SQLite directory from the environment or platform defaults.
+func GetDatabaseDir(dataDir string) string {
+	if dir := os.Getenv("DATABASE_DIR"); dir != "" {
+		return dir
+	}
+	if isContainer() {
+		return "/data/db/sqlite"
+	}
+	return filepath.Join(dataDir, "db")
 }
 
 func EnsureDir(path string) error {

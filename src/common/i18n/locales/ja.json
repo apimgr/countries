@@ -1,0 +1,9 @@
+{
+  "meta": {"language":"ja","name":"Japanese","native_name":"日本語","direction":"ltr"},
+  "nav.skip_main":"メインコンテンツへ移動","nav.home":"ホーム","nav.search":"検索","nav.location":"位置","nav.api_docs":"API ドキュメント","nav.status":"状態","nav.language":"言語",
+  "theme.label":"テーマ","theme.dark":"ダーク","theme.light":"ライト","theme.auto":"自動","theme.save":"保存",
+  "search.title":"国を検索","search.description":"利用可能な国データから検索できます","search.label":"国名","search.placeholder":"名前、コード、地域、通貨、言語を入力","search.hint":"名前、コード、地域、通貨、言語で検索","search.submit":"国を検索","search.results":"検索結果","search.no_results":"一致する国はありません。","search.count":"件の一致する国",
+  "coordinates.title":"最寄りの国を検索","coordinates.description":"指定した座標に最も近い国を見つけます","coordinates.latitude":"緯度","coordinates.longitude":"経度","coordinates.submit":"最寄りの国を検索","coordinates.use_location":"現在地を使用","coordinates.error":"緯度は -90〜90、経度は -180〜180 で入力してください。","coordinates.distance":"指定地点からの距離",
+  "home.title":"世界の国データベース","home.description":"国のデータを閲覧し、名前で検索し、代表座標を比較できます。","home.start_searching":"検索を開始","home.view_api":"API ドキュメントを見る","home.countries":"か国",
+  "graphql.title":"GraphQL エクスプローラー","graphql.description":"クエリは GraphQL エンドポイントに送信されます。API は読み取り専用です。","graphql.query":"クエリ","graphql.run":"クエリを実行","graphql.response":"レスポンス","graphql.initial":"クエリを実行すると結果が表示されます。","common.save":"保存","common.dark":"ダーク","common.light":"ライト","common.auto":"自動"
+}
