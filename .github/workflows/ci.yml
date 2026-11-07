@@ -48,6 +48,7 @@ jobs:
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"; HEAD="${{ github.event.pull_request.head.sha }}"
           fi
+          if [ "$BASE" = "$HEAD" ]; then BASE=""; HEAD=""; fi
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
           echo "head=$HEAD" >> "$GITHUB_OUTPUT"
       - name: Scan for secrets (truffleHog)

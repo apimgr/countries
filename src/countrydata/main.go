@@ -231,7 +231,7 @@ func decodePopulations(data []byte) (map[string]*int64, error) {
 		return nil, err
 	}
 	if len(envelope) < 2 {
-		return nil, errors.New("World Bank response has no data array")
+		return nil, errors.New("response from World Bank has no data array")
 	}
 	var rows []populationRecord
 	if err := json.Unmarshal(envelope[1], &rows); err != nil {

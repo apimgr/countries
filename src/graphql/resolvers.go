@@ -151,7 +151,7 @@ func (r *countryResolver) PopulationYear() *int32 {
 }
 func (r *countryResolver) Area() float64 { return r.value.Area }
 func (r *countryResolver) Flag() string { return r.value.Flag }
-func (r *countryResolver) FlagSvgUrl() string { return r.value.FlagSVGURL }
+func (r *countryResolver) FlagSvgURL() string { return r.value.FlagSVGURL }
 func (r *countryResolver) Timezones() []string { return r.value.Timezones }
 func (r *countryResolver) Latlng() []float64 { return r.value.LatLng }
 func (r *countryResolver) Borders() []string { return r.value.Borders }
