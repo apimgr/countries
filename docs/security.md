@@ -20,4 +20,4 @@ Use [GitHub private vulnerability reporting](https://github.com/apimgr/countries
 
 ## Data and privacy
 
-The service stores no user accounts or profiles. Its access logging may retain connection metadata such as paths and status codes. Operators control deployment logs and retention. Country data provenance and redistribution terms are documented in [`src/data/README.md`](../src/data/README.md).
+The service stores no user accounts or profiles. Access logs contain request IDs, methods, URL paths, response statuses, and durations; they do not include client IP addresses or query-string values. Operators control deployment logs and retention. Browser theme and language preferences are stored in cookies. Country data provenance and redistribution terms are documented in [`src/data/README.md`](https://github.com/apimgr/countries/blob/main/src/data/README.md).

@@ -22,7 +22,7 @@ client_binary: countries-cli
 - 249 countries with comprehensive per-country data (names, ISO codes, capital, region, currencies, languages, population, area, flag, borders, timezones, TLDs)
 - Search/filter by name, code, region, currency, or language
 - Full web frontend (server-side Go templates, dark/light/auto theme, PWA, mobile-first)
-- Server pages: `/server/about`, `/server/help`, `/server/healthz`, `/server/privacy`, `/server/terms`
+- Server pages: `/server/about`, `/server/contact`, `/server/dpo`, `/server/help`, `/server/help/mcp` when MCP is enabled, `/server/healthz`, `/server/preferences`, `/server/privacy`, `/server/security`, and `/server/terms`
 - CLI client (`countries-cli`) for queries from the terminal
 - OpenAPI/Swagger docs at `/api/{api_version}/server/swagger`
 - GraphQL at `/api/graphql` (with its explorer at `/server/docs/graphql`)
@@ -64,7 +64,7 @@ There are no user roles. All endpoints are public and require no authentication.
 | `timezones` | string[] — IANA identifiers | Public |
 | `tld` | string[] | Public |
 
-No PII stored or served.
+Country records contain no PII. Contact form submissions contain the visitor's name, email address, subject, and message; they are validated and sent through configured SMTP without being stored in the country dataset or database.
 
 ### Trust boundaries & external services
 
@@ -72,8 +72,10 @@ No PII stored or served.
 |----------|-------------|-------|
 | Country dataset (embedded at build) | Fully trusted | Static, compiled into binary |
 | Incoming HTTP requests | **Untrusted** | All query parameters validated |
+| Configured SMTP server | Configured by operator | Receives only visitor-submitted contact messages |
+| Configured reCAPTCHA or hCaptcha service | Configured by operator | Receives contact-form challenge verification data; the self-hosted challenge is used by default |
 
-No external services called at runtime.
+Core country lookups make no external runtime calls. Contact delivery and third-party challenge verification make network calls only when the visitor submits the contact form and the operator has configured those providers.
 
 ### Threat model & abuse cases
 
@@ -82,13 +84,17 @@ No external services called at runtime.
 **Attacker/abuser goals:**
 - DoS via high-rate requests or expensive fuzzy name searches
 - Bulk scraping of the full dataset
+- Spam or abuse the public contact form, including attempts to inject headers or submit oversized messages
+- Disrupt contact delivery by causing SMTP or challenge-verification failures
 
 **Defenses:**
 - Rate limiting on all endpoints
 - Request size limits on all inputs
+- Validate and bound contact fields, use the configured fixed recipient, and reject invalid challenge responses; if SMTP is unavailable or unconfigured, report that contact delivery is unavailable without affecting country lookup
 - No user accounts eliminates credential stuffing and privilege escalation entirely
 
 ### Security decisions & exceptions
 
 - **No authentication on any endpoint**: intentional. Public read-only reference API.
 - **All responses include `Access-Control-Allow-Origin: *`**: intentional. Public data API designed for cross-origin browser use.
+- **Public contact form**: intentional; it has no accounts or message storage, accepts bounded submissions protected by the configured challenge, and sends only to the operator-configured recipient when SMTP is configured.
