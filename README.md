@@ -23,6 +23,7 @@ The `make dev` target builds the server and CLI in an isolated temporary directo
 | GET | `/server/docs/swagger` | OpenAPI documentation page |
 | GET | `/server/docs/graphql` | GraphQL explorer |
 | GET | `/server/healthz` | Human-readable service health page |
+| GET | `/server` | Redirect to the about page |
 | GET | `/api/v1/server/healthz` | Versioned JSON health endpoint |
 | GET | `/api/v1/server/swagger` | OpenAPI 3.1 JSON document |
 | POST | `/api/v1/server/graphql` | Read-only GraphQL endpoint |
@@ -36,7 +37,7 @@ The `make dev` target builds the server and CLI in an isolated temporary directo
 | GET | `/api/v1/nearby?lat={lat}&lon={lon}&radius={km}` | Find nearby country centroids |
 | GET | `/api/v1/stats` | Dataset count and build version |
 
-The `/server/about`, `/server/help`, `/server/privacy`, `/server/terms`, `/server/security`, and `/server/contact` pages are available. The `countries-cli` client supports list, get, search, nearest, nearby, and stats commands. The client and broader shared AI.md server requirements still have open work; see `TODO.AI.md` for the current implementation backlog.
+The `/server/about`, `/server/help`, `/server/privacy`, `/server/terms`, `/server/security`, and `/server/contact` pages are available. The `countries-cli` client supports list, get, search, nearest, nearby, and stats commands. Operator and integration guides are in [`docs/`](docs/index.md).
 
 ## License and data
 

@@ -4,7 +4,7 @@
 
 The API is public and read-only, with no user accounts or write operations. Request inputs and bodies are bounded and validated. The service embeds country data and does not call external services for lookups.
 
-Every response receives a request ID. The server applies configurable request limits, only honors client-address headers from a trusted immediate proxy, and sends security headers including Content-Security-Policy. Rate-limit counters currently live in process memory and reset when the process restarts.
+Every response receives a request ID. The server applies configurable request limits, only honors client-address headers from a trusted immediate proxy, and sends security headers including Content-Security-Policy. When started by the server binary, rate-limit counters are stored in the configured SQLite database and survive process restarts. The in-memory limiter is used only when the HTTP server is constructed without a database, such as in isolated tests.
 
 Access logs include request ID, method, path, status, and duration. Do not put secrets or sensitive personal data into URLs or request IDs.
 

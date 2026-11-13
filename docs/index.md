@@ -10,6 +10,7 @@ The checked-in dataset has **249 ISO 3166-1 records**. Records include common an
 
 - Browse and search at `/` and `/search`.
 - Explore REST at `/server/docs/swagger` and GraphQL at `/server/docs/graphql`.
+- Read the service pages at `/server/about`, `/server/help`, `/server/privacy`, and `/server/terms`; `/server` redirects to the about page.
 - Query the public REST API below `/api/v1/`.
 - Use the `countries-cli` binary for common lookups.
 

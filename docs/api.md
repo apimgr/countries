@@ -25,6 +25,8 @@ List responses include `pagination` with `page`, `limit`, `total`, and `pages`. 
 
 ## Server endpoints
 
+The browser server pages are available at `/server/about`, `/server/help`, `/server/healthz`, `/server/privacy`, `/server/terms`, `/server/security`, and `/server/contact`. `/server` redirects to `/server/about`. The API mirrors informational pages as JSON; contact is currently an informational page and does not accept submissions.
+
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/v1/server/healthz` | Health status and loaded country count. |
