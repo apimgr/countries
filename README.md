@@ -1,48 +1,92 @@
-# Countries API
+# Countries
 
+Countries is a read-only country reference service with a REST API, GraphQL API, server-rendered web interface, and command-line client. It embeds 249 ISO 3166-1 records and does not fetch country data at runtime.
+
+[![CI](https://github.com/apimgr/countries/actions/workflows/ci.yml/badge.svg)](https://github.com/apimgr/countries/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/apimgr/countries)](LICENSE.md)
-User and operator documentation is available in [`docs/`](docs/index.md). ReadTheDocs configuration is included in the repository.
 
-Countries is a Go service that embeds a static country dataset and exposes it through a versioned REST API and server-rendered web interface. It has no runtime dependency on external data services.
+---
 
-## Current dataset
+## 📦 Install
 
-The embedded dataset contains 249 ISO 3166-1 records with common and official names, ISO codes, capitals, regions, currencies, languages, population values where available, area, flag emoji and SVG links, representative coordinates, borders, time zones, and top-level domains. Field-level source versions, attribution, and licenses are documented in [`src/data/README.md`](src/data/README.md). Population values include their observation year; unavailable source observations remain absent.
+Download a server or client binary from [GitHub Releases](https://github.com/apimgr/countries/releases/latest).
 
-## Run
+### Linux
 
-The `make dev` target builds the server and CLI in an isolated temporary directory with the `casjaysdev/go:latest` container image. It prints the output directory when the build finishes. Start the server binary from that directory; it listens on `0.0.0.0:8080` by default. Configuration is read from `server.yml` in the config directory, and the server creates a default file on first start.
-
-## HTTP endpoints
-
-| Method | Path | Description |
+| Arch | Server | Client |
 |---|---|---|
-| GET | `/` | Country search home page |
-| GET | `/search` | Search page |
-| GET | `/coordinates` | Nearest-country lookup page |
-| GET | `/server/docs/swagger` | OpenAPI documentation page |
-| GET | `/server/docs/graphql` | GraphQL explorer |
-| GET | `/server/healthz` | Human-readable service health page |
-| GET | `/server` | Redirect to the about page |
-| GET | `/api/v1/server/healthz` | Versioned JSON health endpoint |
-| GET | `/api/v1/server/swagger` | OpenAPI 3.1 JSON document |
-| POST | `/api/v1/server/graphql` | Read-only GraphQL endpoint |
-| GET | `/.well-known/security.txt` | RFC 9116 security reporting details |
-| GET | `/.well-known/llms.txt` | API discovery for AI clients |
-| POST | `/api/graphql` | GraphQL alias |
-| GET | `/api/v1/countries` | List country records |
-| GET | `/api/v1/countries/{code}` | Read a record by two-letter code |
-| GET | `/api/v1/countries/search?q={query}` | Search names |
-| GET | `/api/v1/coordinates?lat={lat}&lon={lon}` | Find nearest country |
-| GET | `/api/v1/nearby?lat={lat}&lon={lon}&radius={km}` | Find nearby country centroids |
-| GET | `/api/v1/stats` | Dataset count and build version |
+| amd64 | `countries-linux-amd64` | `countries-cli-linux-amd64` |
+| arm64 | `countries-linux-arm64` | `countries-cli-linux-arm64` |
 
-The `/server/about`, `/server/help`, `/server/privacy`, `/server/terms`, `/server/security`, and `/server/contact` pages are available. The `countries-cli` client supports list, get, search, nearest, nearby, and stats commands. Operator and integration guides are in [`docs/`](docs/index.md).
+```sh
+curl -q -LSsf https://github.com/apimgr/countries/releases/latest/download/countries-linux-amd64 -o /usr/local/bin/countries && chmod +x /usr/local/bin/countries
+curl -q -LSsf https://github.com/apimgr/countries/releases/latest/download/countries-cli-linux-amd64 -o /usr/local/bin/countries-cli && chmod +x /usr/local/bin/countries-cli
+```
 
-## License and data
+### macOS
 
-Application code is MIT licensed. Third-party Go dependencies are listed in `LICENSE.md`. The embedded country database has separate ODbL and CC BY attribution terms documented in [`src/data/README.md`](src/data/README.md).
+| Arch | Server | Client |
+|---|---|---|
+| Intel (x86_64) | `countries-darwin-amd64` | `countries-cli-darwin-amd64` |
+| Apple Silicon (arm64) | `countries-darwin-arm64` | `countries-cli-darwin-arm64` |
 
-## Disclaimer
+```sh
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+curl -q -LSsf "https://github.com/apimgr/countries/releases/latest/download/countries-darwin-${ARCH}" -o /usr/local/bin/countries && chmod +x /usr/local/bin/countries
+curl -q -LSsf "https://github.com/apimgr/countries/releases/latest/download/countries-cli-darwin-${ARCH}" -o /usr/local/bin/countries-cli && chmod +x /usr/local/bin/countries-cli
+xattr -d com.apple.quarantine /usr/local/bin/countries /usr/local/bin/countries-cli 2>/dev/null || true
+```
 
-This software is provided "as is" without warranty of any kind. Use it at your own risk. The maintainers are not responsible for damages, data loss, or other issues arising from its use. Evaluate it thoroughly before production deployment. While the project follows security practices, no software is guaranteed to be free of vulnerabilities. Third-party services, if configured, remain subject to their own terms.
+### Windows
+
+| Arch | Server | Client |
+|---|---|---|
+| amd64 | `countries-windows-amd64.exe` | `countries-cli-windows-amd64.exe` |
+| arm64 | `countries-windows-arm64.exe` | `countries-cli-windows-arm64.exe` |
+
+Download the required `.exe` files from the release page and add their directory to `%PATH%`.
+
+### FreeBSD
+
+| Arch | Server | Client |
+|---|---|---|
+| amd64 | `countries-freebsd-amd64` | `countries-cli-freebsd-amd64` |
+| arm64 | `countries-freebsd-arm64` | `countries-cli-freebsd-arm64` |
+
+## 🐳 Docker
+
+The production Compose file is [`docker/docker-compose.yml`](docker/docker-compose.yml). Start it with `docker compose -f docker/docker-compose.yml up -d`. It persists runtime configuration and data in the configured volumes; review the file before deployment and set the published port and host values for your environment.
+
+## 🖥️ Command-line client
+
+The `countries-cli` binary supports `list`, `get`, `search`, `nearest`, `nearby`, and `stats`. Run `countries-cli --help` for flags and examples. See the [CLI reference](docs/cli.md).
+
+## 🤖 Server
+
+Start the `countries` binary to serve the web interface and APIs. By default it listens on `0.0.0.0:8080`; it creates `server.yml` on first start. See the [installation](docs/installation.md) and [configuration](docs/configuration.md) guides before exposing a deployment.
+
+- Web interface: `/`, `/search`, and `/coordinates`
+- REST reference: `/server/docs/swagger`; OpenAPI JSON: `/api/v1/server/swagger`
+- GraphQL explorer: `/server/docs/graphql`; endpoint: `/api/v1/server/graphql`
+- Health: `/server/healthz` and `/api/v1/server/healthz`
+- Service pages: `/server/about`, `/server/help`, `/server/preferences` (including `/server/preferences/sync`), `/server/privacy`, `/server/terms`, `/server/security`, `/server/contact`, and `/server/dpo`
+- REST routes, response formats, discovery files, and preference behavior: [API reference](docs/api.md)
+
+## Data and attribution
+
+The embedded dataset includes common and official names, ISO codes, capitals, regions, currencies, languages, population observations when available, area, flags, coordinates, borders, time zones, and top-level domains. Source versions, field provenance, and licensing are documented in [`src/data/README.md`](src/data/README.md).
+
+## Development
+
+The Go toolchain runs in `casjaysdev/go:latest` with CGO disabled. Docker is required for local builds and tests.
+
+```sh
+make dev
+make test
+```
+
+`make dev` builds the server and client into an OS temporary directory. `make test` runs vet, vulnerability scanning, unit tests, and the configured coverage gate. Read the [development guide](docs/development.md) before contributing.
+
+## License
+
+MIT — see [LICENSE.md](LICENSE.md). The embedded data and third-party dependencies have separate attribution requirements listed there and in [`src/data/README.md`](src/data/README.md).

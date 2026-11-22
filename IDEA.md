@@ -98,3 +98,33 @@ Core country lookups make no external runtime calls. Contact delivery and third-
 - **No authentication on any endpoint**: intentional. Public read-only reference API.
 - **All responses include `Access-Control-Allow-Origin: *`**: intentional. Public data API designed for cross-origin browser use.
 - **Public contact form**: intentional; it has no accounts or message storage, accepts bounded submissions protected by the configured challenge, and sends only to the operator-configured recipient when SMTP is configured.
+
+### API routes
+
+All routes below are public and require no authentication. Responses use the documented JSON envelope unless marked plain text.
+
+| Method | Path | Purpose and request/response summary |
+|---|---|---|
+| GET | `/api/{api_version}/countries` | List countries with pagination and optional search, code, region, currency, and language filters; returns country records and pagination metadata. |
+| GET | `/api/{api_version}/countries/{code}` | Read a country by alpha-2, alpha-3, or numeric code; returns one record or not found. |
+| GET | `/api/{api_version}/countries/search` | Search country names and fields using `q` and optional code, region, currency, or language filters; returns matching records. |
+| GET | `/api/{api_version}/coordinates` | Find the nearest country using `lat` and `lon` query parameters. |
+| POST | `/api/{api_version}/coordinates` | Find the nearest country using a JSON body containing `lat` and `lon`. |
+| GET | `/api/{api_version}/nearby` | Find country centroids within a radius using `lat`, `lon`, and `radius` query parameters. |
+| GET | `/api/{api_version}/stats` | Return dataset count, version, and data source metadata. |
+| GET | `/api/{api_version}/stats.txt` | Return dataset statistics as plain text. |
+| GET | `/api/{api_version}/count` | Return the dataset count in the JSON envelope. |
+| GET | `/api/{api_version}/count.txt` | Return the dataset count as plain text. |
+| GET | `/api/{api_version}/server/healthz` | Return service health. |
+| GET | `/api/{api_version}/server/about` | Return service information. |
+| GET | `/api/{api_version}/server/help` | Return API usage help. |
+| GET | `/api/{api_version}/server/privacy` | Return the privacy notice. |
+| GET | `/api/{api_version}/server/terms` | Return the service terms. |
+| GET | `/api/{api_version}/server/security` | Return security reporting information. |
+| GET | `/api/{api_version}/server/contact` | Return contact information; contact submissions are specified for the browser form. |
+| GET | `/api/{api_version}/server/dpo` | Return configured DPO contact details and the absolute privacy URL. |
+| GET | `/api/{api_version}/server/preferences` | Read effective guest theme and language preferences. |
+| POST | `/api/{api_version}/server/preferences` | Save the caller's guest theme and language cookies. |
+| GET | `/api/{api_version}/server/preferences/sync` | Export guest preferences as a share URL and short code. |
+| GET | `/api/{api_version}/server/preferences/sync/import` | Apply supported preferences from query values or a share code. |
+| POST | `/api/{api_version}/server/graphql` | Execute read-only GraphQL queries against the country dataset. |

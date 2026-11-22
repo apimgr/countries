@@ -1,6 +1,6 @@
 # CLI reference
 
-The `countries-cli` client makes read-only HTTP requests to a Countries server. Running it without a command in a terminal opens an interactive menu. On first use, it asks for a server URL and optional bearer token, verifies the health endpoint, and saves the connection in `cli.yml`.
+The `countries-cli` client makes read-only HTTP requests to a Countries server. In an interactive terminal, running it without a command starts the setup flow and menu. Otherwise, provide a command and configure a server URL.
 
 ```text
 countries-cli [flags] COMMAND [arguments]
@@ -11,10 +11,10 @@ countries-cli [flags] COMMAND [arguments]
 | Command | Purpose |
 |---|---|
 | `list` | List country records. |
-| `get CODE` | Read one alpha-2 country code. |
-| `search QUERY` | Search country names. |
+| `get CODE` | Read one record by alpha-2, alpha-3, or numeric country code. |
+| `search QUERY` | Search country names and supported country fields. |
 | `nearest LAT LON` | Find the nearest representative coordinate. |
-| `nearby LAT LON RADIUS_KM` | Find records within a radius. |
+| `nearby LAT LON RADIUS_KM` | Find country centroids within a radius. |
 | `stats` | Read dataset statistics. |
 
 ## Flags
@@ -22,13 +22,19 @@ countries-cli [flags] COMMAND [arguments]
 | Flag | Purpose |
 |---|---|
 | `--server URL` | Server base URL. |
+| `--token TOKEN` | Optional bearer token for servers that require one. The public Countries API does not require authentication. |
+| `--config PATH` | Select a config profile or YAML file. |
+| `--lang CODE` | Select output language. |
 | `--output table\|plain\|json` | Choose output format. |
 | `--color auto\|yes\|no` | Choose color behavior. |
 | `--debug` | Write request diagnostics to stderr. |
-| `--update [check\|yes\|branch CHANNEL]` | Check for or install verified server-provided releases, or select `stable`, `beta`, or `devel`. |
 | `--help`, `-h` | Show help. |
 | `--version`, `-v` | Show build version. |
 
-Select the server with `--server`, `COUNTRIES_SERVER_PRIMARY`, or `server.primary` in `cli.yml`, in that order. The optional config file is `cli.yml` under the OS user config directory at `apimgr/countries/`. A configured token is sent as a bearer credential. The client has a 15-second HTTP timeout and rejects response bodies larger than 16 MiB.
+## Server and configuration
 
-The client configuration is created with owner-only permissions. The server URL can be set in advance with `COUNTRIES_SERVER_PRIMARY` or `server.primary`.
+The server URL is selected from `--server`, `COUNTRIES_SERVER_PRIMARY`, `server.primary` in `cli.yml`, then the compiled official site when defined. The default config directory is the invoking user's OS config directory under `apimgr/countries/`. Config files are written with owner-only permissions.
+
+The client reads `server.token` from its config file unless overridden with `--token`. Tokens are sent only in the `Authorization: Bearer` header; the project's public API does not use them. Output language precedence is `--lang`, `lang` in `cli.yml`, `LANG`, then English. Supported language codes are `en`, `es`, `zh`, `fr`, `ar`, `de`, and `ja`. The HTTP client timeout is 15 seconds, and response bodies larger than 16 MiB are rejected.
+
+See the [installation guide](installation.md) for release assets and the [API reference](api.md) for route and response details.
