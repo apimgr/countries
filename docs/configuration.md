@@ -18,7 +18,7 @@ The server reads `server.yml` from its configuration directory and creates a def
 | `server.update.branch` | `stable` | Update channel (`stable`, `beta`, or `devel`; `daily` is normalized to `devel`). |
 | `server.update.auto_install` | `false` | Controls whether scheduled update checks may install an eligible release. The privilege-safe staged server update flow is not yet implemented; when enabled, the server logs this limitation and sends the normal update notice. |
 | `server.update.defer_days` | `0` | Scheduled stable/beta update notices ignore releases newer than this many days; devel ignores the setting. Manual update commands are never deferred. |
-| `server.update.cli_min_version` | empty | Parsed but currently unused; the server does not enforce a minimum companion CLI version. |
+| `server.update.cli_min_version` | empty | Minimum companion CLI version. The server returns this value through autodiscovery; a CLI below it refuses further API requests and prints the update command. |
 | `server.trusted_proxies.additional` | `[]` | Additional trusted proxy IPs, CIDRs, or hostnames. |
 | `server.contact.dpo.name` | empty | Optional public name shown on `/server/dpo`. |
 | `server.contact.dpo.email` | empty | Optional DPO email shown on `/server/dpo`; falls back to `server.contact.general.email`. |
