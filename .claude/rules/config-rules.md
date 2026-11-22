@@ -8,14 +8,14 @@
 - Never silently ignore invalid security-sensitive settings.
 
 ## CRITICAL - ALWAYS DO
-- Store server configuration in `server.yml`, create sane defaults, and validate loaded values.
+- Store node settings in `server.yml`, feature settings in ordered `yaml.d/*.yml` files, and credentials in `secrets.yml`; create defaults and validate loaded values.
 - Document whether a setting reloads at runtime or requires restart.
 - Keep server, web UI, proxy, rate limit, and database settings explicit.
 
 ## KEY DECISIONS (pre-answered)
 | Question | Answer | Spec Reference |
 |---|---|---|
-| Config filename | `server.yml`. | PART 5 |
+| Config layout | `server.yml`, ordered `yaml.d/*.yml`, and `secrets.yml` are merged in the precedence defined by AI.md. | PART 5 |
 | Default database | Local SQLite at the platform database path. | PARTS 10, 12 |
 
 ## TERMINOLOGY

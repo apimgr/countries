@@ -69,7 +69,7 @@ Start the `countries` binary to serve the web interface and APIs. By default it 
 - REST reference: `/server/docs/swagger`; OpenAPI JSON: `/api/v1/server/swagger`
 - GraphQL explorer: `/server/docs/graphql`; endpoint: `/api/v1/server/graphql`
 - Health: `/server/healthz` and `/api/v1/server/healthz`
-- Service pages: `/server/about`, `/server/help`, `/server/preferences` (including `/server/preferences/sync`), `/server/privacy`, `/server/terms`, `/server/security`, `/server/contact`, and `/server/dpo`
+- Service pages: `/server/about`, `/server/help`, `/server/healthz`, `/server/preferences` (including `/server/preferences/sync`), `/server/privacy`, `/server/terms`, `/server/security`, `/server/contact`, and `/server/dpo`
 - REST routes, response formats, discovery files, and preference behavior: [API reference](docs/api.md)
 
 ## Data and attribution
@@ -86,6 +86,8 @@ make test
 ```
 
 `make dev` builds the server and client into an OS temporary directory. `make test` runs vet, vulnerability scanning, unit tests, and the configured coverage gate. Read the [development guide](docs/development.md) before contributing.
+
+Run the standalone browser E2E suite on demand with `./tests/e2e.sh`; see the [development guide](docs/development.md) for its Docker image requirements.
 
 ## License
 

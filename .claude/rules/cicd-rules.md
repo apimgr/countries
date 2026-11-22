@@ -10,7 +10,7 @@
 ## CRITICAL - ALWAYS DO
 - Run the provider’s native workflow directly; do not depend on Makefile targets.
 - Verify formatting, static analysis, vulnerability checks, tests, coverage, and release outputs.
-- Keep release, beta, and daily workflows consistent with supported branches and tags.
+- Keep release, beta, and devel workflows consistent with supported branches and tags.
 
 ## KEY DECISIONS (pre-answered)
 | Question | Answer | Spec Reference |

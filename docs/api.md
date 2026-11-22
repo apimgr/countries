@@ -25,7 +25,7 @@ List responses include `pagination` with `page`, `limit`, `total`, and `pages`. 
 
 ## Server endpoints
 
-The browser server pages are available at `/server/about`, `/server/help`, `/server/healthz`, `/server/preferences`, `/server/preferences/sync`, `/server/privacy`, `/server/terms`, `/server/security`, `/server/contact`, and `/server/dpo`. `/server` redirects to `/server/about`. The API mirrors the informational pages as JSON; contact is currently an informational page and does not accept submissions.
+The browser server pages include `/server/about`, `/server/help`, `/server/healthz`, `/server/preferences`, `/server/preferences/sync`, `/server/privacy`, `/server/terms`, `/server/security`, and `/server/dpo`. `/server` redirects to `/server/about`. The report form is available only from the security policy and the security.txt reporting contact. It handles security reports, abuse/terms reports, DMCA notices, and privacy requests; it is not a support or feedback channel.
 
 | Method | Path | Description |
 |---|---|---|
@@ -35,7 +35,8 @@ The browser server pages are available at `/server/about`, `/server/help`, `/ser
 | GET | `/api/v1/server/privacy` | Privacy notice. |
 | GET | `/api/v1/server/terms` | Service terms. |
 | GET | `/api/v1/server/security` | Security reporting policy. |
-| GET | `/api/v1/server/contact` | Project contact information. |
+| GET | `/api/v1/server/contact` | Report form field descriptors, a new CAPTCHA challenge, a single-use `form_token`, offered types, security URL, and public abuse email. This route returns 404 when disabled. |
+| POST | `/api/v1/server/contact` | Submit a report for review with `step: "submit"`; confirm with all original fields, `step: "confirm"`, the returned `review_token`, and `confirmed: true`. The first call never delivers. Security mode requires a valid `security_id`. |
 | GET | `/api/v1/server/dpo` | Data protection contact (`name`, `email`, and absolute `privacy_url`). The email falls back from `server.contact.dpo.email` to `server.contact.general.email`; no address is invented. |
 | GET | `/api/v1/server/preferences` | Read effective theme and language preferences and the empty guest preference set. |
 | POST | `/api/v1/server/preferences` | Save supported theme and language cookies; JSON and form bodies are accepted. This API mirror does not use CSRF tokens. |

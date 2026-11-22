@@ -12,11 +12,11 @@ Access logs include request ID, method, path, status, and duration. Do not put s
 
 `/server/healthz` serves a browser health page; `/api/v1/server/healthz` returns JSON. Health output includes service version and loaded record count.
 
-The service publishes canonical `/.well-known/security.txt` with contact, policy, and annual expiration fields; `/security.txt` is not served. `/llms.txt` and `/.well-known/llms.txt` provide API discovery. The policy page is `/server/security`. The CSP/Reporting API receiver is `/api/v1/server/reports/{report}` and accepts only supported report media types with a 1 MiB body limit.
+The service publishes canonical `/.well-known/security.txt` with GitHub reporting, an enabled deployment report form, a configured security email when present, policy, and annual expiration fields; `/security.txt` is not served. `/llms.txt` and `/.well-known/llms.txt` provide API discovery. The policy page is `/server/security`. The CSP/Reporting API receiver is `/api/v1/server/reports/{report}` and accepts only supported report media types with a 1 MiB body limit.
 
 ## Report a vulnerability
 
-Use [GitHub private vulnerability reporting](https://github.com/apimgr/countries/security/advisories/new) for vulnerabilities in the project. Do not file vulnerability details in public issues. For a self-hosted deployment, contact its operator about deployment-specific concerns.
+Use [GitHub private vulnerability reporting](https://github.com/apimgr/countries/security/advisories/new) for vulnerabilities in the project. Do not file vulnerability details in public issues. For a self-hosted deployment, use the reporting link on `/server/security`; it issues a rotating security identifier and stores report bodies encrypted at rest. The separate contact/report form handles abuse and terms violations at URLs on the site, DMCA notices, and privacy requests only. It does not accept support, bug reports, feature requests, or general questions.
 
 ## Data and privacy
 

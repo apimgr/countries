@@ -20,6 +20,16 @@ The server reads `server.yml` from its configuration directory and creates a def
 | `server.contact.dpo.name` | empty | Optional public name shown on `/server/dpo`. |
 | `server.contact.dpo.email` | empty | Optional DPO email shown on `/server/dpo`; falls back to `server.contact.general.email`. |
 | `server.contact.general.email` | empty | General public contact email used as the DPO fallback. |
+| `server.contact.abuse.email` | empty | Public recipient for abuse and DMCA reports; falls back to general, then admin. |
+| `server.contact.admin.email` | empty | Private fallback recipient for report delivery. It is never shown on the report chooser. |
+| `server.contact.security.email` | empty | Private recipient for deployment security reports. |
+| `server.pages.contact.enabled` | `true` | Enable the report form and its security.txt contact entry. Disabled forms return 404. |
+| `server.pages.contact.captcha` | `simple` | `simple`, `recaptcha`, or `hcaptcha`; external providers require keys in `secrets.yml` and retain a simple no-JavaScript fallback. Onion and I2P requests use `simple`. |
+| `server.pages.contact.antispam.*` | configured defaults | Fill age, token age, per-IP/email/global limits, markup/link rules, blocked terms/domains, strikes, duplicate window, and review timing. |
+| `server.notifications.email.smtp.host` | environment/autodetect | SMTP host; `SMTP_HOST` overrides it. `server.notifications.email.smtp.password` is stored only in `secrets.yml`. |
+| `server.notifications.email.smtp.from_email` | `no-reply@{fqdn}` | Server sender address. Submitted email is used only for `Reply-To` on ordinary reports. |
+
+The server generates `server.security.encryption_key` into `secrets.yml` for encrypted security reports. Secret values are not written to `server.yml` or returned by APIs.
 | `server.privacy.data.sold` | `false` | Enables the CCPA opt-out control on `/server/preferences`. |
 | `server.metrics.enabled` | `false` | Parsed but currently unused; no metrics endpoint or collector is registered. |
 | `server.metrics.endpoint` | `/metrics` | Parsed but currently unused. |

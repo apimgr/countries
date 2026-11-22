@@ -11,7 +11,7 @@
 - Use parameterized SQL, bounded queries, connection pooling, and idempotent schema setup.
 - Use SQLite via `modernc.org/sqlite` for local state; keep remote database support explicit.
 - Apply request IDs, trusted proxy checks, security headers, rate limits, structured audit/security logging, and log rotation.
-- Keep Tor/I2P optional and activate only when configured and available.
+- Auto-enable Tor when the required binary is found; follow AI.md's container-aware opt-in defaults for I2P.
 
 ## KEY DECISIONS (pre-answered)
 | Question | Answer | Spec Reference |
