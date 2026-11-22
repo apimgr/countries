@@ -3,7 +3,7 @@
 ⚠️ **These rules are NON-NEGOTIABLE. Violations are bugs.** ⚠️
 
 ## CRITICAL - NEVER DO
-- Never treat code as the specification when it conflicts with `AI.md` or `IDEA.md`.
+- Never treat code, `IDEA.md`, TODO files, audit reports, or derivative documentation as the specification when they conflict with `AI.md`.
 - Never guess business behavior, silently skip requirements, or claim unverified work.
 - Never add credentials, private data, or vendor attribution to project files.
 
@@ -15,7 +15,7 @@
 ## KEY DECISIONS (pre-answered)
 | Question | Answer | Spec Reference |
 |---|---|---|
-| Which specification controls? | `AI.md` controls implementation; `IDEA.md` controls product behavior. | PART 0 |
+| Which specification controls? | `AI.md` controls implementation and product behavior; use `IDEA.md` only for values or context that `AI.md` explicitly directs you to resolve. | PART 0 |
 | Is existing implementation authoritative? | No; align it to the specification. | PART 0 |
 
 ## TERMINOLOGY
