@@ -13,6 +13,7 @@ The checked-in dataset has **249 ISO 3166-1 records**. Records include common an
 - Read the service pages at `/server/about`, `/server/help`, `/server/healthz`, `/server/preferences`, `/server/preferences/sync`, `/server/privacy`, `/server/terms`, `/server/security`, `/server/contact`, and `/server/dpo`; `/server` redirects to the about page.
 - Query the public REST API below `/api/v1/`.
 - Use the `countries-cli` binary for common lookups.
+- Crawlers can use `/robots.txt` and the request-aware `/sitemap.xml`.
 
 ## Guides
 

@@ -69,6 +69,7 @@ Start the `countries` binary to serve the web interface and APIs. By default it 
 - REST reference: `/server/docs/swagger`; OpenAPI JSON: `/api/v1/server/swagger`
 - GraphQL explorer: `/server/docs/graphql`; endpoint: `/api/v1/server/graphql`
 - Health: `/server/healthz` and `/api/v1/server/healthz`
+- Discovery: `/robots.txt`, `/sitemap.xml`, `/llms.txt`, and `/.well-known/security.txt`
 - Service pages: `/server/about`, `/server/help`, `/server/healthz`, `/server/preferences` (including `/server/preferences/sync`), `/server/privacy`, `/server/terms`, `/server/security`, `/server/contact`, and `/server/dpo`
 - REST routes, response formats, discovery files, and preference behavior: [API reference](docs/api.md)
 

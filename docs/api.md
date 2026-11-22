@@ -58,6 +58,8 @@ The browser server pages include `/server/about`, `/server/help`, `/server/healt
 
 `/.well-known/security.txt` publishes the GitHub private reporting channel, security policy URL, and expiration date. `/llms.txt` and `/.well-known/llms.txt` publish a plain-text API index. Unsupported well-known paths return 404.
 
+`/robots.txt` reflects the configured public crawl rules and includes an absolute `Sitemap:` URL. `/sitemap.xml` is generated per request, includes only allowed public HTML pages, and excludes API, contact, and preference endpoints.
+
 ## Browser preferences
 
 The `/server/preferences` page saves theme (`dark`, `light`, or `auto`), language (`en`, `es`, `zh`, `fr`, `ar`, `de`, or `ja`), cookie-consent choices, and the optional CCPA opt-out setting. A first-visit banner offers accept and decline actions through `POST /server/consent`; both browser flows require the CSRF token supplied by the page. The theme and language cookies are client-readable, last one year, and use `SameSite=Lax`; they are never persisted server-side. The page links to `/server/preferences/sync`, which exports a canonical URL and unpadded base64url code and accepts a pasted URL, query string, or code. Sync imports apply valid theme/language values additively; they do not alter consent, CCPA, or credentials. API preference writes accept JSON or form values without CSRF because they do not use ambient credentials. Web preferences writes redirect with `303`; API preferences writes return JSON.

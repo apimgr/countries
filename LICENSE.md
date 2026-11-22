@@ -43,6 +43,15 @@ SOFTWARE.
 | modernc.org/memory | v1.12.1 | BSD-3-Clause | The Memory Authors |
 | modernc.org/sqlite | v1.61.1 | BSD-3-Clause | The Sqlite Authors |
 
+## Third-Party Data
+
+| Dataset | Source | License |
+|---|---|---|
+| IP geolocation city data | [DB-IP](https://db-ip.com/) | CC BY 4.0 |
+| IP geolocation country and ASN data | [ip-location-db](https://github.com/sapics/ip-location-db) | PDDL |
+
+The required visible attribution is: <a href="https://db-ip.com/">IP Geolocation by DB-IP</a>
+
 ## Embedded country data
 
 The generated country database in `src/data/countries.json` is distributed under the Open Database License 1.0 (ODbL). It includes World Bank population values under CC BY 4.0, with attribution retained in [`src/data/README.md`](src/data/README.md). IANA tzdb data is public domain. These data licenses are separate from the MIT-licensed application code. Full license texts and field-level provenance are in `src/data/`.

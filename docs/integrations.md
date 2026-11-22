@@ -6,6 +6,7 @@
 - Read-only GraphQL at `/api/v1/server/graphql`.
 - OpenAPI JSON at `/api/v1/server/swagger`.
 - `/.well-known/security.txt` for security reporting policy.
+- `/robots.txt` and `/sitemap.xml` for crawler discovery.
 - Progressive web app manifest and service worker at `/manifest.json` and `/sw.js`.
 
 ## External providers
