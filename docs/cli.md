@@ -1,9 +1,10 @@
 # CLI reference
 
-The `countries-cli` client makes read-only HTTP requests to a Countries server. In an interactive terminal, running it without a command starts the setup flow and menu. Otherwise, provide a command and configure a server URL.
+The `countries-cli` client queries a Countries server. With no command, it opens the native GUI when a local display is available and GUI support was built in, otherwise it opens the terminal UI when attached to an interactive terminal. SSH and Mosh sessions always use the terminal UI. In headless or scripted use, provide a command and a server URL.
 
 ```text
 countries-cli [flags] COMMAND [arguments]
+countries-cli [flags] QUERY
 ```
 
 ## Commands
@@ -17,24 +18,67 @@ countries-cli [flags] COMMAND [arguments]
 | `nearby LAT LON RADIUS_KM` | Find country centroids within a radius. |
 | `stats` | Read dataset statistics. |
 
+The interactive menu and GUI expose these same six commands in this order. Any positional arguments that do not start with a recognized command are treated as a search query. For example, `countries-cli --server https://countries.example "South Korea"` is equivalent to `countries-cli --server https://countries.example search "South Korea"`.
+
 ## Flags
 
 | Flag | Purpose |
 |---|---|
 | `--server URL` | Server base URL. |
-| `--token TOKEN` | Optional bearer token for servers that require one. The public Countries API does not require authentication. |
+| `--token TOKEN` | Optional bearer token for servers that require one. |
+| `--token-file PATH` | Read a bearer token from a file. Used when `--token` is not provided. |
 | `--config PATH` | Select a config profile or YAML file. |
 | `--lang CODE` | Select output language. |
 | `--output table\|plain\|json` | Choose output format. |
 | `--color auto\|yes\|no` | Choose color behavior. |
+| `--update check` | Check whether the configured server offers a newer CLI. |
+| `--update yes` | Permit automatic installation in non-interactive mode when `update.auto: true`; interactive runs prompt before installing. |
 | `--debug` | Write request diagnostics to stderr. |
-| `--help`, `-h` | Show help. |
-| `--version`, `-v` | Show build version. |
+| `--help`, `-h` | Show help and exit. |
+| `--version`, `-v` | Show build version and exit. |
+| `--shell completions [SHELL]` | Print shell completion code for bash, zsh, fish, sh, dash, ksh, powershell, or pwsh. If omitted, the shell is inferred from `$SHELL` (bash is the fallback). |
+| `--shell init [SHELL]` | Print the command that loads completions in the selected shell. |
+| `--shell --help` | Show shell integration help. |
+
+Completion setup examples:
+
+```sh
+eval "$(countries-cli --shell init bash)"
+countries-cli --shell completions zsh > ~/.zsh/completions/_countries-cli
+```
+
+## Interactive interfaces
+
+On first run, the setup screen asks for a server URL, checks the health endpoint, accepts an optional token, and saves the connection settings. The TUI and GUI each provide one screen for every command above. TUI controls include Up/Down or `j`/`k` to move, `/` to filter, Enter to select or submit, Tab and Shift+Tab to move between fields, `?` for help, Esc to return, and `q` or Ctrl+C to exit. Results remain visible on the result screen; TUI errors appear in its status area and GUI errors open a dismissible dialog that shows the server message.
+
+The GUI is implemented with the pure-Go `gogpu/ui` and `gogpu/gogpu` toolkits and follows the detected operating system light or dark theme. GUI support is compiled with the `gui` build tag on Linux, macOS, and Windows; BSD builds exclude GUI support and use the TUI when a terminal is available. A forced `display.mode: gui` requires a local display and GUI-enabled binary. Forced `display.mode: tui` requires a terminal.
 
 ## Server and configuration
 
 The server URL is selected from `--server`, `COUNTRIES_SERVER_PRIMARY`, `server.primary` in `cli.yml`, then the compiled official site when defined. The default config directory is the invoking user's OS config directory under `apimgr/countries/`. Config files are written with owner-only permissions.
 
-The client reads `server.token` from its config file unless overridden with `--token`. Tokens are sent only in the `Authorization: Bearer` header; the project's public API does not use them. Output language precedence is `--lang`, `lang` in `cli.yml`, `LANG`, then English. Supported language codes are `en`, `es`, `zh`, `fr`, `ar`, `de`, and `ja`. The HTTP client timeout is 15 seconds, and response bodies larger than 16 MiB are rejected.
+The client reads `server.token` from its config file unless overridden with `--token` or `--token-file`. Tokens are sent only in the `Authorization: Bearer` header. Output language precedence is `--lang`, `lang` in `cli.yml`, `LANG`, then English. Supported language codes are `en`, `es`, `fr`, `de`, `it`, `ar`, `zh`, and `ja`. The HTTP client timeout is 15 seconds, and response bodies larger than 16 MiB are rejected. `--version` and `--help` print the invoked binary's filename, so those labels remain accurate if the binary is renamed.
+
+`display.mode` in `cli.yml` accepts `auto` (default), `gui`, or `tui`. With no command, auto mode chooses a local GUI when available, then an interactive TUI; it reports an error when neither is available. Any explicit command runs in CLI mode regardless of display settings. Help, version, and shell integration options exit without opening an interface.
+
+## Updates
+
+The CLI checks `/api/autodiscover` on startup when it has a server URL. An available interactive update prompts before download. A non-interactive update is installed only when both `update.auto: true` and `--update yes` are set. Downloads require HTTPS, are checked against the published SHA-256, and replace the current executable using a platform-specific staged replacement. If the server sets `cli_min_version` above the installed version, the client refuses API requests and instructs the user to run `countries-cli --update yes`.
 
 See the [installation guide](installation.md) for release assets and the [API reference](api.md) for route and response details.
+
+## Server maintenance commands
+
+The `countries` server binary has separate maintenance commands. These commands do not belong to the `countries-cli` client:
+
+```sh
+countries --maintenance backup [filename] [--include-ssl] [--include-data]
+countries --maintenance restore BACKUP_FILE
+countries --maintenance update [check|yes|branch stable|beta|devel]
+```
+
+Without a filename, `backup` creates a timestamped archive in the default backup directory. It always includes `server.yml` and the server database; configuration drop-ins, secrets, assets, and custom templates are included when present. SSL certificate files and the full data directory are optional. If `server.backup.encryption_password` is configured in `secrets.yml`, the archive is encrypted. Compliance mode refuses to create a backup without that secret.
+
+The archive is verified before it is installed. Restore verifies the selected archive and its incremental base, applies configured size and expansion limits, stages the files, and then replaces the configured files. Encrypted restores prompt for the backup password in an interactive terminal; passwords are never accepted as command-line arguments. Restore is destructive and should be run by the deployment operator with the service stopped.
+
+Scheduled backups run daily at 02:00. Daily full backups and the daily incremental are enabled by default; hourly incremental backups are disabled. Retention and disk-pressure checks use the `server.backup.retention.*` settings. See [configuration](configuration.md#backup-and-restore).

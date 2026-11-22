@@ -13,6 +13,20 @@ make test
 
 `make test` runs `go vet`, `govulncheck`, the Go tests, and the 60% coverage gate. Keep API, CLI, web, and documentation changes synchronized.
 
+## Build the documentation
+
+MkDocs and its plugins are listed in `docs/requirements.txt`. Keep the Python environment and generated site outside the repository:
+
+```sh
+mkdir -p "${TMPDIR:-/tmp}/apimgr"
+DOCS_TMP=$(mktemp -d "${TMPDIR:-/tmp}/apimgr/countries-XXXXXX")
+python3 -m venv "$DOCS_TMP/venv"
+"$DOCS_TMP/venv/bin/python" -m pip install -r docs/requirements.txt
+"$DOCS_TMP/venv/bin/python" -m mkdocs build --config-file mkdocs.yml --site-dir "$DOCS_TMP/site"
+```
+
+Remove the temporary directory after previewing the generated site.
+
 ## Binary integration testing
 
 After the toolchain gate, run `./tests/run_tests.sh` for manual binary validation. It accepts `--engine auto`, `--engine incus`, or `--engine docker`; `auto` prefers a usable Incus runtime and falls back to a usable Docker runtime. Set `TEST_ENGINE=incus` or `TEST_ENGINE=docker` to choose the default without a command-line option. The `./tests/docker.sh` entry point runs the Docker suite directly.

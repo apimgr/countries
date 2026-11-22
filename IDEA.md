@@ -13,6 +13,7 @@ repo: https://github.com/apimgr/countries
 license: MIT
 binary: countries
 client_binary: countries-cli
+owner_token: countries_owner_token_gId2fHet
 
 ## Business logic
 
@@ -32,16 +33,18 @@ client_binary: countries-cli
 - No admin web panel (server configured via `server.yml` only)
 - No write/mutation API (data is read-only, embedded at build time)
 - No real-time data (exchange rates, political events, population census updates)
-- No paid tiers, no API keys, no rate-limited access tiers
+- No paid tiers or key-based usage plans; owner tokens only identify resource ownership and authorize the mandatory MCP and token-management flows
 
 ### Roles & permissions
 
-There are no user roles. All endpoints are public and require no authentication.
+There are no user accounts or login roles. Public country reads and server information do not require authentication. Anonymous owners may obtain a primary token to bind resources to an owner identity; the primary manages linked tokens, linked tokens access the same owner's resources without token-management rights, and the operator token authorizes global management actions. MCP requires a bearer token.
 
 | Actor | Access |
 |-------|--------|
 | **Anonymous visitor (browser)** | Full read access to all web pages and API endpoints |
-| **Anonymous API client (curl/CLI)** | Full read access to all API endpoints |
+| **Anonymous API client (curl/CLI)** | Full read access to public country and information endpoints; owner token routes require a primary token, and MCP requires a bearer token |
+| **Owner token holder** | Accesses resources associated with its owner; the primary token manages linked tokens, while linked tokens cannot manage tokens |
+| **Operator** | Global management access using `server.token`; no operator account or web administration panel |
 | **Server operator** | Configures server via `server.yml` only; no web management interface |
 
 ### Data model & sensitivity
@@ -95,7 +98,7 @@ Core country lookups make no external runtime calls. Contact delivery and third-
 
 ### Security decisions & exceptions
 
-- **No authentication on any endpoint**: intentional. Public read-only reference API.
+- **No user accounts or login**: intentional. Anonymous owner and linked bearer tokens are credentials for resource ownership, token management and MCP only.
 - **All responses include `Access-Control-Allow-Origin: *`**: intentional. Public data API designed for cross-origin browser use.
 - **Public contact form**: intentional; it has no accounts or message storage, accepts bounded submissions protected by the configured challenge, and sends only to the operator-configured recipient when SMTP is configured.
 

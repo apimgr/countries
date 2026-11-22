@@ -10,7 +10,8 @@ The checked-in dataset has **249 ISO 3166-1 records**. Records include common an
 
 - Browse and search at `/` and `/search`.
 - Explore REST at `/server/docs/swagger` and GraphQL at `/server/docs/graphql`.
-- Read the service pages at `/server/about`, `/server/help`, `/server/healthz`, `/server/preferences`, `/server/preferences/sync`, `/server/privacy`, `/server/terms`, `/server/security`, `/server/contact`, and `/server/dpo`; `/server` redirects to the about page.
+- Read the service pages at `/server/about`, `/server/help`, `/server/help/mcp`, `/server/healthz`, `/server/preferences`, `/server/preferences/tokens`, `/server/preferences/sync`, `/server/privacy`, `/server/terms`, `/server/security`, `/server/contact`, and `/server/dpo`; `/server` redirects to the about page.
+- Connect MCP clients at `/api/v1/server/mcp` with an owner or linked bearer token. Create and manage tokens through the token preferences page or its API mirror.
 - Query the public REST API below `/api/v1/`.
 - Use the `countries-cli` binary for common lookups.
 - Crawlers can use `/robots.txt` and the request-aware `/sitemap.xml`.
@@ -24,3 +25,4 @@ The checked-in dataset has **249 ISO 3166-1 records**. Records include common an
 - [Security and privacy](security.md)
 - [Integrations and discovery](integrations.md)
 - [Development](development.md)
+- [Translation guide](translating.md)

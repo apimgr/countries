@@ -32,13 +32,29 @@ On Windows, download the matching `.exe` file and add its directory to `%PATH%`.
 
 ## Docker Compose
 
-The production Compose file is [`docker/docker-compose.yml`](https://github.com/apimgr/countries/blob/main/docker/docker-compose.yml). It publishes the service on `172.17.0.1:64580`, stores configuration under `docker/volumes/config`, and stores runtime data under `docker/volumes/data` relative to the Compose file.
+The production Compose file is [`docker/docker-compose.yml`](https://github.com/apimgr/countries/blob/main/docker/docker-compose.yml). It publishes the service on `172.17.0.1:64580` and stores configuration and runtime data in `volumes/` relative to the Compose file. Copy it outside the source checkout so runtime data remains outside the repository:
 
 ```sh
-docker compose -f docker/docker-compose.yml up -d
+mkdir -p /path/to/countries/volumes/config /path/to/countries/volumes/data
+cp docker/docker-compose.yml /path/to/countries/docker-compose.yml
+cd /path/to/countries && docker compose up -d
 ```
 
 The image exposes port 80 inside the container. Review and adjust the bind address, volumes, and environment for the deployment before starting it.
+
+## Docker
+
+The released image is available as `ghcr.io/apimgr/countries:latest`. For a standalone container, create deployment-owned directories outside the source checkout and mount them at `/config` and `/data`:
+
+```sh
+docker run -d --name countries \
+  -p 172.17.0.1:64580:80 \
+  -v /path/to/countries/volumes/config:/config:z \
+  -v /path/to/countries/volumes/data:/data:z \
+  ghcr.io/apimgr/countries:latest
+```
+
+The bind address limits access to the Docker bridge interface. Change it only when the deployment's network design requires a different listener. The container listens on port 80 and defaults to production mode. The bind-mount paths should point to directories outside the source checkout.
 
 ## Build from source
 
@@ -49,6 +65,16 @@ make dev
 ```
 
 The command builds the server and CLI into a project-scoped OS temporary directory and prints its path. Run the server binary from that directory. The default host listener is `0.0.0.0:8080`.
+
+## System service
+
+On a supported host, install the service with the server binary's service command:
+
+```sh
+sudo countries --service --install
+```
+
+Start and enable the generated service with the host's service manager. Service installation is a host operation; do not run it from a container or during development tests.
 
 ## First start
 
