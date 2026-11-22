@@ -87,6 +87,8 @@ make test
 
 `make dev` builds the server and client into an OS temporary directory. `make test` runs vet, vulnerability scanning, unit tests, and the configured coverage gate. Read the [development guide](docs/development.md) before contributing.
 
+Run `./tests/run_tests.sh` for phase-two binary integration checks; select a runtime with `--engine auto`, `--engine incus`, `--engine docker`, or the `TEST_ENGINE` environment variable. See the [development guide](docs/development.md) for coverage and requirements.
+
 Run the standalone browser E2E suite on demand with `./tests/e2e.sh`; see the [development guide](docs/development.md) for its Docker image requirements.
 
 ## License
