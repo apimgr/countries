@@ -16,7 +16,7 @@
 | Question | Answer | Spec Reference |
 |---|---|---|
 | Dependency updates | Renovate. | PART 27 |
-| CI provider | GitHub Actions for this GitHub repository. | PART 27 |
+| Hosting provider | GitHub Actions runs this repository's hosted CI. The repository still ships equivalent GitHub, GitLab, Gitea, Forgejo, and Jenkins workflows as PART 27 requires. | PART 27 |
 
 ## TERMINOLOGY
 | Term | Meaning |
