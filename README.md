@@ -55,7 +55,7 @@ chmod +x countries
 ./countries
 ```
 
-The server listens on `0.0.0.0:8080` by default and creates `server.yml` on first start. See the [installation](docs/installation.md) and [configuration](docs/configuration.md) guides before exposing a deployment.
+On first start, a native server selects and saves an available port in the `64000`–`64999` range; a container listens on port `80`. The server creates `server.yml` during startup. See the [installation](docs/installation.md) and [configuration](docs/configuration.md) guides before exposing a deployment.
 
 ### System service
 
@@ -77,7 +77,7 @@ See the [CLI reference](docs/cli.md) for flags and output formats.
 
 The server creates `server.yml` on first start. Runtime settings also use `yaml.d/` area files and `secrets.yml`; do not put credentials in `server.yml`. The client optionally reads `cli.yml` from the user's OS configuration directory. See the [configuration reference](docs/configuration.md) for paths, supported settings, and precedence.
 
-Scheduled updates honor `server.update.defer_days` for stable and beta releases and notify once per eligible version. Privilege-safe automatic server installation is not yet implemented; leave `server.update.auto_install` disabled. Backups run daily and can be encrypted using `server.backup.encryption_password` in `secrets.yml`.
+Scheduled update checks honor `server.update.defer_days` for stable and beta releases and notify once per eligible version. With `server.update.auto_install` enabled, an elevated Unix server stages a verified update and restarts so the supervisor can apply it; user-mode and Windows services receive a manual update command. Backups run daily and can be encrypted using `server.backup.encryption_password` in `secrets.yml`.
 
 Key server settings include `server.address`, `server.port`, `server.mode`, `server.tokens.*`, `server.rate_limit.*`, `server.contact.*`, `server.privacy.*`, and optional consent-gated `server.tracking.*`. The operator token and other credentials belong in `secrets.yml`.
 

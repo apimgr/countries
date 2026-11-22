@@ -6,8 +6,8 @@ The server reads `server.yml` from its configuration directory and creates a def
 
 | YAML key | Default | Purpose |
 |---|---|---|
-| `server.port` | `8080` | HTTP listener port; `--port` and `PORT` override it. |
-| `server.address` | `0.0.0.0` | Listener address; `--address` and `ADDRESS` override it. |
+| `server.port` | First-run native: random available `64000`–`64999`; container: `80` | HTTP listener port. `PORT` seeds first-run config; `--port` overrides the listener for that invocation. |
+| `server.address` | `[::]` | Dual-stack listener address; `--address` and `LISTEN` override it. IPv4-only hosts fall back to `0.0.0.0`. |
 | `server.fqdn` | `localhost` | Configured public host name. |
 | `server.mode` | `production` | Application mode when neither `--mode` nor `MODE` is set. |
 | `server.database.driver` | `sqlite` | Database driver. SQLite is currently supported. |
@@ -16,7 +16,7 @@ The server reads `server.yml` from its configuration directory and creates a def
 | `server.tokens.cookie_max_age` | `1y` | Sliding lifetime of the primary owner token cookie. |
 | `server.tokens.idle_purge_days` | `0` | Days before purging an owner with no resources and no token use; zero disables idle purge. |
 | `server.update.branch` | `stable` | Update channel (`stable`, `beta`, or `devel`; `daily` is normalized to `devel`). |
-| `server.update.auto_install` | `false` | Controls whether scheduled update checks may install an eligible release. The privilege-safe staged server update flow is not yet implemented; when enabled, the server logs this limitation and sends the normal update notice. |
+| `server.update.auto_install` | `false` | Allows scheduled checks to stage a checksum-verified update when the server started elevated on Unix. The supervisor applies it on restart. User-mode and Windows services receive a manual update command instead. |
 | `server.update.defer_days` | `0` | Scheduled stable/beta update notices ignore releases newer than this many days; devel ignores the setting. Manual update commands are never deferred. |
 | `server.update.cli_min_version` | empty | Minimum companion CLI version. The server returns this value through autodiscovery; a CLI below it refuses further API requests and prints the update command. |
 | `server.trusted_proxies.additional` | `[]` | Additional trusted proxy IPs, CIDRs, or hostnames. |
@@ -103,7 +103,7 @@ Scheduled full and incremental backups run daily at 02:00; hourly incrementals a
 
 Rate limiting is always enabled. Anonymous requests are limited per client IP, valid bearer-token requests are limited per token, and failed authentication is counted per IP. Boolean configuration accepts the truthy and falsy values defined by the project parser, including `yes/no`, `enable/disable`, `on/off`, and `1/0`.
 
-Runtime mode precedence is `--mode`, then `MODE`, then `server.mode`, then `production`. Accepted values are `production` (`prod`), `development` (`dev`, `devel`), and `debug`. The selected mode is process-local; `--mode` does not rewrite configuration. Debug endpoint enablement is separate: explicit `--debug` wins over `DEBUG`, which wins over the default enabled by `debug` mode. When enabled, `/debug/pprof/*` and `/debug/vars` are available. Remaining mode-specific logging, request diagnostics, caching, and security-header behavior are incomplete.
+Runtime mode precedence is `--mode`, then `MODE`, then `server.mode`, then `production`. Accepted values are `production` (`prod`), `development` (`dev`, `devel`), and `debug`. The selected mode is process-local; `--mode` does not rewrite configuration. Debug endpoint enablement is separate: explicit `--debug` wins over `DEBUG`, which wins over the default enabled by `debug` mode. When enabled, `/debug/pprof/*` and `/debug/vars` are available. Mode-specific logging, request diagnostics, caching, and security-header behavior still need completion to match AI.md.
 
 ### Analytics tracking
 

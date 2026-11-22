@@ -64,7 +64,7 @@ Docker and the `casjaysdev/go:latest` image are required. The project Makefile r
 make dev
 ```
 
-The command builds the server and CLI into a project-scoped OS temporary directory and prints its path. Run the server binary from that directory. The default host listener is `0.0.0.0:8080`.
+The command builds the server and CLI into a project-scoped OS temporary directory and prints its path. Run the server binary from that directory. On first start, a native server selects and saves an available port in the `64000`–`64999` range.
 
 ## System service
 
@@ -78,4 +78,4 @@ Start and enable the generated service with the host's service manager. Service 
 
 ## First start
 
-The server creates `server.yml` in its configuration directory when the file is missing. The default listener is `0.0.0.0:8080`; `--port` or `PORT` changes the port. Use `--config`, `--data`, and `--log` to select runtime directories. See the [configuration reference](configuration.md) for path defaults and settings.
+The server creates `server.yml` in its configuration directory when the file is missing. A native first run selects and saves an available port in the `64000`–`64999` range; a container defaults to port `80`. `PORT` seeds the first-run configuration, while `--port` overrides the listener for that invocation. Use `--config`, `--data`, and `--log` to select runtime directories. See the [configuration reference](configuration.md) for path defaults and settings.

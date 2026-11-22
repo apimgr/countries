@@ -8,9 +8,14 @@
 - Streamable HTTP MCP at `/api/v1/server/mcp` (aliases: `/api/mcp` and `/mcp`); every request requires a bearer token.
 - MCP connection details and tool inventory at `/server/help/mcp` and `/api/v1/server/help/mcp`.
 - `/.well-known/security.txt` for security reporting policy.
+- `/.well-known/pgp-key.asc` for the security-report public key when one has been generated; it returns 404 otherwise.
 - `/llms.txt` and `/.well-known/llms.txt` for a plain-text API index.
 - `/robots.txt` and `/sitemap.xml` for crawler discovery.
 - Progressive web app manifest and service worker at `/manifest.json` and `/sw.js`.
+
+## Security reporting
+
+The deployment publishes its RFC 9116 contact details at `/.well-known/security.txt` and on `/server/security`. The overview links to the disclosure policy at `/server/security/policy`, researcher acknowledgments at `/server/security/thanks`, and the public key at `/.well-known/pgp-key.asc` when a key is available. The public key endpoint returns 404 until one has been generated. The JSON mirrors are `/api/v1/server/security`, `/api/v1/server/security/policy`, and `/api/v1/server/security/thanks`.
 
 ## MCP clients
 

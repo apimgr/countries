@@ -44,7 +44,7 @@ curl -q -LSsf -X POST \
 
 ## Server endpoints
 
-The browser server pages include `/server/about`, `/server/help`, `/server/healthz`, `/server/preferences`, `/server/preferences/sync`, `/server/privacy`, `/server/terms`, `/server/security`, and `/server/dpo`. `/server` redirects to `/server/about`. The report form is available only from the security policy and the security.txt reporting contact. It handles security reports, abuse/terms reports, DMCA notices, and privacy requests; it is not a support or feedback channel.
+The browser server pages include `/server/about`, `/server/contact`, `/server/help`, `/server/healthz`, `/server/preferences`, `/server/preferences/sync`, `/server/privacy`, `/server/terms`, `/server/security`, `/server/security/policy`, `/server/security/thanks`, and `/server/dpo`. `/server` redirects to `/server/about`. The `/server/contact` report form is linked only from the security policy and the `security.txt` reporting contact. It handles security reports, abuse/terms reports, DMCA notices, and privacy requests; it is not a support or feedback channel.
 
 | Method | Path | Description |
 |---|---|---|
@@ -53,7 +53,9 @@ The browser server pages include `/server/about`, `/server/help`, `/server/healt
 | GET | `/api/v1/server/help` | Usage help. |
 | GET | `/api/v1/server/privacy` | Privacy notice. |
 | GET | `/api/v1/server/terms` | Service terms. |
-| GET | `/api/v1/server/security` | Security reporting policy. |
+| GET | `/api/v1/server/security` | Security overview: configured reporting contacts, expiry, PGP key availability and fingerprint, and absolute policy, thanks, and report URLs. Missing channels are omitted; the PGP URL and fingerprint are `null` when no key exists. |
+| GET | `/api/v1/server/security/policy` | Disclosure policy Markdown. |
+| GET | `/api/v1/server/security/thanks` | Researcher acknowledgments (`credit`, ISO date, and severity), newest first; returns an empty list when none are published. |
 | GET | `/api/v1/server/contact` | Report form field descriptors, a new CAPTCHA challenge, a single-use `form_token`, offered types, security URL, and public abuse email. This route returns 404 when disabled. |
 | POST | `/api/v1/server/contact` | Submit a report for review with `step: "submit"`; confirm with all original fields, `step: "confirm"`, the returned `review_token`, and `confirmed: true`. The first call never delivers. Security mode requires a valid `security_id`. |
 | GET | `/api/v1/server/dpo` | Data protection contact (`name`, `email`, and absolute `privacy_url`). The email falls back from `server.contact.dpo.email` to `server.contact.general.email`; no address is invented. |
@@ -87,6 +89,8 @@ The browser server pages include `/server/about`, `/server/help`, `/server/healt
 ## Well-known discovery
 
 `/.well-known/security.txt` publishes the GitHub private reporting channel, the enabled deployment reporting form, any configured security email, the policy URL, and an expiration date. `/llms.txt` and `/.well-known/llms.txt` publish a plain-text API index. Unsupported well-known paths return 404.
+
+`/.well-known/pgp-key.asc` serves the ASCII-armored public security-report key as `application/pgp-keys` when a key exists; it returns 404 when no key has been generated. The security overview links to the disclosure policy and acknowledgments pages.
 
 `/robots.txt` reflects the configured public crawl rules and includes an absolute `Sitemap:` URL. `/sitemap.xml` is generated per request, includes only allowed public HTML pages, and excludes API, contact, and preference endpoints.
 
