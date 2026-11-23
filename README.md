@@ -1,31 +1,47 @@
 # Countries
 
+Countries provides read-only information about 249 ISO 3166-1 country records through a REST API, GraphQL, a server-rendered web interface, and the `countries-cli` client. The dataset is embedded in the server binary and is not fetched at runtime.
+
 [![CI](https://github.com/apimgr/countries/actions/workflows/ci.yml/badge.svg)](https://github.com/apimgr/countries/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/apimgr/countries)](https://github.com/apimgr/countries/releases)
 [![License](https://img.shields.io/github/license/apimgr/countries)](LICENSE.md)
+[![Documentation](https://readthedocs.org/projects/apimgr-countries/badge/?version=latest)](https://apimgr-countries.readthedocs.io/)
 
-## About
+## Install
 
-Countries is a read-only country reference service with a REST API, GraphQL API, server-rendered pages, and a command-line client. It embeds 249 ISO 3166-1 records and does not fetch country data at runtime.
+Download the server binary and, if needed, the `countries-cli` client from [GitHub Releases](https://github.com/apimgr/countries/releases/latest). Releases include both binaries for Linux, macOS, Windows, and FreeBSD on amd64 and arm64.
 
-## Features
+| Platform | Architecture | Server | Client |
+|---|---|---|---|
+| Linux | amd64 | `countries-linux-amd64` | `countries-cli-linux-amd64` |
+| Linux | arm64 | `countries-linux-arm64` | `countries-cli-linux-arm64` |
+| macOS | Intel (amd64) | `countries-darwin-amd64` | `countries-cli-darwin-amd64` |
+| macOS | Apple Silicon (arm64) | `countries-darwin-arm64` | `countries-cli-darwin-arm64` |
+| Windows | amd64 | `countries-windows-amd64.exe` | `countries-cli-windows-amd64.exe` |
+| Windows | arm64 | `countries-windows-arm64.exe` | `countries-cli-windows-arm64.exe` |
+| FreeBSD | amd64 | `countries-freebsd-amd64` | `countries-cli-freebsd-amd64` |
+| FreeBSD | arm64 | `countries-freebsd-arm64` | `countries-cli-freebsd-arm64` |
 
-- Search and filter country records by codes, region, currency, and language.
-- Look up records by alpha-2, alpha-3, or numeric country code.
-- Find the nearest country centroid and countries within a radius.
-- Query the dataset through REST, GraphQL, or `countries-cli`.
-- Serve a self-hosted web interface without an account system.
-- Manage anonymous owner and linked bearer tokens for MCP access and owned resources.
-- Refresh external IP/domain blocklists and vulnerability databases on the built-in schedule.
-- Create verified, optionally encrypted scheduled backups with bounded restore support.
-- Use the built-in help, privacy, security, terms, preferences, and report pages.
-- Use the server and CLI in eight embedded languages: English, Spanish, French, German, Italian, Arabic, Chinese, and Japanese.
+Linux example:
 
-## Production
+```sh
+curl -q -LSsf https://github.com/apimgr/countries/releases/latest/download/countries-linux-amd64 -o countries
+chmod +x countries
+```
 
-### Docker Compose
+For macOS, download the matching `darwin` asset for `amd64` or `arm64`, then make it executable and clear quarantine if needed:
 
-The production Compose file is [`docker/docker-compose.yml`](docker/docker-compose.yml). Copy it to a deployment directory outside the source checkout so its relative `volumes/` paths keep runtime data out of the repository, then review the published port and host values:
+```sh
+curl -q -LSsf https://github.com/apimgr/countries/releases/latest/download/countries-darwin-arm64 -o countries
+chmod +x countries
+xattr -d com.apple.quarantine countries 2>/dev/null || true
+```
+
+On Windows, download the matching `.exe` asset and add its directory to `%PATH%`. For FreeBSD, download the matching `amd64` or `arm64` asset and run `chmod +x` before use. See the [installation guide](docs/installation.md) for service and Docker instructions.
+
+## 🐳 Docker
+
+The production Compose file is [`docker/docker-compose.yml`](docker/docker-compose.yml). Copy it to a deployment directory outside the source checkout so runtime data stays out of the repository:
 
 ```sh
 DEPLOY_DIR=/path/to/countries-deployment
@@ -34,91 +50,61 @@ cp docker/docker-compose.yml "$DEPLOY_DIR/docker-compose.yml"
 cd "$DEPLOY_DIR" && docker compose up -d
 ```
 
-The Compose deployment publishes the service on `172.17.0.1:64580` and keeps configuration and runtime data in the deployment directory's `volumes/` folder. Review those paths and the bind address before deployment.
+The service is published on `172.17.0.1:64580` by default. Review the bind address and deployment paths before starting it. The image is `ghcr.io/apimgr/countries:latest`.
 
-### Docker
+## 🖥️ countries-cli
 
-```sh
-docker run -d --name countries \
-  -p 172.17.0.1:64580:80 \
-  -v /path/to/countries/volumes/config:/config:z \
-  -v /path/to/countries/volumes/data:/data:z \
-  ghcr.io/apimgr/countries:latest
-```
-
-### Binary
-
-Download the server binary for your operating system and architecture from [GitHub Releases](https://github.com/apimgr/countries/releases/latest). For Linux amd64:
-
-```sh
-curl -q -LSsf https://github.com/apimgr/countries/releases/latest/download/countries-linux-amd64 -o countries
-chmod +x countries
-./countries
-```
-
-On first start, a native server selects and saves an available port in the `64000`–`64999` range; a container listens on port `80`. The server creates `server.yml` during startup. See the [installation](docs/installation.md) and [configuration](docs/configuration.md) guides before exposing a deployment.
-
-### System service
-
-On supported systems, install the service with `sudo countries --service --install`, then start it with the service manager. See [installation](docs/installation.md) for platform notes.
-
-## Client
-
-Download a `countries-cli` release for your operating system and architecture from [GitHub Releases](https://github.com/apimgr/countries/releases/latest). The client supports `list`, `get`, `search`, `nearest`, `nearby`, `stats`, and direct requests to supported versioned native API routes.
+The companion client supports country listing, lookup, search, coordinate and nearby queries, statistics, and supported versioned API requests.
 
 ```sh
 countries-cli --help
-countries-cli search united
-countries-cli get US
-countries-cli request GET /api/v1/server/healthz
+countries-cli --server http://YOUR_SERVER search united
+countries-cli --server http://YOUR_SERVER get US
+countries-cli --server http://YOUR_SERVER request GET /api/v1/server/healthz
 ```
 
-See the [CLI reference](docs/cli.md) for flags and output formats.
+With no command, the client opens its GUI when available, otherwise its terminal interface when attached to an interactive terminal. See the [CLI reference](docs/cli.md) for commands, flags, configuration, and output formats.
 
-## Configuration
+## 🤖 Countries Server
 
-The server creates `server.yml` on first start. Runtime settings also use `yaml.d/` area files and `secrets.yml`; do not put credentials in `server.yml`. The client optionally reads `cli.yml` from the user's OS configuration directory. See the [configuration reference](docs/configuration.md) for paths, supported settings, and precedence.
+Run the `countries` binary to start the service. On first start, it creates `server.yml` in the operating system's configuration directory and selects an available native port in the `64000`–`64999` range; containers listen on port `80`. Configuration, database, logs, cache, and backups are stored in the operating system's application directories. See the [configuration reference](docs/configuration.md).
 
-Scheduled update checks honor `server.update.defer_days` for stable and beta releases and notify once per eligible version. With `server.update.auto_install` enabled, an elevated Unix server stages a verified update and restarts so the supervisor can apply it; user-mode and Windows services receive a manual update command. Backups run daily and can be encrypted using `server.backup.encryption_password` in `secrets.yml`.
+On supported systems, install a service with `sudo countries --service --install`. See the [installation guide](docs/installation.md) for supported service managers and lifecycle commands.
 
-Key server settings include `server.address`, `server.port`, `server.mode`, `server.tokens.*`, `server.rate_limit.*`, `server.contact.*`, `server.privacy.*`, and optional consent-gated `server.tracking.*`. The operator token and other credentials belong in `secrets.yml`.
+## API and web interface
 
-## API
-
-The service exposes versioned REST routes under `/api/v1/`, a GraphQL endpoint, and server-rendered API documentation. Use the base URL of your own deployment in examples.
+Country data is available under `/api/v1/`. The service also provides a read-only GraphQL endpoint, OpenAPI documentation, MCP access for bearer-token holders, and server-rendered pages.
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/v1/countries` | List country records |
-| `GET /api/v1/countries/{code}` | Look up a country by code |
-| `GET /api/v1/countries/search?q={query}` | Search country names |
-| `GET /api/v1/coordinates?lat={lat}&lon={lon}` | Find the nearest country centroid |
+| `GET /api/v1/countries` | List and filter country records |
+| `GET /api/v1/countries/{code}` | Look up a country by alpha-2, alpha-3, or numeric code |
+| `GET /api/v1/countries/search?q={query}` | Search country records |
+| `GET /api/v1/coordinates?lat={lat}&lon={lon}` | Find the nearest country |
 | `GET /api/v1/nearby?lat={lat}&lon={lon}&radius={km}` | Find countries within a radius |
-| `GET /api/v1/stats` | Read dataset counts and version |
+| `GET /api/v1/stats` | Read dataset statistics |
+| `GET /api/v1/server/healthz` | Read service health |
 | `POST /api/v1/server/graphql` | Execute a GraphQL query |
-| `GET /api/v1/server/healthz` | Check service health |
-| `POST /api/v1/server/preferences/tokens/primary` | Create a primary owner token |
-| `GET /api/v1/server/preferences/tokens` | List owned tokens (primary bearer token required) |
-| `POST /api/v1/server/mcp` | Use the MCP endpoint (bearer token required) |
+| `POST /api/v1/server/mcp` | Call MCP with a bearer token |
 
-Interactive references are available at `/server/docs/swagger` and `/server/docs/graphql`. Read the [API documentation](docs/api.md) for response formats, token management, direct aliases, and discovery routes. Supply your deployment's base URL in place of `YOUR_SERVER` in command examples.
+The web interface includes country search, coordinate lookup, API explorers, help, privacy, security, terms, contact/reporting, and guest preference pages. Browse `/` on your deployment; the API and browser route details are in the [API guide](docs/api.md).
 
-```sh
-curl -q -LSsf http://YOUR_SERVER/api/v1/server/healthz
-```
+## More documentation
 
-## Other
+- [Configuration](docs/configuration.md)
+- [Security and reporting](docs/security.md)
+- [Integrations and discovery](docs/integrations.md)
+- [Operations, backups, and updates](docs/operations.md)
+- [Development and testing](docs/development.md)
+- [Translation guide](docs/translating.md)
 
-### Troubleshooting
+## Disclaimer
 
-- Check the server's configured logs for startup or request errors.
-- Check `http://YOUR_SERVER/server/healthz` to confirm the service is responding.
-- A `429` response means the deployment's request limit was reached; wait for `Retry-After` before retrying.
-- See [configuration](docs/configuration.md) for listener, proxy, privacy, token, and logging settings.
+This software is provided as is, without warranty of any kind. Evaluate and configure it for your environment before production use. Third-party services used by a deployment have their own terms.
 
 ## Development
 
-The Go toolchain runs in `casjaysdev/go:latest` with CGO disabled. Docker is required for builds and tests.
+Builds and tests run in the `casjaysdev/go:latest` container with CGO disabled. Docker is required.
 
 ```sh
 git clone https://github.com/apimgr/countries.git
@@ -127,19 +113,7 @@ make dev
 make test
 ```
 
-`make dev` builds the server and client into an OS temporary directory. `make test` runs the project test gate. The Docker binary integration suite is `./tests/run_tests.sh`; run `./tests/incus.sh` separately for systemd and OpenRC integration. The browser E2E suite is `./tests/e2e.sh`. See the [development guide](docs/development.md) for prerequisites and details.
-
-## Disclaimer
-
-This software is provided as is, without warranty of any kind. Use it at your own risk.
-
-- **No warranty:** The authors are not responsible for damages, data loss, or issues arising from use of this software.
-- **Not professional advice:** This software does not provide legal, financial, medical, or other professional advice.
-- **Third-party services:** Any external APIs or services used by a deployment have their own terms.
-- **Security:** No software can be guaranteed free of vulnerabilities.
-- **Production use:** Evaluate the software and configure it for your environment before deployment.
-
-By using this software, you acknowledge that you have read and understood this disclaimer.
+`make dev` builds the server and client into a project-scoped operating system temporary directory. The Docker binary integration suite is `./tests/run_tests.sh`, the Incus service suite is `./tests/incus.sh`, and browser E2E is `./tests/e2e.sh`. See [development](docs/development.md) for details.
 
 ## License
 

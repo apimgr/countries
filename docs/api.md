@@ -54,7 +54,7 @@ curl -q -LSsf -X POST \
 
 ## Server endpoints
 
-The browser server pages include `/server/about`, `/server/contact`, `/server/help`, `/server/healthz`, `/server/preferences`, `/server/preferences/sync`, `/server/privacy`, `/server/terms`, `/server/security`, `/server/security/policy`, `/server/security/thanks`, and `/server/dpo`. `/server` redirects to `/server/about`. The `/server/contact` report form is linked only from the security policy and the `security.txt` reporting contact. It handles security reports, abuse/terms reports, DMCA notices, and privacy requests; it is not a support or feedback channel.
+The browser interface also includes `/`, `/search`, and `/coordinates`. Server pages include `/server/about`, `/server/contact`, `/server/dpo`, `/server/help`, `/server/help/mcp`, `/server/healthz`, `/server/preferences`, `/server/preferences/sync`, `/server/preferences/tokens`, `/server/privacy`, `/server/security`, `/server/security/policy`, `/server/security/thanks`, and `/server/terms`. `/server/security/report/{tracking_id}?token={status_token}` is a one-time-per-day emailed status page and has no API mirror. `/server/docs/swagger` renders the OpenAPI explorer and `/server/docs/graphql` renders the GraphQL explorer. `/server` redirects to `/server/about`; `/healthz` is available only when `server.healthz.root.enabled` is true. The contact page is a reporting and privacy-request channel, not general support. It handles security reports, abuse/terms reports, DMCA notices, and privacy requests.
 
 | Method | Path | Description |
 |---|---|---|
@@ -93,10 +93,28 @@ The browser server pages include `/server/about`, `/server/contact`, `/server/he
 | DELETE | `/api/v1/server/preferences/tokens/{id}` | Revoke a linked token; primary owner bearer token required. |
 | POST | `/api/v1/server/reports/{report}` | Receive CSP/Reporting API reports. |
 | POST | `/server/consent` | Save a browser's accept/decline choice for optional cookies; requires the page's CSRF token and redirects to a validated local path. |
+| POST | `/server/ccpa` | Record a browser's Global Privacy Control opt-out choice when the configured privacy policy enables data sales. |
+| POST | `/announcements/dismiss` | Dismiss a displayed announcement for the browser; requires the page's CSRF token. |
+| GET | `/server/security/report/{tracking_id}?token={status_token}` | Show the limited status for a security report using its report-status token. A valid token is single-use per UTC day. |
 
-## Discovery aliases
+The server-rendered browser forms also accept `POST /server/contact`, `POST /server/preferences`, `POST /server/preferences/sync`, and the owner-token actions under `/server/preferences/token/*` and `/server/preferences/tokens/*`. Token-management mutations require the owner cookie and CSRF token; other state-changing browser forms require CSRF where applicable. Initial owner-token create/restore use their one-time browser flow. `POST /server/docs/graphql` submits a read-only GraphQL query from the explorer when JavaScript is disabled.
 
-`/api/healthz`, `/api/swagger`, `/api/graphql`, `/api/mcp`, and `/mcp` are direct aliases. They invoke the same handlers and do not redirect. `/api/autodiscover` is unversioned because clients use it before learning the API version. Use versioned REST paths for integrations. The server-rendered pages are `/server/docs/swagger` and `/server/docs/graphql`. The GraphQL explorer submits through a server-rendered POST form when JavaScript is disabled; its optional enhancement sends the same read-only query to the API endpoint.
+## Other public routes
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/manifest.json` | Web app manifest. |
+| GET | `/sw.js` | Service worker for the PWA. |
+| GET | `/robots.txt` | Configured crawler rules and sitemap URL. |
+| GET | `/sitemap.xml` | Sitemap of eligible public HTML pages. |
+| GET | `/.well-known/security.txt` | Security contact and disclosure policy. |
+| GET | `/.well-known/pgp-key.asc` | Security-report public key when one is configured; otherwise 404. |
+| GET | `/llms.txt`, `/.well-known/llms.txt` | Generated plain-text API and integration index. |
+| GET | `/server/tracking.js` | Consent-aware tracking bootstrap script. |
+| GET | `/api/autodiscover` | Unversioned server, API, and CLI discovery for clients. |
+| GET | `/cli/binaries/{binary}` | Download an allowlisted companion CLI release binary. |
+
+The stable unversioned API aliases are `/api/healthz`, `/api/healthz.txt`, `/api/swagger`, `/api/graphql`, `/api/mcp`, and `/mcp`; they call the same handlers as their canonical routes without redirects. Metrics and debug routes are feature/configuration gated and documented in [Integrations](integrations.md) and [Configuration](configuration.md).
 
 ## Well-known discovery
 

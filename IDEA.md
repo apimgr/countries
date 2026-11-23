@@ -22,11 +22,10 @@ owner_token: countries_owner_token_gId2fHet
 **In scope:**
 - 249 countries with comprehensive per-country data (names, ISO codes, capital, region, currencies, languages, population, area, flag, borders, timezones, TLDs)
 - Search/filter by name, code, region, currency, or language
-- Full web frontend (server-side Go templates, dark/light/auto theme, PWA, mobile-first)
-- Server pages: `/server/about`, `/server/contact`, `/server/dpo`, `/server/help`, `/server/help/mcp` when MCP is enabled, `/server/healthz`, `/server/preferences`, `/server/preferences/sync`, `/server/preferences/tokens`, `/server/privacy`, `/server/security`, `/server/security/policy`, `/server/security/thanks`, and `/server/terms`
+- Full mobile-first browser interface with server-rendered country search, coordinate lookup, service information, preferences, documentation explorers, privacy, and security reporting pages; pages work without JavaScript for core navigation and forms
 - CLI client (`countries-cli`) for queries from the terminal
-- OpenAPI/Swagger docs at `/api/{api_version}/server/swagger`
-- GraphQL at `/api/graphql` (with its explorer at `/server/docs/graphql`)
+- OpenAPI reference and interactive REST explorer
+- Read-only GraphQL API and interactive query explorer
 
 **Non-goals:**
 - No user accounts, registration, or login of any kind

@@ -24,7 +24,7 @@ Download a client binary from the deployment with a platform-specific path:
 
 ```sh
 SERVER_URL="https://your-server.example"
-curl --fail --location "$SERVER_URL/cli/binaries/countries-cli-linux-amd64" -o countries-cli
+curl -q -LSsf "$SERVER_URL/cli/binaries/countries-cli-linux-amd64" -o countries-cli
 ```
 
 The download route streams only the named `countries-cli-{os}-{arch}` binary and returns 404 when that file is unavailable. Downloads are public by default. To restrict them, set this top-level setting in `server.yml`:

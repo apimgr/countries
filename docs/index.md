@@ -4,7 +4,7 @@ Countries is a read-only reference service for 249 ISO 3166-1 country records. I
 
 ## Quick Start
 
-Run the container with persistent configuration and data volumes:
+Run the container with persistent named volumes:
 
 ```sh
 docker run -d --name countries \
@@ -14,10 +14,10 @@ docker run -d --name countries \
   ghcr.io/apimgr/countries:latest
 ```
 
-Or start the server binary with explicit runtime directories:
+Or start the server binary using its operating-system configuration and data directories:
 
 ```sh
-./countries-linux-amd64 --config ./countries-config --data ./countries-data --log ./countries-logs
+./countries-linux-amd64
 ```
 
 See the [installation guide](installation.md) for platform downloads and service setup.
@@ -45,9 +45,9 @@ See the [installation guide](installation.md) for platform downloads and service
 ## Links
 
 - [GitHub repository](https://github.com/apimgr/countries)
-- [Swagger UI](/server/docs/swagger)
-- [GraphQL explorer](/server/docs/graphql)
-- [Live service pages](/server/about), including help, privacy, security, and preferences
+- [Swagger UI](http://YOUR_SERVER/server/docs/swagger)
+- [GraphQL explorer](http://YOUR_SERVER/server/docs/graphql)
+- Live service pages: `http://YOUR_SERVER/server/about`, including help, privacy, security, and preferences. Replace `YOUR_SERVER` with your deployment's host.
 
 ## License
 

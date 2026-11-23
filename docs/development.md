@@ -13,6 +13,8 @@ make test
 
 `make test` runs `go vet`, `govulncheck`, the Go tests, and the 60% coverage gate. Keep API, CLI, web, and documentation changes synchronized.
 
+Run `make license-check` to scan imported dependencies for GPL-family licenses and refresh the license report and third-party license texts. Review the generated report and update [`LICENSE.md`](https://github.com/apimgr/countries/blob/main/LICENSE.md) when dependencies change.
+
 ## Build the documentation
 
 MkDocs and its plugins are listed in `docs/requirements.txt`. Keep the Python environment and generated site outside the repository:
