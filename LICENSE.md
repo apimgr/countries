@@ -138,7 +138,7 @@ SOFTWARE.
 | github.com/gophercloud/gophercloud/v2 | v2.16.0 | Apache-2.0 | Copyright 2012-2013 Rackspace, Inc.; Copyright Gophercloud authors |
 | github.com/gophercloud/utils/v2 | v2.0.0-20260922174841-b4759ea0529b | Apache-2.0 | See bundled license text |
 | github.com/gorilla/css | v1.0.1 | BSD-3-Clause | Copyright (c) 2023 The Gorilla Authors. All rights reserved.; Redistributions of source code must retain the above copyright |
-| github.com/gorilla/websocket | v1.5.3 | BSD-2-Clause | Copyright (c) 2013 The Gorilla WebSocket Authors. All rights reserved.; Redistributions of source code must retain the above copyright notice, this |
+| github.com/gorilla/websocket | v1.5.4-0.20240701034025-d67f41855da4 | BSD-2-Clause | Copyright (c) 2013 The Gorilla WebSocket Authors. All rights reserved.; Redistributions of source code must retain the above copyright notice, this |
 | github.com/graph-gophers/graphql-go | v1.10.0 | BSD-2-Clause | Copyright (c) 2016 Richard Musiol. All rights reserved.; Redistributions of source code must retain the above copyright |
 | github.com/hashicorp/errwrap | v1.0.0 | MPL-2.0 | See bundled license text |
 | github.com/hashicorp/go-cleanhttp | v0.5.2 | MPL-2.0 | See bundled license text |
@@ -277,6 +277,7 @@ SOFTWARE.
 | modernc.org/memory | v1.12.1 | BSD-3-Clause | Copyright (c) 2009 The Go Authors. All rights reserved.; Redistributions of source code must retain the above copyright |
 | modernc.org/sqlite | v1.61.1 | BSD-3-Clause | Copyright (c) 2017 The Sqlite Authors. All rights reserved.; 1. Redistributions of source code must retain the above copyright notice, this |
 | software.sslmate.com/src/go-pkcs12 | v0.7.4 | BSD-3-Clause | Copyright (c) 2015, 2018, 2019 Opsmate, Inc. All rights reserved.; Copyright (c) 2009 The Go Authors. All rights reserved. |
+| swagger-ui-dist | v5.34.1 | Apache-2.0 | SmartBear Software Inc. and contributors |
 
 BSD-3-Clause: neither the names of the copyright holders nor the names of their contributors may be used to endorse or promote products derived from this software without specific prior written permission.
 

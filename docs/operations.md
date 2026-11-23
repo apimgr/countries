@@ -57,7 +57,7 @@ Neither overlay is required for ordinary clearnet operation. If an overlay repor
 
 ## TLS certificates
 
-The server can use operator-provided certificates or automatic ACME/Let's Encrypt issuance and renewal. Automatic issuance is configured under `server.ssl.letsencrypt`; choose HTTP-01 or a supported DNS-01 provider and store provider credentials in the documented secrets file. DNS-01 TSIG key files must remain inside the SSL runtime directory. Certificate and account keys are stored with restricted permissions outside the source tree.
+The server can use operator-provided certificates or automatic ACME/Let's Encrypt issuance and renewal. Automatic issuance is configured under `server.ssl.letsencrypt`; choose HTTP-01 or a supported DNS-01 provider and store provider credentials in the documented secrets file. DNS-01 TSIG key files must remain inside the SSL runtime directory. Certificate and account keys are stored with restricted permissions outside the source tree. HTTP-01 and TLS-ALPN-01 are served by the existing HTTP and HTTPS listeners; the server does not open separate challenge ports. Direct validation requires ports 80 and/or 443 to reach those listeners. Configure `server.port: "80,443"` as needed or forward those ports through a reverse proxy or port mapping; use DNS-01 when that routing is unavailable.
 
 Renewal is performed by the built-in scheduler. Renewal failures leave the existing certificate in place and are reported to logs and configured notifications. Review the effective listener and certificate paths in the [configuration reference](configuration.md) before enabling HTTPS.
 

@@ -6,7 +6,7 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 
 | YAML key | Default | Purpose |
 |---|---|---|
-| `server.port` | First-run native: random available `64000`–`64999`; container: `80` | HTTP listener port. `PORT` seeds first-run config; `--port` overrides the listener for that invocation. |
+| `server.port` | First-run native: random available `64000`–`64999`; container: `80` | Listener port, or an HTTP,HTTPS pair such as `80,443`. `PORT` seeds first-run config; `--port` overrides the listener for that invocation. |
 | `server.address` | `[::]` | Dual-stack listener address; `--address` and `LISTEN` override it. IPv4-only hosts fall back to `0.0.0.0`. |
 | `server.fqdn` | `localhost` | Configured public host name. |
 | `server.mode` | `production` | Application mode when neither `--mode` nor `MODE` is set. |
@@ -495,4 +495,3 @@ Use `server.tracking.url` for Matomo, Piwik, Open Web Analytics, and Umami. It i
 ## CLI settings
 
 The client optionally reads `cli.yml` under the operating system's user config directory at `apimgr/countries/cli.yml`. It supports `server.primary`, `server.token`, `defaults.output` (`table`, `plain`, or `json`), and `lang`. Config files are restricted to owner access. `--server` and `COUNTRIES_SERVER_PRIMARY` take precedence over the file.
-
