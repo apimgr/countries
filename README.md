@@ -127,7 +127,7 @@ make dev
 make test
 ```
 
-`make dev` builds the server and client into an OS temporary directory. `make test` runs the project test gate. The binary integration suite is `./tests/run_tests.sh`; the browser E2E suite is `./tests/e2e.sh`. See the [development guide](docs/development.md) for prerequisites and details.
+`make dev` builds the server and client into an OS temporary directory. `make test` runs the project test gate. The Docker binary integration suite is `./tests/run_tests.sh`; run `./tests/incus.sh` separately for systemd and OpenRC integration. The browser E2E suite is `./tests/e2e.sh`. See the [development guide](docs/development.md) for prerequisites and details.
 
 ## Disclaimer
 
