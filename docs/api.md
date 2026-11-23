@@ -6,6 +6,10 @@ The canonical REST API is versioned under `/api/v1/`. Country data endpoints are
 
 API endpoints return JSON by default. `Accept: application/json` explicitly selects JSON, `Accept: text/plain` selects a text serialization, and HTTP tools such as curl and wget receive text when no explicit format is requested. A `.txt` suffix selects text for GET API routes; the suffix is removed before route matching. Text API responses are serialized from the JSON response model and end with one newline. Text errors use `ERROR: CODE: message`. The health text form is flattened `key: value` data. `/api/v1/stats.txt` and `/api/v1/count.txt` are documented explicit text routes; the suffix form is available for other GET routes too.
 
+Metrics endpoints keep their protocol media types: Prometheus endpoints return the exposition text format, while Grafana and Loki endpoints return JSON. When `server.metrics.enabled` is true, these paths appear in the runtime-generated OpenAPI document: `/server/metrics[/{prometheus,grafana,loki}]`, `/api/v1/server/metrics[/{prometheus,grafana,loki}]`, and `/api/metrics[/{prometheus,grafana,loki}]`. `/metrics[/{prometheus,grafana,loki}]` is included when `server.metrics.root.enabled` is true. Each service requires its configured bearer token unless unauthenticated access is enabled.
+
+When debug endpoints are enabled with `--debug` or `DEBUG=true`, every route requires the operator bearer token. The root routes include `/debug/config`, `/debug/routes`, `/debug/cache`, `/debug/db`, `/debug/scheduler`, `/debug/memory`, `/debug/goroutines`, `/debug/vars`, and `/debug/pprof/*`. The debug API aliases `/api/v1/debug/*` and `/api/debug/*` invoke those same handlers. Configuration output omits secret-only fields; goroutine stacks are returned as plain text. Debug routes are absent when debug mode is off.
+
 ## Country records
 
 Records expose `name.common`, `name.official`, `cca2`, `cca3`, `ccn3`, `capital`, `region`, `subregion`, `currencies`, `languages`, nullable `population`, `population_year`, `area`, `flag`, `flag_svg_url`, `latlng`, `borders`, `timezones`, and `tld`. Population observations use 2024 where available; both population and its year are omitted when the source has no observation.
@@ -68,6 +72,7 @@ The browser server pages include `/server/about`, `/server/contact`, `/server/he
 | GET | `/api/v1/server/preferences` | Read effective theme and language preferences and the empty guest preference set. |
 | POST | `/api/v1/server/preferences` | Save supported theme and language cookies; JSON and form bodies are accepted. This API mirror does not use CSRF tokens. |
 | GET | `/api/v1/server/preferences/sync` | Return the current theme and language plus an unpadded base64url code for browser-to-browser transfer. |
+| POST | `/api/v1/server/preferences/sync` | Apply guest preferences from JSON or form fields (`code`, `theme`, `lang`); no CSRF token is used. Returns `400 VALIDATION_FAILED` if no supported preference was applied. |
 | GET | `/api/v1/server/preferences/sync/import` | Apply supported preferences from direct query values or an exported code; return `applied` and `ignored` parameter arrays. |
 | GET | `/server/preferences` | Browser page for the current theme and language preferences. |
 | GET | `/server/preferences/sync` | Browser page to copy a code representing the current theme and language preferences and apply a code from another browser. |
@@ -80,6 +85,7 @@ The browser server pages include `/server/about`, `/server/contact`, `/server/he
 | POST | `/api/v1/server/preferences/tokens/primary` | Issue a primary owner token for a caller without a valid bearer token. |
 | POST | `/api/v1/server/preferences/tokens/primary/reveal` | Reveal the primary token; primary owner bearer token required. |
 | POST | `/api/v1/server/preferences/tokens/primary/rotate` | Rotate the primary token; primary owner bearer token required. |
+| DELETE | `/api/v1/server/preferences/tokens/primary` | Revoke the primary token and delete its owner, linked tokens, and resources; primary owner bearer token and the last four token characters are required. |
 | POST | `/api/v1/server/preferences/tokens` | Create a linked token; primary owner bearer token required. |
 | POST | `/api/v1/server/preferences/tokens/{id}/reveal` | Reveal a linked token; primary owner bearer token required. |
 | POST | `/api/v1/server/preferences/tokens/{id}/rotate` | Rotate a linked token; primary owner bearer token required. |
@@ -102,7 +108,7 @@ The browser server pages include `/server/about`, `/server/contact`, `/server/he
 
 ## Browser preferences
 
-The `/server/preferences` page saves theme (`dark`, `light`, or `auto`), language (`en`, `es`, `fr`, `de`, `it`, or `ar`), and cookie-consent choices. The CCPA opt-out control is available according to configured privacy settings. A first-visit banner offers accept and decline actions through `POST /server/consent`; browser forms require the page's CSRF token. Theme and language cookies are client-readable, last one year, use `SameSite=Lax`, and are not persisted server-side. The `/server/preferences/sync` page displays a code for current theme and language and accepts a pasted code to apply those values in another browser. `GET /api/v1/server/preferences/sync` returns current values and a transfer code; `GET /api/v1/server/preferences/sync/import` applies supported preferences from direct query values or an exported code and returns `applied` and `ignored` arrays. Consent, CCPA choices, and credentials are not included. API preference writes accept JSON or form values without CSRF because they do not use ambient credentials. Web preference writes redirect with `303`; API preference writes and imports return JSON.
+The `/server/preferences` page saves theme (`dark`, `light`, or `auto`), language (`en`, `es`, `fr`, `de`, `it`, `ar`, `zh`, or `ja`), and cookie-consent choices. The CCPA opt-out control is available according to configured privacy settings. A first-visit banner offers accept and decline actions through `POST /server/consent`; browser forms require the page's CSRF token. Theme and language cookies are client-readable, last one year, use `SameSite=Lax`, and are not persisted server-side. The `/server/preferences/sync` page displays a code for current theme and language and accepts a pasted code to apply those values in another browser. `GET /api/v1/server/preferences/sync` returns current values and a transfer code; `POST /api/v1/server/preferences/sync` applies a valid JSON or form update without CSRF; `GET /api/v1/server/preferences/sync/import` applies supported preferences from direct query values or an exported code and returns `applied` and `ignored` arrays. Consent, CCPA choices, and credentials are not included. API preference writes accept JSON or form values without CSRF because they do not use ambient credentials. Web preference writes redirect with `303`; API preference writes return JSON.
 
 ### Owner token and MCP authentication
 

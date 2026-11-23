@@ -31,7 +31,12 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 | `server.contact.abuse.webhooks.{telegram,discord,slack,generic}` | empty | Abuse-report webhook destinations; empty values fall back through general to admin. |
 | `server.contact.general.webhooks.{telegram,discord,slack,generic}` | empty | General-report webhook destinations; empty values fall back to admin. |
 | `server.pages.contact.enabled` | `true` | Enable the report form and its security.txt contact entry. Disabled forms return 404. |
-| `server.pages.contact.captcha` | `simple` | `simple`, `recaptcha`, or `hcaptcha`; external providers require keys in `secrets.yml` and retain a simple no-JavaScript fallback. Onion and I2P requests use `simple`. |
+| `server.pages.contact.captcha` | `simple` | `simple`, `recaptcha`, or `hcaptcha`; external providers retain a simple no-JavaScript fallback. Onion and I2P requests always use `simple`. |
+| `server.pages.contact.captcha_site_key` | empty | Public site key rendered for reCAPTCHA or hCaptcha; not needed for `simple`. |
+| `server.pages.contact.captcha_secret_key` | empty | Private provider key stored in `secrets.yml`; never returned by the API or written to logs. |
+| `server.pages.contact.success_message` | `Thank you for your report.` | Confirmation text shown after report submission. |
+| `server.pages.help.content` | built-in help | Optional Markdown for `/server/help`; the API returns the Markdown source. |
+| `server.pages.help.mcp` | empty | Project-specific Markdown appended after the generated MCP help sections. |
 | `server.pages.contact.antispam.honeypot` | `true` | Enable the hidden website field trap. |
 | `server.pages.contact.antispam.min_fill_seconds` | `3` | Minimum form-open time before accepting a submission. |
 | `server.pages.contact.antispam.max_age_seconds` | `43200` | Maximum age of a rendered form. |
@@ -63,7 +68,6 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 | `server.api_version` | `v1` | API version path segment. |
 | `server.baseurl` | `/` | URL path prefix for all routes; trusted proxy prefix headers take precedence. |
 | `server.daemonize` | `false` | Detach from the terminal at startup. |
-| `server.debug` | `false` | Enables debug endpoints when the CLI flag does not override it. |
 | `server.pidfile` | `true` | Write the process ID file. |
 | `server.ssl.enabled` | `false` | Enable TLS for the configured listener. |
 | `server.ssl.cert` | empty | Optional manual certificate path; otherwise use certificate auto-detection. |
@@ -103,9 +107,9 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 | `server.trusted_proxies.client_ip_header` | `auto` | Select automatic or pinned client-IP header detection. |
 | `server.healthz.root.enabled` | `false` | Add `/healthz` as an alias to `/server/healthz`. |
 | `server.i18n.default_language` | `en` | Language used where no request language applies. |
-| `server.i18n.available_languages` | `[en, es, fr, de, it, ar]` | Languages available for server-rendered pages and notifications. |
+| `server.i18n.available_languages` | All embedded locales (`en`, `es`, `fr`, `de`, `it`, `ar`, `zh`, `ja`) | Languages available for server-rendered pages and notifications; operators may narrow the list but cannot remove any of the six required minimum languages. |
 
-The `server.yml` node-specific keys are `server.port`, `server.address`, `server.fqdn`, `server.mode`, `server.api_version`, `server.baseurl`, `server.pidfile`, `server.daemonize`, `server.debug`, `server.database`, `server.cache`, `server.ssl`, and `server.trusted_proxies`.
+The `server.yml` node-specific keys are `server.port`, `server.address`, `server.fqdn`, `server.mode`, `server.api_version`, `server.baseurl`, `server.pidfile`, `server.daemonize`, `server.database`, `server.cache`, `server.ssl`, and `server.trusted_proxies`. Debug mode is selected with the server's `--debug` flag or `DEBUG` environment variable; there is no `server.debug` setting.
 
 ## Overlay network settings
 
@@ -161,6 +165,71 @@ Tor data/configuration and I2P config/data directories are derived from the stan
 | `secrets.yml` | Credentials and generated secrets only. |
 
 Both a legacy `server.yml` containing area settings and the drop-in layout are accepted; migration moves the area settings automatically. Drop-ins merge in filename byte order after `server.yml`; `secrets.yml` merges last. Maps merge recursively, while a later scalar or list replaces the earlier value. Configuration files are mode `0600`, and `yaml.d/` is mode `0700`.
+
+## Web pages and discovery
+
+### Help and contact pages
+
+The help page uses the built-in Countries guidance when `server.pages.help.content` is empty. Set it to Markdown to replace that content. `server.pages.help.mcp` adds project-specific Markdown after the generated MCP connection and tool documentation. Both settings belong in `yaml.d/pages.yml`.
+
+The contact form is enabled by default. It is reached from the security-reporting page and is not linked from the site's general navigation. `server.pages.contact.enabled: false` disables both the form and its form entry in `security.txt`. Contact page settings belong in `yaml.d/pages.yml`:
+
+| YAML key | Default | Purpose |
+|---|---|---|
+| `server.pages.contact.enabled` | `true` | Enable the report form. Disabled form GET and POST requests return 404. |
+| `server.pages.contact.captcha` | `simple` | CAPTCHA provider: `simple`, `recaptcha`, or `hcaptcha`. Requests over Tor and I2P always use the simple challenge. |
+| `server.pages.contact.captcha_site_key` | empty | Public site key for reCAPTCHA or hCaptcha. |
+| `server.pages.contact.captcha_secret_key` | empty | Private provider key stored only in `secrets.yml`. |
+| `server.pages.contact.success_message` | `Thank you for your report.` | Confirmation shown after a report is accepted. |
+| `server.pages.help.content` | built-in help | Markdown content for `/server/help`; empty uses built-in content. |
+| `server.pages.help.mcp` | empty | Optional project-specific Markdown appended to `/server/help/mcp`. |
+
+The simple CAPTCHA works without JavaScript and does not contact a third party. reCAPTCHA and hCaptcha require both site and secret keys; the secret is never exposed in responses or logs. Those providers retain a simple no-JavaScript fallback, and a provider verification failure rejects the submission.
+
+### Announcements
+
+Announcements are configured under `web.announcements` in `yaml.d/web.yml`. Active notices render as server-side banners in configuration order. Visitors can dismiss a dismissible notice without JavaScript; dismissal is kept in the `dismissed_announcements` cookie and is keyed by the announcement ID.
+
+```yaml
+web:
+  announcements:
+    enabled: true
+    messages:
+      - id: maintenance-2026-11
+        type: warning
+        title: Scheduled maintenance
+        message: Service will be unavailable during the maintenance window.
+        start: "2026-11-25T01:00:00Z"
+        end: "2026-11-25T02:00:00Z"
+        dismissible: true
+```
+
+Each message requires a unique `id`, non-empty `title` and `message`, and uses `type` `info`, `warning`, `error`, or `success` (`info` by default). Optional `start` and `end` values are RFC 3339 timestamps; when both are set, `end` must be later than `start`. `enabled` defaults to `true`, and an empty `messages` list shows no banner.
+
+### AI discovery (`llms.txt`)
+
+The generated plain-text AI discovery index is always served at `/llms.txt` and `/.well-known/llms.txt`; there is no enable/disable switch. It is generated for each request so absolute URLs match the host and scheme used by the visitor. Configure these settings in `yaml.d/web.yml`:
+
+| YAML key | Default | Purpose |
+|---|---|---|
+| `web.llms.include_endpoints` | `true` | Include endpoint entries discovered from API route registrations. Public and authenticated API operations are included; metrics and debug routes are omitted. |
+| `web.llms.include_schemas` | `false` | Include operation parameters, request and response schemas, and the API schema definitions. This makes the text output larger. |
+| `web.llms.custom_sections` | `[]` | Additional Markdown sections appended to the generated capabilities section. |
+| `web.api_contact` | empty | Public contact text for API questions. |
+| `web.security.contact` | empty | Public security contact text for the generated index. |
+
+The generated index uses the configured branding title and description, lists the REST and MCP base URLs and bearer-auth requirements, and describes the Countries dataset and lookup capabilities. Do not put private recipient addresses or secrets in public contact fields.
+
+```yaml
+web:
+  api_contact: "API support: https://github.com/apimgr/countries/issues"
+  security:
+    contact: "Security reports: https://github.com/apimgr/countries/security/advisories/new"
+  llms:
+    include_endpoints: true
+    include_schemas: false
+    custom_sections: []
+```
 
 ### Branding and SEO settings
 
@@ -304,23 +373,37 @@ The built-in scheduler is always running and has no global enable/disable settin
 | `server.scheduler.tasks.ssl_renewal.schedule` | `0 3 * * *` | Daily certificate renewal check. |
 | `server.scheduler.tasks.ssl_renewal.enabled` | `true` | Enable certificate renewal checks. |
 | `server.scheduler.tasks.geoip_update.schedule` | `0 3 * * 0` | Weekly GeoIP database update. |
-| `server.scheduler.tasks.geoip_update.enabled` | `true` | Enable GeoIP updates. |
+| `server.scheduler.tasks.geoip_update.enabled` | `true` | Enable GeoIP updates; this task may be disabled. |
 | `server.scheduler.tasks.blocklist_update.schedule` | `0 4 * * *` | Daily blocklist update. |
-| `server.scheduler.tasks.blocklist_update.enabled` | `true` | Enable blocklist updates. |
+| `server.scheduler.tasks.blocklist_update.enabled` | `true` | Enable blocklist updates; this task may be disabled. |
+| `server.scheduler.tasks.blocklist_update.retry_on_fail` | `true` | Retry a failed update. |
+| `server.scheduler.tasks.blocklist_update.retry_delay` | `1h` | Delay before retrying a failed update. |
+| `server.scheduler.tasks.security_cleanup.schedule` | `30 3 * * *` | Daily security-report retention and retired PGP key cleanup. |
+| `server.scheduler.tasks.security_cleanup.enabled` | `true` | Security cleanup is required and cannot be disabled. |
 | `server.scheduler.tasks.cve_update.schedule` | `0 5 * * *` | Daily NVD and optional Trivy database update. |
-| `server.scheduler.tasks.cve_update.enabled` | `true` | Enable vulnerability database updates. |
+| `server.scheduler.tasks.cve_update.enabled` | `true` | Enable vulnerability database updates; this task may be disabled. |
+| `server.scheduler.tasks.cve_update.retry_on_fail` | `true` | Retry a failed vulnerability database update. |
+| `server.scheduler.tasks.cve_update.retry_delay` | `1h` | Delay before retrying a failed update. |
 | `server.scheduler.tasks.update_check.schedule` | `0 6 * * *` | Daily update check; notify-only unless auto-install is enabled. |
-| `server.scheduler.tasks.update_check.enabled` | `true` | Enable scheduled update checks. |
+| `server.scheduler.tasks.update_check.enabled` | `true` | Enable scheduled update checks; this task may be disabled. |
 | `server.scheduler.tasks.token_cleanup.schedule` | `@every 15m` | Remove expired captcha challenges and apply owner idle-purge policy. |
-| `server.scheduler.tasks.token_cleanup.enabled` | `true` | Enable token cleanup. |
+| `server.scheduler.tasks.token_cleanup.enabled` | `true` | Token cleanup is required and cannot be disabled. |
 | `server.scheduler.tasks.log_rotation.schedule` | `0 0 * * *` | Daily log rotation. |
-| `server.scheduler.tasks.log_rotation.enabled` | `true` | Enable log rotation. |
+| `server.scheduler.tasks.log_rotation.enabled` | `true` | Log rotation is required and cannot be disabled. |
 | `server.scheduler.tasks.backup_daily.schedule` | `0 2 * * *` | Daily full and incremental backup. |
-| `server.scheduler.tasks.backup_daily.enabled` | `true` | Enable daily backup. |
+| `server.scheduler.tasks.backup_daily.enabled` | `true` | Enable daily backup; this task may be disabled. |
 | `server.scheduler.tasks.backup_hourly.schedule` | `@hourly` | Hourly incremental backup schedule. |
-| `server.scheduler.tasks.backup_hourly.enabled` | `false` | Hourly incrementals are disabled by default. |
+| `server.scheduler.tasks.backup_hourly.enabled` | `false` | Hourly incrementals are disabled by default; this task may be enabled or disabled. |
+| `server.scheduler.tasks.disk_check.schedule` | `@every 5m` | Check available disk space and report low space. |
+| `server.scheduler.tasks.disk_check.enabled` | `true` | Enable disk checks; this task may be disabled. |
+| `server.scheduler.tasks.healthcheck_self.schedule` | `@every 5m` | Run the server's self-health check. |
+| `server.scheduler.tasks.healthcheck_self.enabled` | `true` | Self-health checks are required and cannot be disabled. |
+| `server.scheduler.tasks.tor_health.schedule` | `@every 10m` | Check Tor connectivity when Tor support is active. |
+| `server.scheduler.tasks.tor_health.enabled` | `true` | Registered only when Tor support is active; otherwise it does not run. |
+| `server.scheduler.tasks.i2p_health.schedule` | `@every 10m` | Check the I2P provider when I2P is enabled. |
+| `server.scheduler.tasks.i2p_health.enabled` | `true` | Registered only when I2P is enabled; otherwise it does not run. |
 
-Per-task configuration uses `enabled`, `schedule`, `retry_on_fail`, and `retry_delay`; the backup task also uses `retention`. The specification says critical tasks cannot be disabled, but does not identify the critical-task set consistently with its task table. I have not documented a configurable critical-task set.
+Each task accepts `enabled` and `schedule`; `retry_on_fail` and `retry_delay` apply to tasks that support retries. The scheduler forces required tasks to remain enabled. GeoIP, blocklist, CVE, update-check, daily/hourly backup, and disk-check tasks can be disabled. Tor and I2P checks are registered only when their respective features are active. Backup retention is configured under `server.backup.retention.*`, documented in [Backup and restore](#backup-and-restore).
 
 ## Privacy, tracking, and web settings
 

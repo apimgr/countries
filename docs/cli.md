@@ -17,8 +17,9 @@ countries-cli [flags] QUERY
 | `nearest LAT LON` | Find the nearest representative coordinate. |
 | `nearby LAT LON RADIUS_KM` | Find country centroids within a radius. |
 | `stats` | Read dataset statistics. |
+| `request METHOD /api/v1/PATH [JSON_BODY]` | Send a supported native API request to the configured server. Absolute URLs, redirects, and machine-only/server-binary endpoints are rejected. |
 
-The interactive menu and GUI expose these same six commands in this order. Any positional arguments that do not start with a recognized command are treated as a search query. For example, `countries-cli --server https://countries.example "South Korea"` is equivalent to `countries-cli --server https://countries.example search "South Korea"`.
+The interactive menu and GUI expose these same seven commands in this order. The `request` command accepts a versioned `/api/v1/` path and an optional JSON body; it uses the configured server origin and does not follow redirects. Any positional arguments that do not start with a recognized command are treated as a search query. For example, `countries-cli --server https://countries.example "South Korea"` is equivalent to `countries-cli --server https://countries.example search "South Korea"`.
 
 ## Flags
 
@@ -84,6 +85,16 @@ countries --maintenance pgp export public [path]
 countries --maintenance pgp export private PATH
 countries --maintenance pgp import FILE
 countries --maintenance pgp delete
+countries --maintenance secret rotate installation_secret
+countries --maintenance secret rotate encryption_key
+countries --maintenance token list
+countries --maintenance token revoke PREFIX [--yes]
+countries --maintenance data export --owner PREFIX [--output FILE]
+countries --maintenance data delete --owner PREFIX [--yes]
+countries --maintenance security list [--status STATUS]
+countries --maintenance security show TRACKING_ID
+countries --maintenance security update TRACKING_ID [--status STATUS] [--comment TEXT] [--disclosure-date YYYY-MM-DD] [--severity LEVEL]
+countries --maintenance compliance report
 ```
 
 `mode` prints the current application mode. `setup` loads the selected server configuration and prints its setup summary.
@@ -95,3 +106,11 @@ The archive is verified before it is installed. Restore verifies the selected ar
 Scheduled backups run daily at 02:00. Daily full backups and the daily incremental are enabled by default; hourly incremental backups are disabled. Retention and disk-pressure checks use the `server.backup.retention.*` settings. See [configuration](configuration.md#backup-and-restore).
 
 PGP key management is operator-only and requires the operator token or root. Private-key export, import, and deletion also require an interactive confirmation. Generate stores the encrypted private key and public key under `security/` in the configuration directory and publishes the public key to configured keyservers. Public export writes to standard output unless a path is supplied. Private export requires a destination path, an operator-supplied reason, writes mode `0600`, and is limited to one export per hour per operator. Import validates the key and warns before accepting a key whose identity differs from the configured security identity. Delete warns that PGP-encrypted security reports will become unreadable. See [security](security.md#gpg-keypair-management) for the full workflow.
+
+All maintenance commands require the configured operator token or root. Secret rotation and token revocation also require typed confirmation. Secret rotation re-encrypts dependent values, stores the previous key for its grace period, resumes interrupted work before server startup, and retires expired keys during daily security cleanup. Rotate only `installation_secret` or `encryption_key`.
+
+The `token list` command shows token metadata and prefixes, never token values. Revoking a linked token requires typing its prefix; revoking a primary token deletes that owner's tokens and resources and requires typing the owner ID. `--yes` skips that typed confirmation for scripted use.
+
+Data subject commands use the token prefix to identify an owner. Export writes a mode `0600` JSON file (or stdout with `--output -`) containing owner metadata and token metadata, never token values. Delete requires typing the owner ID unless `--yes` is supplied. Compliance reporting prints configured standards, retention settings, aggregate counts, recent compliance events, last backup time, and audit-log integrity without personal data.
+
+Security report listing and updates never print the encrypted report body. `show` displays metadata and the researcher's comment; `update` can advance status, update severity, set a disclosure date, or add a researcher-visible comment. A successful update is recorded in the security and audit logs, and a status notice is sent when email is configured and contact data is available. See [security and privacy](security.md#operator-maintenance) for the data-handling details.

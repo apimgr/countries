@@ -140,6 +140,7 @@ Country-data and public information routes below require no authentication. Owne
 | POST | `/api/{api_version}/server/preferences/tokens/primary` | Public one-time issue flow | Create the owner and primary token once; later attempts conflict. |
 | POST | `/api/{api_version}/server/preferences/tokens/primary/reveal` | Owner token | Reveal the primary token through the protected one-time display flow. |
 | POST | `/api/{api_version}/server/preferences/tokens/primary/rotate` | Owner token | Rotate the primary token while preserving linked tokens. |
+| DELETE | `/api/{api_version}/server/preferences/tokens/primary` | Owner token | Revoke the primary token, its linked tokens, and all resources owned by the token. |
 | POST | `/api/{api_version}/server/preferences/tokens` | Owner token | Create a linked token with a name and optional expiry. |
 | POST | `/api/{api_version}/server/preferences/tokens/{id}/reveal` | Owner token | Reveal a linked token through the protected one-time display flow. |
 | POST | `/api/{api_version}/server/preferences/tokens/{id}/rotate` | Owner token | Rotate one linked token. |

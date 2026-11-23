@@ -1,29 +1,54 @@
 # Countries
 
-Countries is a read-only reference service that embeds country records in a Go binary and exposes them through a versioned REST API, GraphQL, a web interface, and a small command-line client. Country lookups do not call an external service at runtime.
+Countries is a read-only reference service for 249 ISO 3166-1 country records. It embeds the dataset in the server binary and serves country lookups through a web interface, REST API, GraphQL, and the `countries-cli` client.
 
-## Current data coverage
+## Quick Start
 
-The checked-in dataset has **249 ISO 3166-1 records**. Records include common and official names, alpha-2/alpha-3/numeric codes, capitals, regions, currencies, languages, population values and observation years where available, area, flag emoji and SVG links, representative coordinates, borders, time zones, and top-level domains. Source versions, license terms, and field-level provenance are documented in [`src/data/README.md`](https://github.com/apimgr/countries/blob/main/src/data/README.md).
+Run the container with persistent configuration and data volumes:
 
-## Interfaces
+```sh
+docker run -d --name countries \
+  -p 172.17.0.1:64580:80 \
+  -v countries-config:/config \
+  -v countries-data:/data \
+  ghcr.io/apimgr/countries:latest
+```
 
-- Browse and search at `/` and `/search`.
-- Explore REST at `/server/docs/swagger` and GraphQL at `/server/docs/graphql`.
-- Read the service pages at `/server/about`, `/server/help`, `/server/help/mcp`, `/server/healthz`, `/server/preferences`, `/server/preferences/tokens`, `/server/preferences/sync`, `/server/privacy`, `/server/terms`, `/server/security`, `/server/contact`, and `/server/dpo`; `/server` redirects to the about page.
-- Connect MCP clients at `/api/v1/server/mcp` with an owner or linked bearer token. Create and manage tokens through the token preferences page or its API mirror.
-- Query the public REST API below `/api/v1/`.
-- Use the `countries-cli` binary for common lookups.
-- Crawlers can use `/robots.txt` and the request-aware `/sitemap.xml`.
+Or start the server binary with explicit runtime directories:
 
-## Guides
+```sh
+./countries-linux-amd64 --config ./countries-config --data ./countries-data --log ./countries-logs
+```
 
-- [Install the server](installation.md)
-- [Configure the server and CLI](configuration.md)
-- [REST and GraphQL API](api.md)
-- [CLI reference](cli.md)
-- [Security and privacy](security.md)
-- [Integrations and discovery](integrations.md)
-- [Operations](operations.md)
-- [Development](development.md)
-- [Translation guide](translating.md)
+See the [installation guide](installation.md) for platform downloads and service setup.
+
+## Features
+
+- Browse, filter, and search country records by name, ISO code, region, currency, or language.
+- Look up countries by code and find nearby countries or the nearest country to coordinates.
+- Query the versioned REST API and read-only GraphQL API.
+- Connect MCP clients with bearer tokens.
+- Use the server-rendered interface without requiring JavaScript for core navigation and forms.
+
+## Documentation
+
+- [Installation](installation.md) — Docker, binaries, and system services
+- [Configuration](configuration.md) — server settings and configuration files
+- [API reference](api.md) — REST, GraphQL, and response formats
+- [CLI reference](cli.md) — server and companion client commands
+- [Security](security.md) — authentication, public endpoints, and reporting
+- [Integrations](integrations.md) — discovery, MCP, and binary downloads
+- [Operations](operations.md) — backups, updates, and service management
+- [Development](development.md) — build and contribution guide
+- [Translation guide](translating.md) — locale and review process
+
+## Links
+
+- [GitHub repository](https://github.com/apimgr/countries)
+- [Swagger UI](/server/docs/swagger)
+- [GraphQL explorer](/server/docs/graphql)
+- [Live service pages](/server/about), including help, privacy, security, and preferences
+
+## License
+
+MIT — see [LICENSE.md](https://github.com/apimgr/countries/blob/main/LICENSE.md).

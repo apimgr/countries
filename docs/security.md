@@ -8,7 +8,7 @@ Optional analytics can be configured with `server.tracking`. Provider scripts ar
 
 Every response receives a request ID. Rate limiting is always on and its request/window values are configurable. Anonymous traffic is keyed by client IP, valid bearer-token traffic by token, and failed authentication by IP. The server honors client-address headers only from a trusted immediate proxy and sends security headers including Content-Security-Policy. When started by the server binary, rate-limit counters are stored in the configured SQLite database and survive process restarts. The in-memory limiter is used only when the HTTP server is constructed without a database, such as in isolated tests.
 
-Linked-token revocation and withdrawal of a previously granted non-essential consent send `Clear-Site-Data: "cache", "cookies", "storage"` by default. Configure `web.headers.clear_site_data` to control those events; `execution_contexts` is off by default because it reloads browser tabs.
+Linked-token revocation and withdrawal of a previously granted non-essential consent send `Clear-Site-Data: "cache", "storage"` by default. Configure `web.headers.clear_site_data` to control those events; `execution_contexts` is off by default because it reloads browser tabs.
 
 Access logs include request ID, method, path, status, and duration. Do not put secrets or sensitive personal data into URLs or request IDs.
 
@@ -33,3 +33,13 @@ The service stores no user accounts or profiles. Contact submissions are sent to
 ## Owner tokens and MCP
 
 There are no accounts or passwords. A primary owner token identifies an anonymous owner and manages linked tokens; linked tokens access the same owner's resources but cannot manage tokens. The operator bearer token grants global management access and is stored in `secrets.yml`. Owner and linked tokens are encrypted at rest and masked in token lists. Keep token values in the `Authorization: Bearer` header; the `/api/` routes ignore browser cookies. The MCP endpoint requires an owner or linked bearer token and never exposes token-management actions as tools. Give each MCP client its own linked token and revoke it when no longer needed.
+
+## Operator maintenance
+
+The server's `--maintenance` commands require the operator token or root. `token list` exposes token prefixes and metadata, never token values. `token revoke PREFIX` revokes a linked token after a typed-prefix confirmation. Revoking a primary token deletes that owner's tokens and resources after a typed owner-ID confirmation. `--yes` skips that confirmation for scripts.
+
+`data export --owner PREFIX` writes the selected owner's export as a mode `0600` JSON file; `--output -` writes it to standard output. It includes owner and token metadata, never token values. `data delete --owner PREFIX` removes that owner's records and resources after confirmation. `compliance report` shows standards and retention settings, aggregate counts, recent compliance events, last-backup time, and audit-log integrity without personal data.
+
+`security list`, `security show`, and `security update` manage report metadata and researcher-visible comments. They do not reveal report bodies. Updates are audited and send a status notice when email and readable contact data are available.
+
+Rotate the `installation_secret` or at-rest `encryption_key` with `--maintenance secret rotate`. Rotation requires interactive confirmation, re-encrypts dependent data, and keeps the previous value for seven days or 30 days respectively. Startup recovery completes interrupted migrations before services start; the daily security cleanup retires expired previous values. See [CLI maintenance](cli.md#server-maintenance-commands) for command syntax.

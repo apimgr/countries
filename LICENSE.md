@@ -47,6 +47,7 @@ SOFTWARE.
 | github.com/tklauser/go-sysconf | v0.3.12 | BSD-3-Clause | Tobias Klauser |
 | github.com/tklauser/numcpus | v0.6.1 | Apache-2.0 | Tobias Klauser |
 | github.com/munnerz/goautoneg | v0.0.0-20191010083416-a7dc8b61c822 | BSD-3-Clause | Munnerz and contributors |
+| swagger-ui-dist | v5.34.1 | Apache-2.0 | SmartBear Software Inc. and contributors |
 | github.com/yuin/goldmark | v1.8.7 | MIT | Yusuke Inuzuka |
 | golang.org/x/crypto | v0.58.0 | BSD-3-Clause | The Go Authors |
 | golang.org/x/net | v0.62.0 | BSD-3-Clause | The Go Authors |

@@ -64,12 +64,13 @@ On supported systems, install the service with `sudo countries --service --insta
 
 ## Client
 
-Download a `countries-cli` release for your operating system and architecture from [GitHub Releases](https://github.com/apimgr/countries/releases/latest). The client supports `list`, `get`, `search`, `nearest`, `nearby`, and `stats`.
+Download a `countries-cli` release for your operating system and architecture from [GitHub Releases](https://github.com/apimgr/countries/releases/latest). The client supports `list`, `get`, `search`, `nearest`, `nearby`, `stats`, and direct requests to supported versioned native API routes.
 
 ```sh
 countries-cli --help
 countries-cli search united
 countries-cli get US
+countries-cli request GET /api/v1/server/healthz
 ```
 
 See the [CLI reference](docs/cli.md) for flags and output formats.
