@@ -1,6 +1,10 @@
 # API reference
 
-The country REST API is public, read-only, and versioned under `/api/v1/`. Server operations also include authenticated owner-token management and the MCP endpoint. JSON responses are indented by two spaces and end with a newline. Successful responses use `ok: true` and put results under `data`. Errors use `ok: false`, a stable `error` code, and a `message`. Browser clients may use cross-origin requests.
+The canonical REST API is versioned under `/api/v1/`. Country data endpoints are public and read-only; server endpoints also provide preference operations, owner-token management, reports, GraphQL, and MCP. JSON responses use two-space indentation and end with one newline. Success responses use `{"ok":true,"data":{...}}`; list responses also include `pagination`. Errors use `{"ok":false,"error":"CODE","message":"...","details":{...}}` when structured details apply. HTTP status carries the status; it is not repeated in the JSON body. Health endpoints return the bare health object, and protocol compatibility endpoints retain their native response format. Browser cross-origin behavior follows the configured CORS policy.
+
+### Response negotiation
+
+API endpoints return JSON by default. `Accept: application/json` explicitly selects JSON, `Accept: text/plain` selects a text serialization, and HTTP tools such as curl and wget receive text when no explicit format is requested. A `.txt` suffix selects text for GET API routes; the suffix is removed before route matching. Text API responses are serialized from the JSON response model and end with one newline. Text errors use `ERROR: CODE: message`. The health text form is flattened `key: value` data. `/api/v1/stats.txt` and `/api/v1/count.txt` are documented explicit text routes; the suffix form is available for other GET routes too.
 
 ## Country records
 
@@ -18,6 +22,8 @@ Records expose `name.common`, `name.official`, `cca2`, `cca3`, `ccn3`, `capital`
 | GET | `/api/v1/stats.txt` | Return text statistics. |
 | GET | `/api/v1/count` | Return the dataset count. |
 | GET | `/api/v1/count.txt` | Return the count as text. |
+
+The API also provides `GET /api/v1/server/preferences/tokens` (masked token list), token issue/reveal/rotate/create/update/revoke operations under `/api/v1/server/preferences/tokens`, and `POST /api/v1/server/preferences` (save guest preferences). Owner-token management requires the primary owner's bearer token except initial token issuance. Full method and response metadata is published at `/api/v1/server/swagger`.
 
 Coordinates are bounded to latitude −90..90 and longitude −180..180. Nearby radius is bounded to 0..20,038 kilometers. Search accepts 1–256 characters.
 
@@ -84,7 +90,7 @@ The browser server pages include `/server/about`, `/server/contact`, `/server/he
 
 ## Discovery aliases
 
-`/api/healthz`, `/api/swagger`, `/api/graphql`, `/api/mcp`, and `/mcp` are direct aliases. They invoke the same handlers and do not redirect. Use versioned REST paths for integrations. The server-rendered pages are `/server/docs/swagger` and `/server/docs/graphql`. The GraphQL explorer submits through a server-rendered POST form when JavaScript is disabled; its optional enhancement sends the same read-only query to the API endpoint.
+`/api/healthz`, `/api/swagger`, `/api/graphql`, `/api/mcp`, and `/mcp` are direct aliases. They invoke the same handlers and do not redirect. `/api/autodiscover` is unversioned because clients use it before learning the API version. Use versioned REST paths for integrations. The server-rendered pages are `/server/docs/swagger` and `/server/docs/graphql`. The GraphQL explorer submits through a server-rendered POST form when JavaScript is disabled; its optional enhancement sends the same read-only query to the API endpoint.
 
 ## Well-known discovery
 
@@ -96,7 +102,7 @@ The browser server pages include `/server/about`, `/server/contact`, `/server/he
 
 ## Browser preferences
 
-The `/server/preferences` page saves theme (`dark`, `light`, or `auto`), language (`en`, `es`, `fr`, `de`, `it`, `ar`, `zh`, or `ja`), and cookie-consent choices. The CCPA opt-out control is available according to the configured privacy settings. A first-visit banner offers accept and decline actions through `POST /server/consent`; both browser flows require the CSRF token supplied by the page. The theme and language cookies are client-readable, last one year, and use `SameSite=Lax`; they are never persisted server-side. The `/server/preferences/sync` page displays a code for the current theme and language and accepts a pasted code to apply those values in another browser. `GET /api/v1/server/preferences/sync` returns the current values and transfer code as JSON. `GET /api/v1/server/preferences/sync/import` applies supported preferences from direct query values or an exported code and returns `applied` and `ignored` arrays. Consent, CCPA choices, and credentials are not included. API preference writes accept JSON or form values without CSRF because they do not use ambient credentials. Web preferences writes redirect with `303`; API preference writes and imports return JSON.
+The `/server/preferences` page saves theme (`dark`, `light`, or `auto`), language (`en`, `es`, `fr`, `de`, `it`, or `ar`), and cookie-consent choices. The CCPA opt-out control is available according to configured privacy settings. A first-visit banner offers accept and decline actions through `POST /server/consent`; browser forms require the page's CSRF token. Theme and language cookies are client-readable, last one year, use `SameSite=Lax`, and are not persisted server-side. The `/server/preferences/sync` page displays a code for current theme and language and accepts a pasted code to apply those values in another browser. `GET /api/v1/server/preferences/sync` returns current values and a transfer code; `GET /api/v1/server/preferences/sync/import` applies supported preferences from direct query values or an exported code and returns `applied` and `ignored` arrays. Consent, CCPA choices, and credentials are not included. API preference writes accept JSON or form values without CSRF because they do not use ambient credentials. Web preference writes redirect with `303`; API preference writes and imports return JSON.
 
 ### Owner token and MCP authentication
 
