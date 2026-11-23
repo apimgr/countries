@@ -32,12 +32,13 @@ On Windows, download the matching `.exe` file and add its directory to `%PATH%`.
 
 ## Docker Compose
 
-The production Compose file is [`docker/docker-compose.yml`](https://github.com/apimgr/countries/blob/main/docker/docker-compose.yml). It publishes the service on `172.17.0.1:64580` and stores configuration and runtime data in `volumes/` relative to the Compose file. Copy it outside the source checkout so runtime data remains outside the repository:
+The production Compose file is [`docker/docker-compose.yml`](https://github.com/apimgr/countries/blob/main/docker/docker-compose.yml). It publishes the service on `172.17.0.1:64580` and stores configuration and runtime data in `volumes/` beside the deployed Compose file. Copy it outside the source checkout so runtime data remains outside the repository:
 
 ```sh
-mkdir -p /path/to/countries/volumes/config /path/to/countries/volumes/data
-cp docker/docker-compose.yml /path/to/countries/docker-compose.yml
-cd /path/to/countries && docker compose up -d
+DEPLOY_DIR=/path/to/countries-deployment
+mkdir -p "$DEPLOY_DIR/volumes/config" "$DEPLOY_DIR/volumes/data"
+cp docker/docker-compose.yml "$DEPLOY_DIR/docker-compose.yml"
+cd "$DEPLOY_DIR" && docker compose up -d
 ```
 
 The image exposes port 80 inside the container. Review and adjust the bind address, volumes, and environment for the deployment before starting it.

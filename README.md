@@ -28,12 +28,13 @@ Countries is a read-only country reference service with a REST API, GraphQL API,
 The production Compose file is [`docker/docker-compose.yml`](docker/docker-compose.yml). Copy it to a deployment directory outside the source checkout so its relative `volumes/` paths keep runtime data out of the repository, then review the published port and host values:
 
 ```sh
-mkdir -p /path/to/countries/volumes/config /path/to/countries/volumes/data
-cp docker/docker-compose.yml /path/to/countries/docker-compose.yml
-cd /path/to/countries && docker compose up -d
+DEPLOY_DIR=/path/to/countries-deployment
+mkdir -p "$DEPLOY_DIR/volumes/config" "$DEPLOY_DIR/volumes/data"
+cp docker/docker-compose.yml "$DEPLOY_DIR/docker-compose.yml"
+cd "$DEPLOY_DIR" && docker compose up -d
 ```
 
-The Compose deployment publishes the service on `172.17.0.1:64580` and keeps configuration and runtime data in `docker/volumes/`. Review those paths and the bind address before deployment.
+The Compose deployment publishes the service on `172.17.0.1:64580` and keeps configuration and runtime data in the deployment directory's `volumes/` folder. Review those paths and the bind address before deployment.
 
 ### Docker
 

@@ -74,11 +74,24 @@ The `countries` server binary has separate maintenance commands. These commands 
 ```sh
 countries --maintenance backup [filename] [--include-ssl] [--include-data]
 countries --maintenance restore BACKUP_FILE
-countries --maintenance update [check|yes|branch stable|beta|devel]
+countries --maintenance update [check|yes|branch {stable|beta|devel}]
+countries --maintenance mode
+countries --maintenance setup
+countries --maintenance pgp generate
+countries --maintenance pgp rotate
+countries --maintenance pgp publish
+countries --maintenance pgp export public [path]
+countries --maintenance pgp export private PATH
+countries --maintenance pgp import FILE
+countries --maintenance pgp delete
 ```
+
+`mode` prints the current application mode. `setup` loads the selected server configuration and prints its setup summary.
 
 Without a filename, `backup` creates a timestamped archive in the default backup directory. It always includes `server.yml` and the server database; configuration drop-ins, secrets, assets, and custom templates are included when present. SSL certificate files and the full data directory are optional. If `server.backup.encryption_password` is configured in `secrets.yml`, the archive is encrypted. Compliance mode refuses to create a backup without that secret.
 
 The archive is verified before it is installed. Restore verifies the selected archive and its incremental base, applies configured size and expansion limits, stages the files, and then replaces the configured files. Encrypted restores prompt for the backup password in an interactive terminal; passwords are never accepted as command-line arguments. Restore is destructive and should be run by the deployment operator with the service stopped.
 
 Scheduled backups run daily at 02:00. Daily full backups and the daily incremental are enabled by default; hourly incremental backups are disabled. Retention and disk-pressure checks use the `server.backup.retention.*` settings. See [configuration](configuration.md#backup-and-restore).
+
+PGP key management is operator-only and requires the operator token or root. Private-key export, import, and deletion also require an interactive confirmation. Generate stores the encrypted private key and public key under `security/` in the configuration directory and publishes the public key to configured keyservers. Public export writes to standard output unless a path is supplied. Private export requires a destination path, an operator-supplied reason, writes mode `0600`, and is limited to one export per hour per operator. Import validates the key and warns before accepting a key whose identity differs from the configured security identity. Delete warns that PGP-encrypted security reports will become unreadable. See [security](security.md#gpg-keypair-management) for the full workflow.

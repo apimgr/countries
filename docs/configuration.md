@@ -1,6 +1,6 @@
 # Configuration
 
-The server reads `server.yml` from its configuration directory and creates a default file when absent. The file is restricted to owner read/write access. Use `--config DIR`, `--data DIR`, and `--log DIR` to override paths. The matching environment overrides are `CONFIG_DIR`, `DATA_DIR`, and `LOG_DIR` (the legacy `LOGS_DIR` spelling is also accepted). `DATABASE_DIR` selects the SQLite directory. Branding, SEO, theme, and page content belong in `yaml.d/branding.yml`; privacy settings belong in `yaml.d/privacy.yml`. Secrets are kept in `secrets.yml`.
+The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area files, and `secrets.yml` into one validated configuration. Area files merge by dotted key; later files replace earlier scalar and list values. `server.yml` holds node-specific settings; the area file table below identifies the canonical home for each other section. Files are restricted to owner access. Use `--config DIR`, `--data DIR`, and `--log DIR` to override paths. The matching environment overrides are `CONFIG_DIR`, `DATA_DIR`, and `LOG_DIR`; `DATABASE_DIR` selects the SQLite directory.
 
 ## Server settings
 
@@ -10,8 +10,8 @@ The server reads `server.yml` from its configuration directory and creates a def
 | `server.address` | `[::]` | Dual-stack listener address; `--address` and `LISTEN` override it. IPv4-only hosts fall back to `0.0.0.0`. |
 | `server.fqdn` | `localhost` | Configured public host name. |
 | `server.mode` | `production` | Application mode when neither `--mode` nor `MODE` is set. |
-| `server.database.driver` | `sqlite` | Database driver. SQLite is currently supported. |
-| `server.database.url` | `{data_dir}/db/server.db` | SQLite database file path. `DATABASE_DIR` overrides the default directory. |
+| `server.database.driver` | `sqlite` | Database driver (`sqlite` or remote `libsql`/Turso). |
+| `server.database.url` | `{data_dir}/db/server.db` | SQLite database file path or remote libsql URL. `DATABASE_DIR` overrides the default SQLite directory. |
 | `server.tokens.max_linked` | `25` | Maximum active linked tokens per owner. |
 | `server.tokens.cookie_max_age` | `1y` | Sliding lifetime of the primary owner token cookie. |
 | `server.tokens.idle_purge_days` | `0` | Days before purging an owner with no resources and no token use; zero disables idle purge. |
@@ -26,13 +26,231 @@ The server reads `server.yml` from its configuration directory and creates a def
 | `server.contact.abuse.email` | empty | Public recipient for abuse and DMCA reports; falls back to general, then admin. |
 | `server.contact.admin.email` | empty | Private fallback recipient for report delivery. It is never shown on the report chooser. |
 | `server.contact.security.email` | empty | Private recipient for deployment security reports. |
+| `server.contact.admin.webhooks.{telegram,discord,slack,generic}` | empty | Private notification webhook destinations; never shown publicly. |
+| `server.contact.security.webhooks.{telegram,discord,slack,generic}` | empty | Security-report webhook destinations; empty values fall back to the admin role. |
+| `server.contact.abuse.webhooks.{telegram,discord,slack,generic}` | empty | Abuse-report webhook destinations; empty values fall back through general to admin. |
+| `server.contact.general.webhooks.{telegram,discord,slack,generic}` | empty | General-report webhook destinations; empty values fall back to admin. |
 | `server.pages.contact.enabled` | `true` | Enable the report form and its security.txt contact entry. Disabled forms return 404. |
 | `server.pages.contact.captcha` | `simple` | `simple`, `recaptcha`, or `hcaptcha`; external providers require keys in `secrets.yml` and retain a simple no-JavaScript fallback. Onion and I2P requests use `simple`. |
-| `server.pages.contact.antispam.*` | configured defaults | Fill age, token age, per-IP/email/global limits, markup/link rules, blocked terms/domains, strikes, duplicate window, and review timing. |
-| `server.notifications.email.smtp.host` | environment/autodetect | SMTP host; `SMTP_HOST` overrides it. `server.notifications.email.smtp.password` is stored only in `secrets.yml`. |
-| `server.notifications.email.smtp.from_email` | `no-reply@{fqdn}` | Server sender address. Submitted email is used only for `Reply-To` on ordinary reports. |
+| `server.pages.contact.antispam.honeypot` | `true` | Enable the hidden website field trap. |
+| `server.pages.contact.antispam.min_fill_seconds` | `3` | Minimum form-open time before accepting a submission. |
+| `server.pages.contact.antispam.max_age_seconds` | `43200` | Maximum age of a rendered form. |
+| `server.pages.contact.antispam.per_ip` | `5` | Accepted submissions per IP and window. |
+| `server.pages.contact.antispam.per_email` | `3` | Accepted submissions per sender email and window. |
+| `server.pages.contact.antispam.global` | `60` | Accepted submissions across all senders and window. |
+| `server.pages.contact.antispam.window` | `1h` | Rate-limit window. |
+| `server.pages.contact.antispam.max_links` | `10` | Maximum same-site links allowed in free-text fields. |
+| `server.pages.contact.antispam.reject_markup` | `true` | Reject HTML, encoded angle brackets, and BBCode in text fields. |
+| `server.pages.contact.antispam.blocked_words` | `[]` | Case-insensitive blocked substrings. |
+| `server.pages.contact.antispam.blocked_email_domains` | `[]` | Sender email domains to reject. |
+| `server.pages.contact.antispam.strikes` | `3` | Rejections from one IP before a form ban; zero disables strike bans. |
+| `server.pages.contact.antispam.ban_hours` | `24` | Duration of a strike-based form ban. |
+| `server.pages.contact.antispam.review_min_seconds` | `2` | Minimum time the review step must be shown before confirmation. |
+| `server.pages.contact.antispam.review_max_seconds` | `900` | Review token lifetime. |
+| `server.pages.contact.antispam.duplicate_window_hours` | `24` | Window for dropping duplicate messages from the same email. |
+| `server.notifications.email.smtp.host` | autodetected | SMTP host; empty enables first-run autodetection. `SMTP_HOST` overrides it. |
+| `server.notifications.email.smtp.port` | `587` | SMTP port; `SMTP_PORT` overrides it. |
+| `server.notifications.email.smtp.username` | empty | SMTP authentication username; `SMTP_USERNAME` overrides it. |
+| `server.notifications.email.smtp.password` | empty | SMTP authentication password; `SMTP_PASSWORD` overrides it and the value is stored only in `secrets.yml`. |
+| `server.notifications.email.smtp.tls` | `auto` | SMTP TLS mode: `auto`, `starttls`, `tls`, or `none`; `SMTP_TLS` overrides it. |
+| `server.notifications.email.from.name` | app title | Sender display name; `SMTP_FROM_NAME` overrides it. |
+| `server.notifications.email.from.email` | `no-reply@{fqdn}` | Sender address; `SMTP_FROM_EMAIL` overrides it. |
 
-The server generates `server.security.encryption_key` into `secrets.yml` for encrypted security reports. Secret values are not written to `server.yml` or returned by APIs.
+### Node, TLS, cache, and request settings
+
+| YAML key | Default | Purpose |
+|---|---|---|
+| `server.api_version` | `v1` | API version path segment. |
+| `server.baseurl` | `/` | URL path prefix for all routes; trusted proxy prefix headers take precedence. |
+| `server.daemonize` | `false` | Detach from the terminal at startup. |
+| `server.debug` | `false` | Enables debug endpoints when the CLI flag does not override it. |
+| `server.pidfile` | `true` | Write the process ID file. |
+| `server.ssl.enabled` | `false` | Enable TLS for the configured listener. |
+| `server.ssl.cert` | empty | Optional manual certificate path; otherwise use certificate auto-detection. |
+| `server.ssl.key` | empty | Optional manual private-key path; otherwise use certificate auto-detection. |
+| `server.ssl.min_version` | `TLS1.2` | Minimum TLS version (`TLS1.2` or `TLS1.3`). |
+| `server.ssl.letsencrypt.enabled` | `false` | Enable automatic certificate management. |
+| `server.ssl.letsencrypt.email` | `admin@{fqdn}` | ACME account email. |
+| `server.ssl.letsencrypt.challenge` | `http-01` | ACME challenge: `http-01`, `tls-alpn-01`, or `dns-01`. |
+| `server.ssl.letsencrypt.staging` | `false` | Use the ACME staging service. |
+| `server.ssl.letsencrypt.dns_provider` | empty | lego DNS provider name when using DNS-01. |
+| `server.ssl.letsencrypt.dns_credentials` | `{}` | Flat map of lego provider environment-variable names to secret values; stored encrypted in `secrets.yml`. |
+| `server.cache.type` | `memory` | Cache backend: `none`, `memory`, `valkey`, or `redis`. |
+| `server.cache.url` | empty | Full Valkey/Redis connection URL; takes precedence over separate connection fields. |
+| `server.cache.host` | `localhost` | Cache host when no URL is configured. |
+| `server.cache.port` | `6379` | Cache port when no URL is configured. |
+| `server.cache.username` | empty | Optional Redis ACL username. |
+| `server.cache.password` | empty | Cache password; secret values belong in `secrets.yml`. |
+| `server.cache.db` | `0` | Cache database number. |
+| `server.cache.tls` | `false` | Request TLS for field-based cache connections. |
+| `server.cache.tls_skip_verify` | `true` | Skip certificate verification when TLS is enabled. |
+| `server.cache.tls_ca` | empty | Private CA filename under `{config_dir}/ssl/`. |
+| `server.cache.tls_cert` | empty | Client certificate filename under `{config_dir}/ssl/`. |
+| `server.cache.tls_key` | empty | Client private-key filename under `{config_dir}/ssl/`. |
+| `server.cache.pool_size` | `10` | Connection-pool size. |
+| `server.cache.min_idle` | `2` | Minimum idle cache connections. |
+| `server.cache.timeout` | `5s` | Cache operation timeout. |
+| `server.cache.prefix` | `{project_name}:` | Prefix for cache keys. |
+| `server.cache.ttl` | `1h` | Default cache entry lifetime. |
+| `server.limits.max_body_size` | `10MB` | Maximum HTTP request body size. |
+| `server.limits.read_timeout` | `30s` | HTTP read timeout. |
+| `server.limits.write_timeout` | `30s` | HTTP write timeout. |
+| `server.limits.idle_timeout` | `120s` | HTTP idle-connection timeout. |
+| `server.compression.enabled` | `true` | Enable compressed responses. |
+| `server.compression.level` | `5` | Compression level, from 1 through 9. |
+| `server.compression.types` | HTML, CSS, JavaScript, JSON, XML | MIME types eligible for compression. |
+| `server.trusted_proxies.additional` | `[]` | Additional trusted proxy IPs, CIDRs, or DNS names. Private and loopback ranges are trusted by default. |
+| `server.trusted_proxies.client_ip_header` | `auto` | Select automatic or pinned client-IP header detection. |
+| `server.healthz.root.enabled` | `false` | Add `/healthz` as an alias to `/server/healthz`. |
+| `server.i18n.default_language` | `en` | Language used where no request language applies. |
+| `server.i18n.available_languages` | `[en, es, fr, de, it, ar]` | Languages available for server-rendered pages and notifications. |
+
+The `server.yml` node-specific keys are `server.port`, `server.address`, `server.fqdn`, `server.mode`, `server.api_version`, `server.baseurl`, `server.pidfile`, `server.daemonize`, `server.debug`, `server.database`, `server.cache`, `server.ssl`, and `server.trusted_proxies`.
+
+## Overlay network settings
+
+Tor settings live in `yaml.d/tor.yml`. The managed Tor hidden service starts automatically when a Tor binary is found; there is no enable switch.
+
+| YAML key | Default | Purpose |
+|---|---|---|
+| `server.tor.binary` | auto-detected | Tor executable path. |
+| `server.tor.use_network` | `false` | Use the managed Tor network for app-owned outbound connections. |
+| `server.tor.max_circuits` | `32` | Maximum concurrent circuits being built. |
+| `server.tor.startup_timeout` | `60` | Seconds to wait for the control-port file. |
+| `server.tor.circuit_timeout` | `60` | Circuit build timeout in seconds. |
+| `server.tor.bootstrap_timeout` | `180` | Seconds to wait for Tor network bootstrap. |
+| `server.tor.safe_logging` | `true` | Scrub sensitive information from Tor logs. |
+| `server.tor.max_streams_per_circuit` | `100` | Maximum concurrent streams per circuit. |
+| `server.tor.close_circuit_on_stream_limit` | `true` | Close a circuit when its stream limit is exceeded. |
+| `server.tor.bandwidth_rate` | `1 MB` | Maximum bandwidth rate. |
+| `server.tor.bandwidth_burst` | `2 MB` | Maximum bandwidth burst. |
+| `server.tor.max_monthly_bandwidth` | `100 GB` | Monthly bandwidth budget and warning thresholds. |
+| `server.tor.num_intro_points` | `3` | Number of hidden-service introduction points. |
+| `server.tor.virtual_port` | `80` | Virtual port exposed by the hidden service. |
+| `server.i2p.enabled` | `true` in containers; `false` elsewhere | Opt in to the I2P eepsite; the setting is also controllable with `I2P_ENABLED` or `--i2p`. |
+| `server.i2p.binary` | auto-detected | Optional `i2pd` executable; if absent, use the configured external SAM bridge. |
+| `server.i2p.sam_address` | `127.0.0.1:7656` | External I2P SAMv3 bridge address. |
+| `server.i2p.virtual_port` | `80` | Virtual port exposed by the eepsite. |
+| `server.i2p.inbound_length` | `3` | Number of inbound tunnel hops (0–7). |
+| `server.i2p.outbound_length` | `3` | Number of outbound tunnel hops (0–7). |
+| `server.i2p.inbound_quantity` | `5` | Number of parallel inbound tunnels (1–16). |
+| `server.i2p.outbound_quantity` | `5` | Number of parallel outbound tunnels (1–16). |
+| `server.i2p.signature_type` | `7` | SAM destination signature type (EdDSA-SHA512-Ed25519). |
+| `server.i2p.bootstrap_timeout` | `300` | Seconds to wait for destination and tunnels to become ready. |
+
+Tor data/configuration and I2P config/data directories are derived from the standard config/data directories; they are not individually configurable.
+
+### Configuration file layout
+
+| File | Configuration sections |
+|---|---|
+| `server.yml` | Node identity/listener settings, database, cache, SSL, and trusted proxies. |
+| `yaml.d/branding.yml` | `server.branding`, `server.seo`, `web.ui.theme`, and `web.ui.accent`. |
+| `yaml.d/web.yml` | `web.*` except `web.ui`, plus `server.cors`, `server.csrf`, `server.url_detection`, `server.compression`, `server.healthz`, and `server.i18n`. |
+| `yaml.d/pages.yml` | `server.pages`. |
+| `yaml.d/contact.yml` | `server.contact`. |
+| `yaml.d/privacy.yml` | `server.privacy`, `server.compliance`, and `server.tracking`. |
+| `yaml.d/security.yml` | `server.security`, `server.rate_limit`, `server.geoip`, `server.limits`, `server.tokens`, and `data.*`. |
+| `yaml.d/logs.yml` | `server.logs`. |
+| `yaml.d/metrics.yml` | `server.metrics`. |
+| `yaml.d/notifications.yml` | `server.notifications`. |
+| `yaml.d/tor.yml` | `server.tor` and top-level `tor`. |
+| `yaml.d/i2p.yml` | `server.i2p`. |
+| `yaml.d/maintenance.yml` | `server.maintenance`, `server.scheduler`, `server.update`, `server.auto_update`, `server.backup`, and `server.restore`. |
+| `yaml.d/app.yml` | Other project-defined sections. |
+| `secrets.yml` | Credentials and generated secrets only. |
+
+Both a legacy `server.yml` containing area settings and the drop-in layout are accepted; migration moves the area settings automatically. Drop-ins merge in filename byte order after `server.yml`; `secrets.yml` merges last. Maps merge recursively, while a later scalar or list replaces the earlier value. Configuration files are mode `0600`, and `yaml.d/` is mode `0700`.
+
+### Branding and SEO settings
+
+| YAML key | Default | Purpose |
+|---|---|---|
+| `server.branding.title` | `{project_name}` | Display name. |
+| `server.branding.tagline` | empty | Short slogan. |
+| `server.branding.description` | empty | Longer description for SEO and about content. |
+| `server.branding.favicon` | embedded image | HTTPS URL, `data:` URI, or asset filename. |
+| `server.branding.logo` | embedded image | HTTPS URL, `data:` URI, or asset filename. |
+| `server.branding.content.header` | absent | Optional HTML appended at the end of the public header. |
+| `server.branding.content.about` | built-in content | Optional content appended to the About page. |
+| `server.branding.content.privacy` | built-in content | Optional content appended to the built-in privacy sections. |
+| `server.branding.content.footer` | built-in block | Optional HTML replacing the custom branding block above the application footer. |
+| `server.branding.content.terms` | built-in terms | Optional content replacing the built-in Terms of Service. |
+| `server.seo.keywords` | `[]` | Project keywords. |
+| `server.seo.author` | empty | Author or organization name. |
+| `server.seo.og_image` | empty | Open Graph image URL. |
+| `server.seo.twitter_handle` | empty | Twitter creator handle. |
+| `server.seo.title_separator` | ` - ` | Separator between title and tagline (maximum 8 characters). |
+| `server.seo.meta_tags` | `{}` | Additional meta tags, limited to 20 entries. |
+| `server.seo.canonical` | request origin | Absolute HTTPS canonical origin. |
+| `server.seo.noindex` | `false` | Mark all pages `noindex,nofollow`. |
+| `server.seo.opengraph.enabled` | `true` | Enable Open Graph tags. |
+| `server.seo.opengraph.type` | `website` | Open Graph type. |
+| `server.seo.opengraph.site_name` | branding title | Open Graph site name. |
+| `server.seo.twitter.enabled` | `true` | Enable Twitter card tags. |
+| `server.seo.twitter.card` | `summary_large_image` | Twitter card type. |
+| `server.seo.twitter.creator` | empty | Content creator handle. |
+| `server.seo.verification.google` | empty | Google Search Console verification value. |
+| `server.seo.verification.bing` | empty | Bing Webmaster verification value. |
+| `server.seo.verification.yandex` | empty | Yandex Webmaster verification value. |
+| `server.seo.verification.baidu` | empty | Baidu Webmaster verification value. |
+| `server.seo.verification.pinterest` | empty | Pinterest verification value. |
+| `server.seo.verification.facebook` | empty | Facebook domain verification value. |
+| `server.seo.verification.custom` | `{}` | Additional verification meta tags. |
+
+Branding content entries accept a `format` (`md` by default, `html`, or `txt`) and a `body`; `header` and `footer` are HTML-only. The body may be a single string or a map by language with an optional `default` entry.
+
+### Web security and browser settings
+
+| YAML key | Default | Purpose |
+|---|---|---|
+| `server.cors.allowed_origins` | `[*]` | Allowed CORS origins; an empty string entry disables CORS. |
+| `server.cors.allow_credentials` | `true` | Allow credentials only for explicitly matched origins; never with `*`. |
+| `server.cors.max_age` | `86400` | CORS preflight cache age in seconds. |
+| `server.csrf.enabled` | `true` | Enable frontend CSRF protection; only disable for deployments without browser forms. |
+| `server.csrf.token_length` | `32` | CSRF token length in bytes. |
+| `server.csrf.cookie_name` | `csrf_token` | CSRF cookie name. |
+| `server.csrf.header_name` | `X-CSRF-Token` | CSRF request header name. |
+| `server.csrf.secure` | `auto` | Set the cookie Secure flag based on HTTPS detection, or force true/false. |
+| `server.csrf.exempt_paths` | `[]` | Frontend-only paths exempt from CSRF validation; glob patterns are supported. |
+| `web.hsts.enabled` | `true` | Emit HSTS; disable only for HTTP-only deployments. |
+| `web.hsts.max_age_seconds` | `63072000` | HSTS max age in seconds. |
+| `web.hsts.include_subdomains` | `true` | Include subdomains in HSTS policy. |
+| `web.hsts.preload` | `true` | Include the preload directive. |
+| `web.csp.enabled` | `true` | Enable Content Security Policy. |
+| `web.csp.mode` | `enforce` | CSP mode: `enforce` or `report-only`. |
+| `web.csp.script_src_extra`, `style_src_extra`, `img_src_extra`, `font_src_extra`, `connect_src_extra`, `frame_src_extra`, `form_action_extra` | empty | Append allowed sources to the corresponding policy directives. |
+| `web.csp.script_src_override` | empty | Replace the default script source directive. Other directive overrides follow the same naming pattern. |
+| `web.csp.reports_enabled` | `true` | Send CSP violation reports to the server reports endpoint. |
+| `web.reports.rate_limit_per_minute` | `60` | Maximum public report submissions per IP per minute. |
+| `web.reports.rate_limit_per_ip_burst` | `10` | Short burst allowance for public reports. |
+| `web.headers.coop` | `unsafe-none` | Cross-Origin-Opener-Policy value. |
+| `web.headers.coep` | `unsafe-none` | Cross-Origin-Embedder-Policy value. |
+| `web.headers.corp` | `cross-origin` | Cross-Origin-Resource-Policy value. |
+| `web.headers.origin_agent_cluster` | `true` | Emit `Origin-Agent-Cluster: ?1`. |
+| `web.headers.cross_domain_policies` | `none` | X-Permitted-Cross-Domain-Policies value. |
+| `web.headers.dns_prefetch_control` | empty | Omit the header when empty; `off` disables DNS prefetching. |
+| `web.headers.honor_sec_gpc` | `true` | Honor `Sec-GPC: 1` as an opt-out signal. |
+| `web.headers.honor_dnt` | `false` | Honor the legacy Do Not Track signal. |
+| `web.headers.sec_fetch_validation` | `true` | Reject cross-site state-changing requests to frontend routes. |
+| `web.headers.server_timing_in_debug_only` | `true` | Restrict Server-Timing to debug mode. |
+| `web.headers.clear_site_data.on_token_revocation` | `true` | Clear site data after linked-token revocation. |
+| `web.headers.clear_site_data.on_consent_withdrawal` | `true` | Clear site data after consent withdrawal. |
+| `web.headers.clear_site_data.execution_contexts` | `false` | Also reload browser execution contexts on token revocation. |
+| `web.headers.nel.enabled` | `true` | Enable Network Error Logging. |
+| `web.headers.nel.max_age_seconds` | `2592000` | NEL policy lifetime (30 days). |
+| `web.headers.nel.include_subdomains` | `true` | Apply NEL to subdomains. |
+| `web.headers.nel.sample_rate` | `1.0` | Failure sampling rate from 0 to 1. |
+| `web.robots.allow` | project defaults | Public paths allowed for crawlers and sitemap inclusion. |
+| `web.robots.deny` | project defaults | Paths disallowed for crawlers and omitted from the sitemap. |
+| `web.security.policy` | built-in policy | Markdown security disclosure policy. |
+| `web.security.report_url` | GitHub private reporting URL | Primary security reporting destination. |
+| `web.security.keyservers` | `[]` | OpenPGP keyserver hosts for key publication. |
+| `web.security.publish_pgp_key` | `true` | Publish the configured PGP public key in security.txt. |
+
+`server.cors`, `server.csrf`, and other `server.*` web controls belong in `yaml.d/web.yml`; the `web.*` settings also belong there, except `web.ui.*`, which belongs in `yaml.d/branding.yml`.
+
+The server generates `server.security.encryption_key` into `secrets.yml` for researcher contact details and as the AES-256-GCM fallback for security report bodies when no valid OpenPGP public key exists at `config/security/pgp.pub.asc`. When that key exists, report bodies and maintainer notifications use OpenPGP. Secret values are not written to `server.yml` or returned by APIs.
 
 ## External security data
 
@@ -48,6 +266,10 @@ The server stores downloaded blocklists and vulnerability data under `data.secur
 | `server.security.blocklists.enabled` | `true` | Enables configured extra sources. The built-in FireHOL IP list remains active. |
 | `server.security.blocklists.extra_sources[]` | `[]` | Additional HTTPS IP or domain lists with a unique lowercase ID. |
 | `server.security.reports.retention_days` | `365` | Days after closure before a security report is removed by `security_cleanup`; open reports are retained. |
+| `server.geoip.enabled` | `true` | Enable GeoIP lookups; missing data fails open and does not block requests. |
+| `server.geoip.deny_countries` | `[]` | ISO 3166-1 alpha-2 country codes to block. |
+| `server.geoip.allow_countries` | `[]` | ISO 3166-1 alpha-2 country codes to allow exclusively; takes precedence if both lists are set. |
+| `server.geoip.presets` | `{}` | Named operator-authored country lists for reuse. |
 
 Set the optional NVD API key in `secrets.yml` as `data.cve.api_key`. Blocklist updates run daily. NVD and optional Trivy updates run through the daily `cve_update` task; missing data is also fetched on first startup.
 
@@ -70,17 +292,85 @@ Set the optional NVD API key in `secrets.yml` as `data.cve.api_key`. Blocklist u
 Set the unattended backup password in `secrets.yml` as `server.backup.encryption_password`. Compliance mode blocks backup creation until this secret is set. The password is not stored in `server.yml`, the database, the archive manifest, or logs. Restore prompts for the password when the selected archive is encrypted.
 
 Scheduled full and incremental backups run daily at 02:00; hourly incrementals are disabled by default. Manual backups support optional `--include-ssl` and `--include-data` flags. The default backup directory is selected by the operating system path resolver. See the [server CLI reference](cli.md#server-maintenance-commands) for commands.
-| `server.privacy.data.sold` | `false` | Controls sold/not-sold privacy text and whether the CCPA opt-out control is available. |
+
+## Scheduler settings
+
+The built-in scheduler is always running and has no global enable/disable setting. Each task below is configured under `server.scheduler.tasks`; the scheduler timezone and catch-up window are configured under `server.scheduler`.
+
+| YAML key | Default | Purpose |
+|---|---|---|
+| `server.scheduler.timezone` | `America/New_York` | IANA timezone for scheduled tasks. |
+| `server.scheduler.catch_up_window` | `1h` | Run missed tasks on startup when their due time is within this window. |
+| `server.scheduler.tasks.ssl_renewal.schedule` | `0 3 * * *` | Daily certificate renewal check. |
+| `server.scheduler.tasks.ssl_renewal.enabled` | `true` | Enable certificate renewal checks. |
+| `server.scheduler.tasks.geoip_update.schedule` | `0 3 * * 0` | Weekly GeoIP database update. |
+| `server.scheduler.tasks.geoip_update.enabled` | `true` | Enable GeoIP updates. |
+| `server.scheduler.tasks.blocklist_update.schedule` | `0 4 * * *` | Daily blocklist update. |
+| `server.scheduler.tasks.blocklist_update.enabled` | `true` | Enable blocklist updates. |
+| `server.scheduler.tasks.cve_update.schedule` | `0 5 * * *` | Daily NVD and optional Trivy database update. |
+| `server.scheduler.tasks.cve_update.enabled` | `true` | Enable vulnerability database updates. |
+| `server.scheduler.tasks.update_check.schedule` | `0 6 * * *` | Daily update check; notify-only unless auto-install is enabled. |
+| `server.scheduler.tasks.update_check.enabled` | `true` | Enable scheduled update checks. |
+| `server.scheduler.tasks.token_cleanup.schedule` | `@every 15m` | Remove expired captcha challenges and apply owner idle-purge policy. |
+| `server.scheduler.tasks.token_cleanup.enabled` | `true` | Enable token cleanup. |
+| `server.scheduler.tasks.log_rotation.schedule` | `0 0 * * *` | Daily log rotation. |
+| `server.scheduler.tasks.log_rotation.enabled` | `true` | Enable log rotation. |
+| `server.scheduler.tasks.backup_daily.schedule` | `0 2 * * *` | Daily full and incremental backup. |
+| `server.scheduler.tasks.backup_daily.enabled` | `true` | Enable daily backup. |
+| `server.scheduler.tasks.backup_hourly.schedule` | `@hourly` | Hourly incremental backup schedule. |
+| `server.scheduler.tasks.backup_hourly.enabled` | `false` | Hourly incrementals are disabled by default. |
+
+Per-task configuration uses `enabled`, `schedule`, `retry_on_fail`, and `retry_delay`; the backup task also uses `retention`. The specification says critical tasks cannot be disabled, but does not identify the critical-task set consistently with its task table. I have not documented a configurable critical-task set.
+
+## Privacy, tracking, and web settings
+
+| YAML key | Default | Purpose |
+|---|---|---|
+| `server.privacy.data.sold` | `false` | Controls sold/not-sold privacy text and availability of the CCPA opt-out control. |
 | `server.privacy.data.stored_on_server` | configured default | States whether user data is stored on the deployment. |
-| `server.privacy.data.sharing[]` | project defaults | Describes conditions, purposes, and data for sharing. |
-| `server.privacy.consent.*` | configured defaults | Consent messages, policy link/text, button labels, and banner behavior. |
-| `server.privacy.cookies.{essential,preferences,analytics}` | configured defaults | Enables each cookie category and supplies its description. Analytics description includes the sold/not-sold suffix. |
-| `server.privacy.retention.*` | configured defaults | Retention period and data export/deletion availability. |
-| `server.privacy.third_party.services[]` | `[]` | Third-party services, their purposes, data sent, and privacy-policy URLs. |
+| `server.privacy.data.sharing[]` | project defaults | Conditions, purposes, and data categories for sharing. |
+| `server.privacy.consent.message` | configured default | Consent banner message when data is not sold. |
+| `server.privacy.consent.message_if_sold` | configured default | Consent banner message when data is sold. |
+| `server.privacy.consent.policy.url` | configured default | Privacy-policy link URL. |
+| `server.privacy.consent.policy.text` | configured default | Privacy-policy link label. |
+| `server.privacy.consent.buttons.decline` | configured default | Decline button label. |
+| `server.privacy.consent.buttons.accept` | configured default | Accept button label. |
+| `server.privacy.consent.preferences_text` | configured default | Preferences control label. |
+| `server.privacy.cookies.essential` | configured default | Essential-cookie description and enabled state. |
+| `server.privacy.cookies.preferences` | configured default | Preferences-cookie description and enabled state. |
+| `server.privacy.cookies.analytics` | configured default | Analytics-cookie description and enabled state. |
+| `server.privacy.retention.period` | configured default | Data-retention period description. |
+| `server.privacy.retention.export_available` | configured default | Whether data export is available. |
+| `server.privacy.retention.deletion_available` | configured default | Whether data deletion is available. |
+| `server.privacy.third_party.services[]` | `[]` | Third-party service entries with `name`, `purpose`, `data_sent`, and `policy_url`. |
 | `server.tracking.type` | empty | Optional analytics provider: `google`, `matomo`, `piwik`, `owa`, `fathom`, `plausible`, `umami`, `simple`, or `cloudflare`; empty or `none` disables tracking. |
 | `server.tracking.id` | empty | Provider-specific tracking/site identifier. |
 | `server.tracking.url` | empty | Self-hosted provider URL where required; optional for self-hosted Fathom and Plausible. |
-| `server.metrics.*` | configured defaults | Prometheus, Grafana, and Loki metrics endpoints use separate bearer tokens and are internal operational endpoints. |
+| `server.metrics.enabled` | `false` | Enable metrics endpoints. |
+| `server.metrics.root.enabled` | `true` | Mount root `/metrics[/{service}]` aliases. |
+| `server.metrics.auth.allow_unauthenticated` | `false` | Skip metrics bearer-token checks; use only behind a firewall. |
+| `server.metrics.auth.tokens.prometheus` | generated secret | Prometheus bearer token. |
+| `server.metrics.auth.tokens.grafana` | generated secret | Grafana dashboard bearer token. |
+| `server.metrics.auth.tokens.loki` | generated secret | Loki log-stream bearer token. |
+| `server.metrics.include_system` | `false` | Include CPU, memory, and disk metrics. |
+| `server.metrics.include_runtime` | `false` | Include Go runtime statistics. |
+| `server.metrics.loki.max_entries` | `1000` | Maximum recent log entries served. |
+| `server.metrics.loki.max_age` | `1h` | Maximum age of log entries served. |
+| `server.logs.level` | empty (mode-derived) | Global log level: `debug`, `info`, `warn`, or `error`. |
+| `server.logs.defaults.custom` | empty | Custom format string used by log kinds configured with `format: custom`. |
+| `server.logs.defaults.rotate` | `weekly,50MB` | Default rotation policy inherited by each log kind. |
+| `server.logs.defaults.keep` | `none` | Default retention policy; `none`, a count, or a duration-based policy. |
+| `server.logs.access.format` | `apache` | Access log format: `apache`, `nginx`, `json`, or `custom`. |
+| `server.logs.access.rotate` | `monthly` | Access log rotation policy. |
+| `server.logs.server.format` | `text` | Server log format: `text` or `json`. |
+| `server.logs.error.format` | `text` | Error log format: `text` or `json`. |
+| `server.logs.audit.enabled` | `true` | Enable the append-only audit log. |
+| `server.logs.audit.format` | `json` | Audit log format; JSON is required. |
+| `server.logs.audit.rotate` | `daily` | Audit log rotation policy. |
+| `server.logs.audit.compress` | `false` | Compress retained audit logs. |
+| `server.logs.security.format` | `fail2ban` | Security log format: `fail2ban`, `syslog`, `cef`, `json`, or `text`. |
+| `server.logs.debug.enabled` | `false` | Enable the troubleshooting debug log. |
+| `server.logs.debug.format` | `text` | Debug log format: `text` or `json`. |
 | `server.rate_limit.read.requests` | `120` | Read requests per client in the configured window. |
 | `server.rate_limit.read.window` | `60` | Read-request window in seconds. |
 | `server.rate_limit.write.requests` | `10` | Non-read requests per client in the configured window. |
@@ -92,18 +382,18 @@ Scheduled full and incremental backups run daily at 02:00; hourly incrementals a
 | `server.rate_limit.auth_failures.requests` | `5` | Failed authentication attempts per IP before lockout. |
 | `server.rate_limit.auth_failures.window` | `900` | Failed-authentication window in seconds. |
 | `server.rate_limit.global_burst` | `240` | Total requests per client per minute across classes. |
-| `server.logging.access_format` | `apache` | Parsed but currently unused; access logs use the project's fixed request log format. |
-| `server.logging.level` | `info` | Parsed but currently unused; runtime log level is not configured from this field. |
-| `web-ui.theme` | `dark` | Theme used by server-rendered pages. |
-| `web-ui.notifications.enabled` | `true` | Parsed but currently unused; no notification consumer uses this flag. |
-| `web-security.cors` | `*` | CORS allowed origin. |
+| `server.logs.access.format` | `apache` | Access-log format (`apache`, `nginx`, `json`, or `custom`). |
+| `server.logs.level` | mode-derived | Application log level; an explicit value overrides the mode default. |
+| `server.cors.allowed_origins` | inferred trusted origins, then `*` | Explicit CORS origin allow-list; credentials are sent only for explicitly listed origins, never with `*`. |
+| `web.ui.theme` | `dark` | Default page theme, configured in `yaml.d/branding.yml`. |
+| `web.ui.accent` | built-in accent | Accent color, configured in `yaml.d/branding.yml`; must be a six-digit hex value. |
 | `web.headers.clear_site_data.on_token_revocation` | `true` | Send `Clear-Site-Data` when a linked owner token is revoked. |
 | `web.headers.clear_site_data.on_consent_withdrawal` | `true` | Send `Clear-Site-Data` when a visitor withdraws stored preferences or analytics consent. |
 | `web.headers.clear_site_data.execution_contexts` | `false` | Also reload browser execution contexts when a token is revoked. |
 
 Rate limiting is always enabled. Anonymous requests are limited per client IP, valid bearer-token requests are limited per token, and failed authentication is counted per IP. Boolean configuration accepts the truthy and falsy values defined by the project parser, including `yes/no`, `enable/disable`, `on/off`, and `1/0`.
 
-Runtime mode precedence is `--mode`, then `MODE`, then `server.mode`, then `production`. Accepted values are `production` (`prod`), `development` (`dev`, `devel`), and `debug`. The selected mode is process-local; `--mode` does not rewrite configuration. Debug endpoint enablement is separate: explicit `--debug` wins over `DEBUG`, which wins over the default enabled by `debug` mode. When enabled, `/debug/pprof/*` and `/debug/vars` are available. Mode-specific logging, request diagnostics, caching, and security-header behavior still need completion to match AI.md.
+Runtime mode precedence is `--mode`, then `MODE`, then `server.mode`, then `production`. Accepted values are `production` (`prod`), `development` (`dev`, `devel`), and `debug`. The selected mode is process-local; `--mode` does not rewrite configuration. Debug endpoint enablement is separate: explicit `--debug` wins over `DEBUG`, which wins over the default enabled by `debug` mode. When enabled, `/debug/pprof/*` and `/debug/vars` are available. Logging level, request diagnostics, caching, and security-header behavior follow the selected mode and the corresponding `server.logs`, `server.cache`, and `web.*` settings.
 
 ### Analytics tracking
 

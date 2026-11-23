@@ -24,5 +24,6 @@ The checked-in dataset has **249 ISO 3166-1 records**. Records include common an
 - [CLI reference](cli.md)
 - [Security and privacy](security.md)
 - [Integrations and discovery](integrations.md)
+- [Operations](operations.md)
 - [Development](development.md)
 - [Translation guide](translating.md)

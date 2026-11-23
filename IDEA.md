@@ -23,7 +23,7 @@ owner_token: countries_owner_token_gId2fHet
 - 249 countries with comprehensive per-country data (names, ISO codes, capital, region, currencies, languages, population, area, flag, borders, timezones, TLDs)
 - Search/filter by name, code, region, currency, or language
 - Full web frontend (server-side Go templates, dark/light/auto theme, PWA, mobile-first)
-- Server pages: `/server/about`, `/server/contact`, `/server/dpo`, `/server/help`, `/server/help/mcp` when MCP is enabled, `/server/healthz`, `/server/preferences`, `/server/privacy`, `/server/security`, and `/server/terms`
+- Server pages: `/server/about`, `/server/contact`, `/server/dpo`, `/server/help`, `/server/help/mcp` when MCP is enabled, `/server/healthz`, `/server/preferences`, `/server/preferences/sync`, `/server/preferences/tokens`, `/server/privacy`, `/server/security`, `/server/security/policy`, `/server/security/thanks`, and `/server/terms`
 - CLI client (`countries-cli`) for queries from the terminal
 - OpenAPI/Swagger docs at `/api/{api_version}/server/swagger`
 - GraphQL at `/api/graphql` (with its explorer at `/server/docs/graphql`)
@@ -31,7 +31,7 @@ owner_token: countries_owner_token_gId2fHet
 **Non-goals:**
 - No user accounts, registration, or login of any kind
 - No admin web panel (server configured via `server.yml` only)
-- No write/mutation API (data is read-only, embedded at build time)
+- No write or mutation API for country records; the embedded country dataset is read-only. Separate server endpoints support preferences, anonymous owner-token management, report submission, and CSP/reporting intake.
 - No real-time data (exchange rates, political events, population census updates)
 - No paid tiers or key-based usage plans; owner tokens only identify resource ownership and authorize the mandatory MCP and token-management flows
 
@@ -67,7 +67,7 @@ There are no user accounts or login roles. Public country reads and server infor
 | `timezones` | string[] — IANA identifiers | Public |
 | `tld` | string[] | Public |
 
-Country records contain no PII. Contact form submissions contain the visitor's name, email address, subject, and message; they are validated and sent through configured SMTP without being stored in the country dataset or database.
+Country records contain no PII. Ordinary contact requests are sent through configured SMTP without being stored in the country dataset or database. Security reports are retained in the database as encrypted content with separate metadata, according to the security-report retention rules in AI.md.
 
 ### Trust boundaries & external services
 
@@ -100,34 +100,85 @@ Core country lookups make no external runtime calls. Contact delivery and third-
 
 - **No user accounts or login**: intentional. Anonymous owner and linked bearer tokens are credentials for resource ownership, token management and MCP only.
 - **All responses include `Access-Control-Allow-Origin: *`**: intentional. Public data API designed for cross-origin browser use.
-- **Public contact form**: intentional; it has no accounts or message storage, accepts bounded submissions protected by the configured challenge, and sends only to the operator-configured recipient when SMTP is configured.
+- **Public contact form**: intentional; it has no accounts. Ordinary contact requests are not stored by the service; security reports are retained as encrypted content. Submissions are bounded, protected by the configured challenge, and delivered only to configured recipients when SMTP is configured.
 
 ### API routes
 
-All routes below are public and require no authentication. Responses use the documented JSON envelope unless marked plain text.
+Country-data and public information routes below require no authentication. Owner-token API operations require the owner bearer token; browser mutations require the owner cookie and CSRF token except initial token issue/restore, which use the one-time browser flow. Contact and CCPA forms are public and antispam-protected. API responses use the documented JSON envelope unless marked plain text. The `{api_version}` placeholder currently resolves to `v1`.
 
-| Method | Path | Purpose and request/response summary |
+| Method | Path | Auth | Purpose and request/response summary |
 |---|---|---|
-| GET | `/api/{api_version}/countries` | List countries with pagination and optional search, code, region, currency, and language filters; returns country records and pagination metadata. |
-| GET | `/api/{api_version}/countries/{code}` | Read a country by alpha-2, alpha-3, or numeric code; returns one record or not found. |
-| GET | `/api/{api_version}/countries/search` | Search country names and fields using `q` and optional code, region, currency, or language filters; returns matching records. |
-| GET | `/api/{api_version}/coordinates` | Find the nearest country using `lat` and `lon` query parameters. |
-| POST | `/api/{api_version}/coordinates` | Find the nearest country using a JSON body containing `lat` and `lon`. |
-| GET | `/api/{api_version}/nearby` | Find country centroids within a radius using `lat`, `lon`, and `radius` query parameters. |
-| GET | `/api/{api_version}/stats` | Return dataset count, version, and data source metadata. |
-| GET | `/api/{api_version}/stats.txt` | Return dataset statistics as plain text. |
-| GET | `/api/{api_version}/count` | Return the dataset count in the JSON envelope. |
-| GET | `/api/{api_version}/count.txt` | Return the dataset count as plain text. |
-| GET | `/api/{api_version}/server/healthz` | Return service health. |
-| GET | `/api/{api_version}/server/about` | Return service information. |
-| GET | `/api/{api_version}/server/help` | Return API usage help. |
-| GET | `/api/{api_version}/server/privacy` | Return the privacy notice. |
-| GET | `/api/{api_version}/server/terms` | Return the service terms. |
-| GET | `/api/{api_version}/server/security` | Return security reporting information. |
-| GET | `/api/{api_version}/server/contact` | Return contact information; contact submissions are specified for the browser form. |
-| GET | `/api/{api_version}/server/dpo` | Return configured DPO contact details and the absolute privacy URL. |
-| GET | `/api/{api_version}/server/preferences` | Read effective guest theme and language preferences. |
-| POST | `/api/{api_version}/server/preferences` | Save the caller's guest theme and language cookies. |
-| GET | `/api/{api_version}/server/preferences/sync` | Export guest preferences as a share URL and short code. |
-| GET | `/api/{api_version}/server/preferences/sync/import` | Apply supported preferences from query values or a share code. |
-| POST | `/api/{api_version}/server/graphql` | Execute read-only GraphQL queries against the country dataset. |
+| GET | `/api/{api_version}/countries` | Public | List countries with pagination and optional search, code, region, currency, and language filters; returns country records and pagination metadata. |
+| GET | `/api/{api_version}/countries/{code}` | Public | Read a country by alpha-2, alpha-3, or numeric code; returns one record or not found. |
+| GET | `/api/{api_version}/countries/search` | Public | Search country names and fields using `q` and optional code, region, currency, or language filters; returns matching records. |
+| GET | `/api/{api_version}/coordinates` | Public | Find the nearest country using `lat` and `lon` query parameters. |
+| POST | `/api/{api_version}/coordinates` | Public | Find the nearest country using a JSON body containing `lat` and `lon`. |
+| GET | `/api/{api_version}/nearby` | Public | Find country centroids within a radius using `lat`, `lon`, and `radius` query parameters. |
+| GET | `/api/{api_version}/stats` | Public | Return dataset count, version, and data source metadata. |
+| GET | `/api/{api_version}/stats.txt` | Public | Return dataset statistics as plain text. |
+| GET | `/api/{api_version}/count` | Public | Return the dataset count in the JSON envelope. |
+| GET | `/api/{api_version}/count.txt` | Public | Return the dataset count as plain text. |
+| GET | `/api/{api_version}/server/healthz` and `.txt` | Public | Return service health as negotiated JSON or plain text. |
+| GET | `/api/{api_version}/server/about` | Public | Return service information. |
+| GET | `/api/{api_version}/server/help` | Public | Return API usage help. |
+| GET | `/api/{api_version}/server/help/mcp` | Public | Return MCP endpoint and tool documentation. |
+| GET | `/api/{api_version}/server/privacy` | Public | Return the privacy notice. |
+| GET | `/api/{api_version}/server/terms` | Public | Return the service terms. |
+| GET | `/api/{api_version}/server/security` | Public | Return security reporting information. |
+| GET | `/api/{api_version}/server/security/policy` | Public | Return the disclosure policy. |
+| GET | `/api/{api_version}/server/security/thanks` | Public | Return disclosed researcher acknowledgments. |
+| GET | `/api/{api_version}/server/contact` | Public | Return contact form field definitions and validation metadata. |
+| POST | `/api/{api_version}/server/contact` | Public, antispam | Submit a two-step contact request or security report; returns delivery status and, for a report, its tracking ID. |
+| POST | `/api/{api_version}/server/reports/{report}` | Security report credential | Submit or confirm a security-report step; returns validation/review or the resulting tracking ID. |
+| GET | `/api/{api_version}/server/dpo` | Public | Return configured DPO contact details and the absolute privacy URL. |
+| GET | `/api/{api_version}/server/preferences` | Public | Read effective guest theme and language preferences. |
+| POST | `/api/{api_version}/server/preferences` | Public, CSRF | Save the caller's guest theme and language preferences. |
+| GET | `/api/{api_version}/server/preferences/sync` | Public | Export guest preferences as a share URL and short code. |
+| POST | `/api/{api_version}/server/preferences/sync` | Public, CSRF | Save selected guest preferences for synchronization. |
+| GET | `/api/{api_version}/server/preferences/sync/import` | Public | Apply supported preferences from query values or a share code. |
+| GET | `/api/{api_version}/server/preferences/tokens` | Owner token | List owner-linked token metadata without exposing raw tokens. |
+| POST | `/api/{api_version}/server/preferences/tokens/primary` | Public one-time issue flow | Create the owner and primary token once; later attempts conflict. |
+| POST | `/api/{api_version}/server/preferences/tokens/primary/reveal` | Owner token | Reveal the primary token through the protected one-time display flow. |
+| POST | `/api/{api_version}/server/preferences/tokens/primary/rotate` | Owner token | Rotate the primary token while preserving linked tokens. |
+| POST | `/api/{api_version}/server/preferences/tokens` | Owner token | Create a linked token with a name and optional expiry. |
+| POST | `/api/{api_version}/server/preferences/tokens/{id}/reveal` | Owner token | Reveal a linked token through the protected one-time display flow. |
+| POST | `/api/{api_version}/server/preferences/tokens/{id}/rotate` | Owner token | Rotate one linked token. |
+| PATCH | `/api/{api_version}/server/preferences/tokens/{id}` | Owner token | Rename or change the expiry of one linked token. |
+| DELETE | `/api/{api_version}/server/preferences/tokens/{id}` | Owner token | Revoke one linked token. |
+| POST | `/api/{api_version}/server/graphql` | Public | Execute read-only GraphQL queries against the country dataset. |
+| POST | `/api/{api_version}/server/mcp` | Owner token | Handle MCP initialize, discovery and tool calls scoped to the owner token. |
+| GET | `/api/{api_version}/server/swagger` | Public | Return the OpenAPI document. |
+| GET | `/` | Public | Render the country-service home page. |
+| GET | `/search` | Public | Render country search results and search form. |
+| GET | `/coordinates` | Public | Render the nearest-country lookup form and result. |
+| GET | `/server` | Public | Redirect to `/server/about`. |
+| GET | `/server/healthz` | Public | Render the service health page. |
+| GET | `/healthz` | Public when enabled by configuration | Render the service health page. |
+| GET | `/server/about`, `/server/help`, `/server/privacy`, `/server/terms`, `/server/security`, `/server/security/policy`, `/server/security/thanks`, `/server/help/mcp` | Public | Render the named server information page. |
+| GET | `/server/contact` | Public | Render the contact form or security-report form when the rotating security ID is valid. |
+| POST | `/server/contact` | Public, CSRF and antispam | Submit a two-step contact request or security report. |
+| POST | `/server/ccpa` | Public, CSRF | Record a Global Privacy Control opt-out request. |
+| GET | `/server/security/report/{tracking_id}` | Public with report status token | Render the limited triage state for the matching tracking ID. |
+| GET | `/server/dpo` | Public | Render configured DPO contact details. |
+| GET | `/server/preferences` | Public | Render language, appearance, and consent preferences. |
+| POST | `/server/preferences` | Public, CSRF | Save guest language, appearance, and consent preferences. |
+| GET | `/server/preferences/sync`, `/server/preferences/sync/import` | Public | Render or apply the guest preference synchronization flow. |
+| POST | `/server/preferences/sync` | Public, CSRF | Save selected guest preferences for synchronization. |
+| GET | `/server/preferences/tokens` | Owner cookie | Render primary and linked owner-token management. |
+| POST | `/server/preferences/token/create`, `/server/preferences/token/restore` | Public one-time issue/restore flow | Create an owner token once or restore an owner session by pasting its primary token. |
+| POST | `/server/preferences/token/forget` | Owner cookie, CSRF | Clear the current browser's owner-token session. |
+| POST | `/server/preferences/token/reveal`, `/server/preferences/token/rotate` | Owner cookie, CSRF | Reveal or rotate the primary token. |
+| POST | `/server/preferences/tokens` | Owner cookie, CSRF | Create a linked token. |
+| POST | `/server/preferences/tokens/{id}/reveal`, `/server/preferences/tokens/{id}/rotate`, `/server/preferences/tokens/{id}/update`, `/server/preferences/tokens/{id}/revoke` | Owner cookie, CSRF | Reveal, rotate, rename/expire, or revoke a linked token. |
+| POST | `/server/consent` | Public, CSRF | Save or withdraw consent choices. |
+| POST | `/announcements/dismiss` | Public, CSRF | Dismiss a visible announcement for the browser. |
+| GET | `/server/docs/swagger` | Public | Render REST API documentation. |
+| GET, POST | `/server/docs/graphql` | Public | Render the GraphiQL explorer or execute a query from its form. |
+| GET | `/manifest.json`, `/sw.js`, `/robots.txt`, `/sitemap.xml` | Public | Serve PWA metadata, service worker, crawler policy, or sitemap. |
+| GET | `/.well-known/security.txt`, `/.well-known/pgp-key.asc`, `/.well-known/llms.txt`, `/llms.txt` | Public | Serve security contact, feature-gated PGP key, or generated agent-discovery text. |
+| GET | `/server/tracking.js` | Public | Serve the consent-aware tracking bootstrap script. |
+| GET | `/api/healthz`, `/api/healthz.txt`, `/api/swagger` | Public | Stable unversioned health and OpenAPI discovery aliases. |
+| POST | `/api/graphql` | Public | Stable unversioned GraphQL query alias. |
+| GET | `/api/autodiscover` | Public | List available CLI binaries. |
+| GET | `/cli/binaries/{binary}` | Public | Download an allowlisted CLI binary. |
+| POST | `/mcp`, `/api/mcp` | Owner token | Handle MCP protocol requests using the compatibility endpoint aliases. |
