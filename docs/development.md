@@ -15,7 +15,7 @@ make test
 
 The standard `make dev`, `make local`, and `make build` outputs include a static server and a static CLI/TUI binary. To also build the optional GUI client, use `BUILD_GUI=1 make dev`, `BUILD_GUI=1 make local`, or `BUILD_GUI=1 make build`. GUI binaries are separate `*-cli-gui*` artifacts for Linux, macOS, and Windows and require the dynamic loader used by the Go build container.
 
-Run `make license-check` to scan imported dependencies for GPL-family licenses and refresh the license report and third-party license texts. Review the generated report and update [`LICENSE.md`](https://github.com/apimgr/countries/blob/main/LICENSE.md) when dependencies change.
+The GitHub license workflow runs `scripts/verify-licenses.sh` in `casjaysdev/go:latest`. When dependencies change, run that script in the same container to refresh `licenses.csv` and `third_party_licenses/`, then review the results and update [`LICENSE.md`](https://github.com/apimgr/countries/blob/main/LICENSE.md) as needed. The script requires the repository to be mounted writable because it updates those tracked inventories.
 
 ## Build the documentation
 

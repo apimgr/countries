@@ -53,7 +53,7 @@ Create a primary owner token in the token preferences page or with `POST /api/v1
 
 ## Other integrations
 
-The server supports configured SMTP and role-based contact webhooks for report delivery. This project does not enable OAuth/OIDC federation, Android App Links, or Apple Universal Links. Country lookups remain local to the embedded dataset and make no external data requests.
+The server supports configured SMTP and role-based HTTPS webhooks for operational notifications and report summaries. Each webhook request carries an HMAC-SHA256 signature, a fresh attempt timestamp, an event ID, and the event name in headers. Generic JSON messages include the role, event, subject, severity, UTC event timestamp, project/version, app URL, and an optional tracking ID. Report webhooks contain summaries only; report bodies and sender contact details are sent through the configured email path. Failed deliveries retry at 1 minute, 5 minutes, 15 minutes, 1 hour, 6 hours, and 24 hours, then are dropped and rate-limited in logs. Configure destinations under `server.contact.{admin,security,abuse,general}.webhooks` and their generated signing secrets under `server.contact.<role>.webhooks.<transport>_secret` in the private `secrets.yml` file. The project does not enable OAuth/OIDC federation, Android App Links, or Apple Universal Links. Country lookups remain local to the embedded dataset and make no external data requests.
 
 ## Optional analytics
 

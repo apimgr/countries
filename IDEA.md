@@ -76,9 +76,10 @@ Country records contain no PII. Ordinary contact requests are sent through confi
 | Country dataset (embedded at build) | Fully trusted | Static, compiled into binary |
 | Incoming HTTP requests | **Untrusted** | All query parameters validated |
 | Configured SMTP server | Configured by operator | Receives only visitor-submitted contact messages |
+| Configured HTTPS notification webhooks | Configured by operator | Receive signed operational notices and report summaries only; failures are retried then dropped without affecting country reads or stored reports |
 | Configured reCAPTCHA or hCaptcha service | Configured by operator | Receives contact-form challenge verification data; the self-hosted challenge is used by default |
 
-Core country lookups make no external runtime calls. Contact delivery and third-party challenge verification make network calls only when the visitor submits the contact form and the operator has configured those providers.
+Core country lookups make no external runtime calls. Contact delivery and third-party challenge verification make network calls only when a visitor submits the contact form and the operator has configured those providers. Webhook calls occur only for configured notification events and report submissions.
 
 ### Threat model & abuse cases
 
@@ -99,7 +100,7 @@ Core country lookups make no external runtime calls. Contact delivery and third-
 ### Security decisions & exceptions
 
 - **No user accounts or login**: intentional. Anonymous owner and linked bearer tokens are credentials for resource ownership, token management and MCP only.
-- **All responses include `Access-Control-Allow-Origin: *`**: intentional. Public data API designed for cross-origin browser use.
+- **Public country data is cross-origin by default**: the default policy allows `*` without credentials; operators may configure an explicit origin list, which is required for credentialed browser requests.
 - **Public contact form**: intentional; it has no accounts. Ordinary contact requests are not stored by the service; security reports are retained as encrypted content. Submissions are bounded, protected by the configured challenge, and delivered only to configured recipients when SMTP is configured.
 
 ### API routes
