@@ -75,7 +75,9 @@ On a supported host, install the service with the server binary's service comman
 sudo countries --service --install
 ```
 
-Start and enable the generated service with the host's service manager. Service installation is a host operation; do not run it from a container or during development tests.
+Start and enable the generated service with the host's service manager. Service installation is a host operation: do not install it inside Docker, Podman, Kubernetes, or an ordinary development container. Incus/LXC system containers running systemd or OpenRC act as hosts and support service installation for integration testing.
+
+To remove the service and its runtime state, run `sudo countries --service --uninstall` and confirm the prompt. Uninstall stops and disables the service, removes its service-manager files, configuration, data, cache, logs, backups, and PID directory, then removes a service account or group only when the server recorded that it created it. The binary remains installed; remove it separately when desired.
 
 ## First start
 
