@@ -67,7 +67,7 @@ The browser interface also includes `/`, `/search`, and `/coordinates`. Server p
 | GET | `/api/v1/server/security/policy` | Disclosure policy Markdown. |
 | GET | `/api/v1/server/security/thanks` | Researcher acknowledgments (`credit`, ISO date, and severity), newest first; returns an empty list when none are published. |
 | GET | `/api/v1/server/contact` | Report form field descriptors, a new CAPTCHA challenge, a single-use `form_token`, offered types, security URL, and public abuse email. This route returns 404 when disabled. |
-| POST | `/api/v1/server/contact` | Submit a report for review with `step: "submit"`; confirm with all original fields, `step: "confirm"`, the returned `review_token`, and `confirmed: true`. The first call never delivers. Security mode requires a valid `security_id`. |
+| POST | `/api/v1/server/contact` | Submit a report for review with the single-use `form_token`, exactly one CAPTCHA proof, and `step: "submit"`; confirm with all original fields, `step: "confirm"`, the returned `review_token`, and `confirmed: true`. The first call never delivers. Security mode requires a valid `security_id`. |
 | GET | `/api/v1/server/dpo` | Data protection contact (`name`, `email`, and absolute `privacy_url`). The email falls back from `server.contact.dpo.email` to `server.contact.general.email`; no address is invented. |
 | GET | `/api/v1/server/preferences` | Read effective theme and language preferences and the empty guest preference set. |
 | POST | `/api/v1/server/preferences` | Save supported theme and language cookies; JSON and form bodies are accepted. This API mirror does not use CSRF tokens. |
