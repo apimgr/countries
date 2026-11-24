@@ -1,6 +1,6 @@
 # Configuration
 
-The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area files, and `secrets.yml` into one validated configuration. Area files merge by dotted key; later files replace earlier scalar and list values. `server.yml` holds node-specific settings; the area file table below identifies the canonical home for each other section. Files are restricted to owner access. Use `--config DIR`, `--data DIR`, and `--log DIR` to override paths. The matching environment overrides are `CONFIG_DIR`, `DATA_DIR`, and `LOG_DIR`; `DATABASE_DIR` selects the SQLite directory.
+The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area files, and `secrets.yml` into one validated configuration. Area files merge by dotted key; later files replace earlier scalar and list values. `server.yml` holds node-specific settings; the area file table below identifies the canonical home for each other section. Files are restricted to owner access. Use `--config DIR`, `--data DIR`, `--log DIR`, and `--pid FILE` to override paths. The matching environment overrides are `CONFIG_DIR`, `DATA_DIR`, and `LOG_DIR`; `DATABASE_DIR` selects the SQLite directory.
 
 ## Server settings
 
@@ -68,7 +68,7 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 | `server.api_version` | `v1` | API version path segment. |
 | `server.baseurl` | `/` | URL path prefix for all routes; trusted proxy prefix headers take precedence. |
 | `server.daemonize` | `false` | Detach from the terminal at startup. |
-| `server.pidfile` | `true` | Write the process ID file. |
+| `server.pidfile` | `true` | Write the server PID file; `--pid FILE` selects its path. Native system mode defaults to `/var/run/apimgr/countries/countries.pid`, user mode to `{data_dir}/countries.pid`, and application containers and Windows skip it. Incus/LXC system containers running systemd or OpenRC use native system mode. Stale or corrupt files are removed at startup, and the PID file is removed at shutdown. |
 | `server.ssl.enabled` | `false` | Enable TLS for the configured listener. |
 | `server.ssl.cert` | empty | Optional manual certificate path; otherwise use certificate auto-detection. |
 | `server.ssl.key` | empty | Optional manual private-key path; otherwise use certificate auto-detection. |
