@@ -26,7 +26,7 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 | `server.contact.abuse.email` | empty | Public recipient for abuse and DMCA reports; falls back to general, then admin. |
 | `server.contact.admin.email` | empty | Private fallback recipient for report delivery. It is never shown on the report chooser. |
 | `server.contact.security.email` | empty | Private recipient for deployment security reports. |
-| `server.contact.{admin,security,abuse,general}.webhooks.{transport}` | empty | Role-based webhook destinations. Built-in transports are Telegram, Discord, Slack, Mattermost, Pushover, Gotify, and generic HTTPS JSON; empty values follow the role fallback chain. Every configured webhook has a generated signing secret stored privately in `secrets.yml`. |
+| `server.contact.admin.webhooks.{transport}` | empty | Admin notification webhook destinations. Built-in transports are Telegram, Discord, Slack, Mattermost, Pushover, Gotify, and generic HTTPS JSON. Each configured webhook has a generated signing secret stored privately in `secrets.yml`. Webhook delivery for security, abuse, and general contact reports is not currently implemented. |
 | `server.notifications.database_error.enabled` | `true` | Enable email alerts for sustained database probe failures; the connection check still runs when alerts are disabled. |
 | `server.notifications.database_error.failures` | `3` | Consecutive failed probes before the first alert. |
 | `server.notifications.database_error.check_interval` | `1m` | Database connection probe interval. |
