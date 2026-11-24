@@ -1,6 +1,6 @@
 # CLI reference
 
-The `countries-cli` client queries a Countries server. With no command, it opens the native GUI when a local display is available and GUI support was built in, otherwise it opens the terminal UI when attached to an interactive terminal. SSH and Mosh sessions always use the terminal UI. In headless or scripted use, provide a command and a server URL.
+The `countries-cli` client queries a Countries server. The default build is fully static and includes the TUI but not the GUI. An optional GUI build opens the native interface when a local display is available; otherwise an interactive terminal uses the TUI. SSH and Mosh sessions always use the terminal UI. In headless or scripted use, provide a command and a server URL.
 
 ```text
 countries-cli [flags] COMMAND [arguments]
@@ -52,7 +52,7 @@ countries-cli --shell completions zsh > ~/.zsh/completions/_countries-cli
 
 On first run, the setup screen asks for a server URL, checks the health endpoint, accepts an optional token, and saves the connection settings. The TUI and GUI each provide one screen for every command above. TUI controls include Up/Down or `j`/`k` to move, `/` to filter, Enter to select or submit, Tab and Shift+Tab to move between fields, `?` for help, Esc to return, and `q` or Ctrl+C to exit. Results remain visible on the result screen; TUI errors appear in its status area and GUI errors open a dismissible dialog that shows the server message.
 
-The GUI is implemented with the pure-Go `gogpu/ui` and `gogpu/gogpu` toolkits and follows the detected operating system light or dark theme. GUI support is compiled with the `gui` build tag on Linux, macOS, and Windows; BSD builds exclude GUI support and use the TUI when a terminal is available. A forced `display.mode: gui` requires a local display and GUI-enabled binary. Forced `display.mode: tui` requires a terminal.
+The GUI is implemented with the pure-Go `gogpu/ui` and `gogpu/gogpu` toolkits and follows the detected operating system light or dark theme. It is an optional, separately named `countries-cli-gui` artifact built with `BUILD_GUI=1`; Linux, macOS, and Windows GUI artifacts use the `-cli-gui-{os}-{arch}` suffix. These binaries require the dynamic loader from their Go build toolchain. BSD builds have no GUI support and use the TUI when a terminal is available. A forced `display.mode: gui` requires a local display and GUI-enabled binary. Forced `display.mode: tui` requires a terminal.
 
 ## Server and configuration
 
@@ -60,7 +60,7 @@ The server URL is selected from `--server`, `COUNTRIES_SERVER_PRIMARY`, `server.
 
 The client reads `server.token` from its config file unless overridden with `--token` or `--token-file`. Tokens are sent only in the `Authorization: Bearer` header. Output language precedence is `--lang`, `lang` in `cli.yml`, `LANG`, then English. Supported language codes are `en`, `es`, `fr`, `de`, `it`, `ar`, `zh`, and `ja`. The HTTP client timeout is 15 seconds, and response bodies larger than 16 MiB are rejected. `--version` and `--help` print the invoked binary's filename, so those labels remain accurate if the binary is renamed.
 
-`display.mode` in `cli.yml` accepts `auto` (default), `gui`, or `tui`. With no command, auto mode chooses a local GUI when available, then an interactive TUI; it reports an error when neither is available. Any explicit command runs in CLI mode regardless of display settings. Help, version, and shell integration options exit without opening an interface.
+`display.mode` in `cli.yml` accepts `auto` (default), `gui`, or `tui`. With no command, auto mode chooses a local GUI when the optional GUI build is available, then an interactive TUI; it reports an error when neither is available. Any explicit command runs in CLI mode regardless of display settings. Help, version, and shell integration options exit without opening an interface.
 
 ## Updates
 

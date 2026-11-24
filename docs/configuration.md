@@ -267,7 +267,7 @@ web:
 | `server.seo.verification.facebook` | empty | Facebook domain verification value. |
 | `server.seo.verification.custom` | `{}` | Additional verification meta tags. |
 
-Branding content entries accept a `format` (`md` by default, `html`, or `txt`) and a `body`; `header` and `footer` are HTML-only. The body may be a single string or a map by language with an optional `default` entry.
+Branding content entries accept a `format` (`md` by default, `html`, or `txt`) and a `body`; `header` and `footer` are HTML-only. The body may be a single string or a map by language with an optional `default` entry. Every body is sanitized before rendering; data URLs are kept only for approved raster image types on images, and SVG/XML previews and data links are removed.
 
 ### Web security and browser settings
 
