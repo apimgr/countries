@@ -272,6 +272,9 @@ SOFTWARE.
 | gopkg.in/ns1/ns1-go.v2 | v2.18.0 | Apache-2.0 | See bundled license text |
 | gopkg.in/yaml.v2 | v2.4.0 | Apache-2.0 | See bundled license text |
 | gopkg.in/yaml.v3 | v3.0.1 | MIT | copyright staring in 2011 when the project was ported over:; Copyright (c) 2006-2010 Kirill Simonov |
+| graphiql | v2.4.7 | MIT | Copyright (c) 2021 GraphQL Contributors |
+| react | v17.0.2 | MIT | Copyright (c) Facebook, Inc. and its affiliates. |
+| react-dom | v17.0.2 | MIT | Copyright (c) Facebook, Inc. and its affiliates. |
 | modernc.org/libc | v1.79.0 | MIT | See bundled license text |
 | modernc.org/mathutil | v1.7.1 | BSD-3-Clause | See bundled license text |
 | modernc.org/memory | v1.12.1 | BSD-3-Clause | Copyright (c) 2009 The Go Authors. All rights reserved.; Redistributions of source code must retain the above copyright |

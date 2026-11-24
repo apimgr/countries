@@ -73,7 +73,7 @@ On supported systems, install a service with `sudo countries --service --install
 
 ## API and web interface
 
-Country data is available under `/api/v1/`. The service also provides a read-only GraphQL endpoint, OpenAPI documentation, MCP access for bearer-token holders, and server-rendered pages.
+Country data is available under `/api/v1/`. The service also provides a read-only GraphQL endpoint with the local GraphiQL explorer at `/server/docs/graphql`, the OpenAPI explorer at `/server/docs/swagger`, MCP access for bearer-token holders, and server-rendered pages.
 
 | Endpoint | Description |
 |---|---|

@@ -97,7 +97,7 @@ The browser interface also includes `/`, `/search`, and `/coordinates`. Server p
 | POST | `/announcements/dismiss` | Dismiss a displayed announcement for the browser; requires the page's CSRF token. |
 | GET | `/server/security/report/{tracking_id}?token={status_token}` | Show the limited status for a security report using its report-status token. A valid token is single-use per UTC day. |
 
-The server-rendered browser forms also accept `POST /server/contact`, `POST /server/preferences`, `POST /server/preferences/sync`, and the owner-token actions under `/server/preferences/token/*` and `/server/preferences/tokens/*`. Token-management mutations require the owner cookie and CSRF token; other state-changing browser forms require CSRF where applicable. Initial owner-token create/restore use their one-time browser flow. `POST /server/docs/graphql` submits a read-only GraphQL query from the explorer when JavaScript is disabled.
+The server-rendered browser forms also accept `POST /server/contact`, `POST /server/preferences`, `POST /server/preferences/sync`, and the owner-token actions under `/server/preferences/token/*` and `/server/preferences/tokens/*`. Token-management mutations require the owner cookie and CSRF token; other state-changing browser forms require CSRF where applicable. Initial owner-token create/restore use their one-time browser flow. `/server/docs/graphql` serves a locally hosted GraphiQL explorer and a server-rendered query form that remains usable without JavaScript; its plain endpoint is `POST /api/v1/server/graphql`.
 
 ## Other public routes
 
