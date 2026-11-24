@@ -3,11 +3,12 @@ package graphql
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
-	graphqlgo "github.com/graph-gophers/graphql-go"
 	"github.com/apimgr/countries/src/countries"
+	graphqlgo "github.com/graph-gophers/graphql-go"
 )
 
 const maxRequestBytes = 1 << 20
@@ -40,7 +41,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json")
 		return
 	}
-	defer r.Body.Close()
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			log.Printf("close GraphQL request body: %v", err)
+		}
+	}()
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes))
 	var input request
 	if err := decoder.Decode(&input); err != nil {

@@ -1,11 +1,14 @@
 #!/bin/sh
 set -eu
 
-: "${CONFIG_DIR:=/config}"
-: "${DATA_DIR:=/data}"
-: "${LOGS_DIR:=/logs}"
+: "${APP_NAME:=countries}"
+: "${CONFIG_DIR:=/config/${APP_NAME}}"
+: "${DATA_DIR:=/data/${APP_NAME}}"
+: "${CACHE_DIR:=/data/${APP_NAME}/cache}"
+: "${LOG_DIR:=/data/log/${APP_NAME}}"
+: "${DATABASE_DIR:=/data/db/sqlite}"
+: "${BACKUP_DIR:=/data/backups/${APP_NAME}}"
 : "${PORT:=80}"
-export CONFIG_DIR DATA_DIR LOGS_DIR PORT
+export APP_NAME CONFIG_DIR DATA_DIR CACHE_DIR LOG_DIR DATABASE_DIR BACKUP_DIR PORT
 
-mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$LOGS_DIR"
 exec /usr/local/bin/countries --port "$PORT" "$@"

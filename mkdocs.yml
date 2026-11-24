@@ -1,6 +1,7 @@
 site_name: Countries
 site_description: Country reference API, web interface, and CLI documentation.
 site_author: apimgr
+site_url: https://apimgr-countries.readthedocs.io
 
 repo_name: apimgr/countries
 repo_url: https://github.com/apimgr/countries
@@ -36,6 +37,9 @@ theme:
     - search.highlight
     - content.code.copy
     - content.action.edit
+  font:
+    text: Roboto
+    code: Roboto Mono
   icon:
     repo: fontawesome/brands/github
 
@@ -60,8 +64,15 @@ markdown_extensions:
   - toc:
       permalink: true
       toc_depth: 3
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
   - pymdownx.details
-  - pymdownx.emoji
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span
@@ -74,7 +85,11 @@ markdown_extensions:
       repo: countries
   - pymdownx.mark
   - pymdownx.smartsymbols
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.tasklist:
@@ -91,7 +106,10 @@ nav:
       - CLI: cli.md
       - Security: security.md
       - Integrations: integrations.md
-  - Development: development.md
+      - Operations: operations.md
+  - Development:
+      - Contributing: development.md
+      - Translating: translating.md
 
 extra:
   social:

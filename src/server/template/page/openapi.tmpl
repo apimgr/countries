@@ -1,0 +1,26 @@
+{{define "page"}}{{template "public.tmpl" .}}{{end}}
+{{define "title"}}{{t .Lang "openapi.title"}} · {{.AppName}}{{end}}
+{{define "meta"}}<meta name="url-prefix" content="{{.URLPrefix}}">
+<meta name="description" content="{{t .Lang "openapi.description"}}">{{end}}
+{{define "head-extra"}}
+<link rel="stylesheet" href="{{asset .URLPrefix "/static/vendor/swagger-ui/swagger-ui.css"}}">
+<link rel="stylesheet" href="{{asset .URLPrefix "/static/css/swagger-ui-theme.css"}}">
+<script src="{{asset .URLPrefix "/static/vendor/swagger-ui/swagger-ui-bundle.js"}}" defer></script>
+<script src="{{asset .URLPrefix "/static/js/swagger-ui.js"}}" defer></script>
+{{end}}
+{{define "content"}}
+<main class="container container-md" id="main-content">
+    <header class="page-header">
+      <h1 class="page-title">{{t .Lang "openapi.title"}}</h1>
+      <p class="page-lead">{{t .Lang "openapi.description"}}</p>
+    </header>
+    <section class="section-card" aria-labelledby="openapi-specification">
+      <h2 id="openapi-specification">{{t .Lang "openapi.specification"}}</h2>
+      <p><a href="{{.APIBasePath}}/server/swagger">{{t .Lang "openapi.specification_json"}}</a></p>
+    </section>
+    <section class="swagger-explorer" aria-label="{{t .Lang "openapi.title"}}">
+      <div id="swagger-ui" data-spec-url="{{.APIBasePath}}/server/swagger"></div>
+      <noscript><p class="section-card">{{t .Lang "openapi.description"}} <a href="{{.APIBasePath}}/server/swagger">{{t .Lang "openapi.specification_json"}}</a></p></noscript>
+    </section>
+  </main>
+{{end}}

@@ -2,7 +2,7 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/apimgr/countries/src/common/api"
+	"github.com/apimgr/countries/src/common/display"
 	"github.com/apimgr/countries/src/common/i18n"
 	"gopkg.in/yaml.v3"
 )
@@ -38,16 +40,46 @@ const internalOrg = "apimgr"
 const internalName = "countries"
 
 const maxResponseBytes = 16 << 20
+const maxRequestBodyBytes = 1 << 20
+
+var clientUICommand bool
+var clientProcessLanguage = "en"
+
+type clientExitError struct {
+	code int
+	err  error
+}
+
+func (e clientExitError) Error() string { return e.err.Error() }
+func (e clientExitError) Unwrap() error { return e.err }
+
+func withClientExitCode(code int, err error) error {
+	if err == nil {
+		return nil
+	}
+	return clientExitError{code: code, err: err}
+}
+
+func clientExitCode(err error) int {
+	var coded clientExitError
+	if errors.As(err, &coded) {
+		return coded.code
+	}
+	return 1
+}
 
 type cliConfig struct {
 	Server struct {
 		Primary string `yaml:"primary"`
 		Token   string `yaml:"token"`
 	} `yaml:"server"`
-	Lang string `yaml:"lang"`
+	Lang    string `yaml:"lang"`
 	Display struct {
 		Mode string `yaml:"mode"`
 	} `yaml:"display"`
+	TUI struct {
+		Theme string `yaml:"theme"`
+	} `yaml:"tui"`
 	Update struct {
 		Auto    bool   `yaml:"auto"`
 		Channel string `yaml:"channel"`
@@ -84,34 +116,78 @@ type apiEnvelope struct {
 }
 
 type options struct {
-	server  string
-	token   string
-	config  string
-	lang    string
-	output  string
-	color   string
-	debug   bool
-	version bool
-	help    bool
+	server    string
+	token     string
+	tokenFile string
+	config    string
+	lang      string
+	shell     string
+	output    string
+	color     string
+	update    string
+	debug     bool
+	version   bool
+	help      bool
+}
+
+func clientText(lang, key string) string {
+	return i18n.Translate(lang, "client."+key)
+}
+
+func clientTextFormat(lang, key string, args map[string]string) string {
+	return i18n.TranslateFormat(lang, "client."+key, args)
+}
+
+func clientWrap(key string, err error) error {
+	return fmt.Errorf("%s: %w", clientText(clientProcessLanguage, key), err)
+}
+
+func localizedFlagError(lang string, err error) error {
+	message := err.Error()
+	if strings.HasPrefix(message, "flag provided but not defined: ") {
+		flag := strings.TrimPrefix(message, "flag provided but not defined: ")
+		return errors.New(clientTextFormat(lang, "flag.unknown", map[string]string{"flag": flag}))
+	}
+	if strings.HasPrefix(message, "flag needs an argument: ") {
+		flag := strings.TrimPrefix(message, "flag needs an argument: ")
+		return errors.New(clientTextFormat(lang, "flag.needs_argument", map[string]string{"flag": flag}))
+	}
+	if strings.HasPrefix(message, "invalid value ") {
+		separator := strings.Index(message, " for flag ")
+		if separator > 0 {
+			value := strings.Trim(strings.TrimPrefix(message[:separator], "invalid value "), "\"'")
+			rest := strings.TrimPrefix(message[separator+len(" for flag "):], "-")
+			flag := rest
+			if end := strings.Index(flag, ":"); end >= 0 {
+				flag = flag[:end]
+			}
+			return errors.New(clientTextFormat(lang, "flag.invalid_value", map[string]string{"flag": "--" + flag, "value": value}))
+		}
+	}
+	return errors.New(clientText(lang, "flag.parse_error"))
 }
 
 func main() {
+	clientProcessLanguage = selectLanguage("", "")
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		_, _ = fmt.Fprintln(os.Stderr, clientTextFormat(clientProcessLanguage, "error.prefix", map[string]string{"message": err.Error()}))
+		os.Exit(clientExitCode(err))
 	}
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet(projectName+"-cli", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs.SetOutput(io.Discard)
 	var opts options
 	fs.StringVar(&opts.server, "server", "", "Server base URL")
 	fs.StringVar(&opts.token, "token", "", "API token for authenticated operations")
+	fs.StringVar(&opts.tokenFile, "token-file", "", "Read API token from file")
 	fs.StringVar(&opts.config, "config", "", "Config profile or YAML file")
 	fs.StringVar(&opts.lang, "lang", "", "Language for output")
+	fs.StringVar(&opts.shell, "shell", "", "Shell integration: completions, init, or help")
 	fs.StringVar(&opts.output, "output", "", "Output format: table, plain, json")
 	fs.StringVar(&opts.color, "color", "auto", "Color output: auto, yes, no")
+	fs.StringVar(&opts.update, "update", "", "Check updates or update the CLI: check, yes")
 	fs.BoolVar(&opts.debug, "debug", false, "Print request diagnostics to stderr")
 	fs.BoolVar(&opts.version, "version", false, "Print version information")
 	fs.BoolVar(&opts.help, "help", false, "Show help")
@@ -119,27 +195,38 @@ func run(args []string, stdout, stderr io.Writer) error {
 	var shortVersion bool
 	fs.BoolVar(&shortVersion, "v", false, "Print version information")
 	if err := fs.Parse(args); err != nil {
-		return err
+		lang := selectLanguage(opts.lang, "")
+		clientProcessLanguage = lang
+		return withClientExitCode(64, localizedFlagError(lang, err))
 	}
-	if opts.help {
-		printHelp(stdout)
-		return nil
-	}
-	if opts.version || shortVersion {
-		printVersion(stdout)
-		return nil
-	}
-	if err := validateColor(opts.color); err != nil {
-		return err
-	}
-
+	clientProcessLanguage = selectLanguage(opts.lang, "")
 	configPath, err := resolveConfigPath(opts.config)
 	if err != nil {
-		return err
+		return withClientExitCode(2, err)
 	}
 	cfg, err := loadConfigAt(configPath)
 	if err != nil {
+		return withClientExitCode(2, err)
+	}
+	lang := selectLanguage(opts.lang, cfg.Lang)
+	clientProcessLanguage = lang
+	cfg.Lang = lang
+	if err := writePendingClientUpdateEvent(stderr); err != nil {
 		return err
+	}
+	if opts.help {
+		return printHelpLanguage(stdout, lang)
+	}
+	if opts.version || shortVersion {
+		return printVersionLanguage(stdout, lang)
+	}
+	if opts.shell != "" {
+		shellArgs := append([]string{"--shell", opts.shell}, fs.Args()...)
+		_, err := shellCommand(shellArgs, stdout, lang)
+		return err
+	}
+	if err := validateColor(opts.color, lang); err != nil {
+		return withClientExitCode(64, err)
 	}
 	baseURL := strings.TrimSpace(opts.server)
 	if baseURL == "" {
@@ -151,15 +238,22 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if baseURL == "" {
 		baseURL = strings.TrimSpace(OfficialSite)
 	}
-	if len(fs.Args()) == 0 && interactiveTerminal(stdout) {
-		return runInteractive(baseURL, &cfg, configPath, os.Stdin, stdout, stderr)
+	pos := fs.Args()
+	mode, modeErr := clientDisplayMode(cfg.Display.Mode, len(pos) == 0 && opts.update == "", stdout, lang)
+	if modeErr != nil {
+		return withClientExitCode(2, modeErr)
+	}
+	interactive := mode == "gui" || mode == "tui"
+	interactiveUpdate := interactiveTerminal(stdout) || mode == "tui"
+	if baseURL == "" && interactive {
+		return withClientExitCode(2, runInteractive(baseURL, &cfg, configPath, os.Stdin, stdout, stderr))
 	}
 	if baseURL == "" {
-		return errors.New("server URL is required; set --server, COUNTRIES_SERVER_PRIMARY, or server.primary in cli.yml")
+		return withClientExitCode(2, errors.New(clientText(lang, "error.server_required")))
 	}
-	baseURL, err = normalizeBaseURL(baseURL)
+	baseURL, err = normalizeBaseURL(baseURL, lang)
 	if err != nil {
-		return err
+		return withClientExitCode(2, err)
 	}
 
 	format := opts.output
@@ -170,70 +264,134 @@ func run(args []string, stdout, stderr io.Writer) error {
 		format = "table"
 	}
 	if format != "table" && format != "plain" && format != "json" {
-		return fmt.Errorf("unsupported output format %q; choose table, plain, or json", format)
+		return withClientExitCode(64, errors.New(clientTextFormat(lang, "error.output_invalid", map[string]string{"format": format})))
 	}
-	lang := selectLanguage(opts.lang, cfg.Lang)
-	_ = lang
 	token := strings.TrimSpace(opts.token)
+	if token == "" && opts.tokenFile != "" {
+		data, readErr := os.ReadFile(opts.tokenFile)
+		if readErr != nil {
+			return withClientExitCode(2, clientWrap("error.read_token_file", readErr))
+		}
+		token = strings.TrimSpace(string(data))
+	}
 	if token == "" {
 		token = cfg.Server.Token
 	}
+	if opts.update != "" && opts.update != "check" && opts.update != "yes" {
+		return withClientExitCode(64, errors.New(clientText(lang, "error.update_invalid")))
+	}
+	if !clientUICommand {
+		if err := checkAndApplyClientUpdate(baseURL, token, opts.update, cfg.Update.Auto, interactiveUpdate, os.Stdin, stdout, stderr, lang); err != nil {
+			if opts.update != "" || strings.Contains(err.Error(), "this CLI is too old") {
+				return err
+			}
+			if _, writeErr := fmt.Fprintln(stderr, clientTextFormat(lang, "error.update_warning", map[string]string{"message": err.Error()})); writeErr != nil {
+				return writeErr
+			}
+		}
+	}
+	if opts.update == "check" || opts.update == "yes" && len(pos) == 0 {
+		return nil
+	}
+	if interactive {
+		return withClientExitCode(2, runInteractive(baseURL, &cfg, configPath, os.Stdin, stdout, stderr))
+	}
 
-	pos := fs.Args()
 	if len(pos) == 0 {
-		return errors.New("command required; run countries-cli --help for usage")
+		return withClientExitCode(64, errors.New(clientTextFormat(lang, "error.command_required", map[string]string{"binary": filepath.Base(os.Args[0])})))
 	}
 	command := strings.ToLower(pos[0])
 	args = pos[1:]
+	if !contains(clientCommands, command) {
+		command = "search"
+		args = pos
+	}
 	client := &http.Client{Timeout: 15 * time.Second}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	fetch := func(path string, target interface{}) (apiEnvelope, error) {
+	fetch := func(path string, target interface{}) (result apiEnvelope, retErr error) {
 		endpoint := baseURL + path
 		if opts.debug {
-			fmt.Fprintf(stderr, "GET %s\n", endpoint)
+			if _, err := fmt.Fprintf(stderr, "GET %s\n", endpoint); err != nil {
+				return apiEnvelope{}, clientWrap("error.write_request_diagnostics", err)
+			}
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 		if err != nil {
-			return apiEnvelope{}, err
+			return apiEnvelope{}, clientWrap("error.create_request", err)
 		}
 		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Accept-Language", lang)
 		req.Header.Set("User-Agent", projectName+"-cli/"+Version)
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
 		resp, err := client.Do(req)
 		if err != nil {
-			return apiEnvelope{}, fmt.Errorf("request failed: %w", err)
+			return apiEnvelope{}, withClientExitCode(3, clientWrap("error.request_failed", err))
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if err := resp.Body.Close(); err != nil && retErr == nil {
+				retErr = clientWrap("error.close_server_response", err)
+			}
+		}()
 		body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 		if err != nil {
-			return apiEnvelope{}, fmt.Errorf("read response: %w", err)
+			return apiEnvelope{}, clientWrap("error.read_response", err)
 		}
 		if len(body) > maxResponseBytes {
-			return apiEnvelope{}, errors.New("server response exceeds the 16 MiB client limit")
+			return apiEnvelope{}, errors.New(clientText(lang, "error.response_too_large"))
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			var envelope apiEnvelope
-			if json.Unmarshal(body, &envelope) == nil && envelope.Message != "" {
-				return apiEnvelope{}, fmt.Errorf("server returned HTTP %d: %s", resp.StatusCode, envelope.Message)
+			code := 1
+			switch resp.StatusCode {
+			case http.StatusUnauthorized, http.StatusForbidden:
+				code = 4
+			case http.StatusNotFound:
+				code = 5
 			}
-			return apiEnvelope{}, fmt.Errorf("server returned HTTP %d", resp.StatusCode)
+			if json.Unmarshal(body, &envelope) == nil && envelope.Message != "" {
+				return apiEnvelope{}, withClientExitCode(code, errors.New(clientTextFormat(lang, "error.server_http_message", map[string]string{"status": strconv.Itoa(resp.StatusCode), "message": envelope.Message})))
+			}
+			return apiEnvelope{}, withClientExitCode(code, errors.New(clientTextFormat(lang, "error.server_http", map[string]string{"status": strconv.Itoa(resp.StatusCode)})))
 		}
 		var envelope apiEnvelope
 		if err := json.Unmarshal(body, &envelope); err != nil {
-			return apiEnvelope{}, fmt.Errorf("decode server response: %w", err)
+			return apiEnvelope{}, clientWrap("error.decode_server_response", err)
 		}
 		if !envelope.OK && !envelope.Success && envelope.Error != "" {
 			return apiEnvelope{}, fmt.Errorf("%s: %s", envelope.Error, envelope.Message)
 		}
 		if target != nil && len(envelope.Data) > 0 {
 			if err := json.Unmarshal(envelope.Data, target); err != nil {
-				return apiEnvelope{}, fmt.Errorf("decode response data: %w", err)
+				return apiEnvelope{}, clientWrap("error.decode_response_data", err)
 			}
 		}
 		return envelope, nil
+	}
+	if command == "request" {
+		if len(args) < 2 {
+			return withClientExitCode(64, errors.New(clientText(lang, "usage.request")))
+		}
+		body := ""
+		if len(args) > 2 {
+			body = strings.Join(args[2:], " ")
+		}
+		responseBody, err := executeClientAPIRequest(baseURL, token, args[0], args[1], body, lang)
+		if err != nil {
+			return err
+		}
+		if len(responseBody) > 0 {
+			if _, err := stdout.Write(responseBody); err != nil {
+				return err
+			}
+			if responseBody[len(responseBody)-1] != '\n' {
+				_, err := io.WriteString(stdout, "\n")
+				return err
+			}
+		}
+		return nil
 	}
 
 	switch command {
@@ -250,20 +408,20 @@ func run(args []string, stdout, stderr io.Writer) error {
 				break
 			}
 		}
-		return printCountries(stdout, items, format, colorEnabled(opts.color, stdout))
+		return printCountriesLanguage(stdout, items, format, colorEnabled(opts.color, stdout), lang)
 	case "get":
 		if len(args) != 1 {
-			return errors.New("usage: countries-cli get CODE")
+			return withClientExitCode(64, errors.New(clientText(lang, "usage.get")))
 		}
 		var item country
 		_, err := fetch(api.APIPath("countries/")+url.PathEscape(strings.ToUpper(args[0])), &item)
 		if err != nil {
 			return err
 		}
-		return printCountries(stdout, []country{item}, format, colorEnabled(opts.color, stdout))
+		return printCountriesLanguage(stdout, []country{item}, format, colorEnabled(opts.color, stdout), lang)
 	case "search":
 		if len(args) == 0 {
-			return errors.New("usage: countries-cli search QUERY")
+			return withClientExitCode(64, errors.New(clientText(lang, "usage.search")))
 		}
 		query := url.QueryEscape(strings.Join(args, " "))
 		var items []country
@@ -271,18 +429,18 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return printCountries(stdout, items, format, colorEnabled(opts.color, stdout))
+		return printCountriesLanguage(stdout, items, format, colorEnabled(opts.color, stdout), lang)
 	case "nearest":
 		if len(args) != 2 {
-			return errors.New("usage: countries-cli nearest LATITUDE LONGITUDE")
+			return withClientExitCode(64, errors.New(clientText(lang, "usage.nearest")))
 		}
-		lat, err := parseCoordinate(args[0], -90, 90)
+		lat, err := parseCoordinate(args[0], -90, 90, lang)
 		if err != nil {
-			return fmt.Errorf("latitude: %w", err)
+			return withClientExitCode(64, errors.New(clientTextFormat(lang, "error.field", map[string]string{"field": clientText(lang, "field.latitude"), "message": err.Error()})))
 		}
-		lon, err := parseCoordinate(args[1], -180, 180)
+		lon, err := parseCoordinate(args[1], -180, 180, lang)
 		if err != nil {
-			return fmt.Errorf("longitude: %w", err)
+			return withClientExitCode(64, errors.New(clientTextFormat(lang, "error.field", map[string]string{"field": clientText(lang, "field.longitude"), "message": err.Error()})))
 		}
 		var result map[string]interface{}
 		_, err = fetch(fmt.Sprintf("%s?lat=%s&lon=%s", api.APIPath("coordinates"), url.QueryEscape(lat), url.QueryEscape(lon)), &result)
@@ -292,19 +450,19 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return printJSON(stdout, result, format)
 	case "nearby":
 		if len(args) != 3 {
-			return errors.New("usage: countries-cli nearby LATITUDE LONGITUDE RADIUS_KM")
+			return withClientExitCode(64, errors.New(clientText(lang, "usage.nearby")))
 		}
-		lat, err := parseCoordinate(args[0], -90, 90)
+		lat, err := parseCoordinate(args[0], -90, 90, lang)
 		if err != nil {
-			return fmt.Errorf("latitude: %w", err)
+			return withClientExitCode(64, errors.New(clientTextFormat(lang, "error.field", map[string]string{"field": clientText(lang, "field.latitude"), "message": err.Error()})))
 		}
-		lon, err := parseCoordinate(args[1], -180, 180)
+		lon, err := parseCoordinate(args[1], -180, 180, lang)
 		if err != nil {
-			return fmt.Errorf("longitude: %w", err)
+			return withClientExitCode(64, errors.New(clientTextFormat(lang, "error.field", map[string]string{"field": clientText(lang, "field.longitude"), "message": err.Error()})))
 		}
-		radius, err := parseCoordinate(args[2], 0, 20038)
+		radius, err := parseCoordinate(args[2], 0, 20038, lang)
 		if err != nil {
-			return fmt.Errorf("radius: %w", err)
+			return withClientExitCode(64, errors.New(clientTextFormat(lang, "error.field", map[string]string{"field": clientText(lang, "field.radius"), "message": err.Error()})))
 		}
 		var result interface{}
 		_, err = fetch(fmt.Sprintf("%s?lat=%s&lon=%s&radius=%s", api.APIPath("nearby"), url.QueryEscape(lat), url.QueryEscape(lon), url.QueryEscape(radius)), &result)
@@ -320,20 +478,93 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		return printJSON(stdout, result, format)
 	default:
-		return fmt.Errorf("unknown command %q; run countries-cli --help for usage", command)
+		return withClientExitCode(64, errors.New(clientTextFormat(lang, "error.command_unknown", map[string]string{"command": command, "binary": filepath.Base(os.Args[0])})))
 	}
 }
 
-func normalizeBaseURL(raw string) (string, error) {
+func executeClientAPIRequest(serverURL, token, method, target, body, lang string) ([]byte, error) {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	switch method {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+	default:
+		return nil, errors.New(clientTextFormat(lang, "request.method_invalid", map[string]string{"method": method}))
+	}
+	parsed, err := url.ParseRequestURI(target)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Fragment != "" || !strings.HasPrefix(parsed.Path, api.APIBasePath()+"/") || path.Clean(parsed.Path) != parsed.Path {
+		return nil, errors.New(clientText(lang, "request.path_invalid"))
+	}
+	for _, excluded := range []string{"/server/mcp", "/server/token/check", "/server/tokens/check", "/server/preferences/tokens/check", "/autodiscover", "/cli/binaries"} {
+		if parsed.Path == api.APIPath(excluded) || strings.HasPrefix(parsed.Path, api.APIPath(excluded)+"/") {
+			return nil, errors.New(clientText(lang, "request.path_excluded"))
+		}
+	}
+	if len(body) > maxRequestBodyBytes {
+		return nil, errors.New(clientText(lang, "request.body_too_large"))
+	}
+	var payload io.Reader
+	if body != "" {
+		if !json.Valid([]byte(body)) {
+			return nil, errors.New(clientText(lang, "request.body_invalid"))
+		}
+		payload = bytes.NewBufferString(body)
+	}
+	req, err := http.NewRequest(method, serverURL+parsed.RequestURI(), payload)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", clientText(lang, "request.create_failed"), err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Language", lang)
+	req.Header.Set("User-Agent", projectName+"-cli/"+Version)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", clientText(lang, "request.failed"), err)
+	}
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	closeErr := resp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", clientText(lang, "request.response_read_failed"), errors.Join(err, closeErr))
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("%s: %w", clientText(lang, "request.response_read_failed"), closeErr)
+	}
+	if len(responseBody) > maxResponseBytes {
+		return nil, errors.New(clientText(lang, "error.response_too_large"))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := ""
+		var envelope apiEnvelope
+		if json.Unmarshal(responseBody, &envelope) == nil {
+			message = envelope.Message
+		}
+		if message != "" {
+			return nil, errors.New(clientTextFormat(lang, "error.server_http_message", map[string]string{"status": strconv.Itoa(resp.StatusCode), "message": message}))
+		}
+		return nil, errors.New(clientTextFormat(lang, "error.server_http", map[string]string{"status": strconv.Itoa(resp.StatusCode)}))
+	}
+	return responseBody, nil
+}
+
+func normalizeBaseURL(raw string, selectedLanguage ...string) (string, error) {
+	lang := "en"
+	if len(selectedLanguage) > 0 && i18n.IsSupported(selectedLanguage[0]) {
+		lang = selectedLanguage[0]
+	}
 	if strings.Contains(raw, "#") {
-		return "", errors.New("server URL must be an http or https URL without credentials, query, or fragment")
+		return "", errors.New(clientText(lang, "error.url_invalid"))
 	}
 	parsed, err := url.ParseRequestURI(raw)
 	if err != nil {
-		return "", fmt.Errorf("invalid server URL: %w", err)
+		return "", fmt.Errorf("%s: %w", clientText(lang, "error.url_invalid"), err)
 	}
 	if (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", errors.New("server URL must be an http or https URL without credentials, query, or fragment")
+		return "", errors.New(clientText(lang, "error.url_invalid"))
 	}
 	return strings.TrimRight(parsed.String(), "/"), nil
 }
@@ -353,13 +584,13 @@ func loadConfigAt(path string) (cliConfig, error) {
 		return cfg, nil
 	}
 	if err != nil {
-		return cfg, fmt.Errorf("read CLI configuration: %w", err)
+		return cfg, clientWrap("error.config_read", err)
 	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return cfg, fmt.Errorf("parse CLI configuration: %w", err)
+		return cfg, clientWrap("error.config_parse", err)
 	}
 	if err := os.Chmod(path, 0600); err != nil {
-		return cfg, fmt.Errorf("secure CLI configuration: %w", err)
+		return cfg, clientWrap("error.config_secure", err)
 	}
 	return cfg, nil
 }
@@ -374,17 +605,17 @@ func saveConfig(cfg cliConfig) error {
 
 func saveConfigAt(cfg cliConfig, path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return fmt.Errorf("create CLI configuration directory: %w", err)
+		return clientWrap("error.config_directory_create", err)
 	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
-		return fmt.Errorf("encode CLI configuration: %w", err)
+		return clientWrap("error.config_encode", err)
 	}
 	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("write CLI configuration: %w", err)
+		return clientWrap("error.config_write", err)
 	}
 	if err := os.Chmod(path, 0600); err != nil {
-		return fmt.Errorf("secure CLI configuration: %w", err)
+		return clientWrap("error.config_secure", err)
 	}
 	return nil
 }
@@ -392,7 +623,7 @@ func saveConfigAt(cfg cliConfig, path string) error {
 func resolveConfigPath(configFlag string) (string, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve user config directory: %w", err)
+		return "", clientWrap("error.config_directory_resolve", err)
 	}
 	if configFlag == "" {
 		return filepath.Join(configDir, internalOrg, internalName, "cli.yml"), nil
@@ -400,7 +631,7 @@ func resolveConfigPath(configFlag string) (string, error) {
 	if strings.HasPrefix(configFlag, "~/") {
 		home, homeErr := os.UserHomeDir()
 		if homeErr != nil {
-			return "", fmt.Errorf("resolve home directory: %w", homeErr)
+			return "", clientWrap("error.home_directory_resolve", homeErr)
 		}
 		configFlag = filepath.Join(home, configFlag[2:])
 	}
@@ -431,114 +662,111 @@ func interactiveTerminal(output io.Writer) bool {
 }
 
 func runInteractive(serverURL string, cfg *cliConfig, configPath string, input io.Reader, output, stderr io.Writer) error {
-	reader := bufio.NewReader(input)
-	if serverURL == "" {
-		if _, err := fmt.Fprintln(output, "Countries CLI setup"); err != nil {
-			return err
-		}
-		serverURL = strings.TrimSpace(readPrompt(reader, output, "Server URL: "))
-		if serverURL == "\x00" {
-			return nil
-		}
-		serverURL, err := normalizeBaseURL(serverURL)
-		if err != nil {
-			return err
-		}
-		token := strings.TrimSpace(readPrompt(reader, output, "API token (optional): "))
-		if err := checkServer(serverURL, token); err != nil {
-			return fmt.Errorf("server connection failed: %w", err)
-		}
-		cfg.Server.Primary = serverURL
-		cfg.Server.Token = token
-		if err := saveConfigAt(*cfg, configPath); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintln(output, "Configuration saved."); err != nil {
-			return err
-		}
-	}
-	for {
-		if _, err := fmt.Fprintln(output, "\nCountries CLI\n1) List countries\n2) Get by code\n3) Search\n4) Nearest country\n5) Nearby countries\n6) Statistics\n7) Quit"); err != nil {
-			return err
-		}
-		choice := strings.TrimSpace(readPrompt(reader, output, "Choose an action: "))
-		if choice == "\x00" {
-			return nil
-		}
-		var command []string
-		switch choice {
-		case "1":
-			command = []string{"list"}
-		case "2":
-			command = []string{"get", strings.TrimSpace(readPrompt(reader, output, "Country code: "))}
-		case "3":
-			command = []string{"search", strings.TrimSpace(readPrompt(reader, output, "Search: "))}
-		case "4":
-			command = []string{"nearest", strings.TrimSpace(readPrompt(reader, output, "Latitude: ")), strings.TrimSpace(readPrompt(reader, output, "Longitude: "))}
-		case "5":
-			command = []string{"nearby", strings.TrimSpace(readPrompt(reader, output, "Latitude: ")), strings.TrimSpace(readPrompt(reader, output, "Longitude: ")), strings.TrimSpace(readPrompt(reader, output, "Radius in kilometers: "))}
-		case "6":
-			command = []string{"stats"}
-		case "7", "q", "quit":
-			return nil
-		default:
-			if _, err := fmt.Fprintln(output, "Choose a number from 1 to 7."); err != nil {
-				return err
-			}
-			continue
-		}
-		args := append([]string{"--server", serverURL}, command...)
-		if err := run(args, output, stderr); err != nil {
-			if _, writeErr := fmt.Fprintln(stderr, err); writeErr != nil {
-				return writeErr
-			}
-		}
-	}
-}
-
-func readPrompt(reader *bufio.Reader, output io.Writer, prompt string) string {
-	_, _ = io.WriteString(output, prompt)
-	line, err := reader.ReadString('\n')
-	if err != nil && line == "" {
-		return "\x00"
-	}
-	return line
-}
-
-func checkServer(serverURL, token string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL+api.APIPath("server/healthz"), nil)
+	_ = input
+	mode, err := clientDisplayMode(cfg.Display.Mode, true, output)
 	if err != nil {
 		return err
 	}
+	if mode == "gui" {
+		return launchClientGUI(serverURL, cfg, configPath)
+	}
+	return runClientTUI(serverURL, cfg, configPath, output, stderr)
+}
+
+func clientDisplayMode(configured string, noCommand bool, output io.Writer, selectedLanguage ...string) (string, error) {
+	lang := "en"
+	if len(selectedLanguage) > 0 && i18n.IsSupported(selectedLanguage[0]) {
+		lang = selectedLanguage[0]
+	}
+	if !noCommand {
+		return "cli", nil
+	}
+	env := display.DetectDisplayEnv()
+	mode := strings.ToLower(strings.TrimSpace(configured))
+	if mode == "" {
+		mode = "auto"
+	}
+	switch mode {
+	case "auto":
+		if env.IsAutoDetectDisplayModeGUI() && clientGUIAvailable() {
+			return "gui", nil
+		}
+		if env.IsTerminal && !env.IsDumbTerminal() {
+			return "tui", nil
+		}
+		if env.IsAutoDetectDisplayModeGUI() && !clientGUIAvailable() && (runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd" || runtime.GOOS == "openbsd") {
+			return "cli", nil
+		}
+		if env.IsAutoDetectDisplayModeCLI() {
+			return "cli", nil
+		}
+		return "cli", nil
+	case "gui":
+		if !env.HasDisplay || env.IsRemoteSession() || !clientGUIAvailable() {
+			return "", errors.New(clientText(lang, "display.gui_unavailable"))
+		}
+		return "gui", nil
+	case "tui":
+		if !env.IsTerminal || env.IsDumbTerminal() {
+			return "", errors.New(clientText(lang, "display.tui_unavailable"))
+		}
+		return "tui", nil
+	default:
+		return "", errors.New(clientTextFormat(lang, "display.invalid", map[string]string{"mode": configured}))
+	}
+}
+
+func checkServer(serverURL, token string, selectedLanguage ...string) (retErr error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	lang := "en"
+	if len(selectedLanguage) > 0 && i18n.IsSupported(selectedLanguage[0]) {
+		lang = selectedLanguage[0]
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL+api.APIPath("server/healthz"), nil)
+	if err != nil {
+		return fmt.Errorf("%s: %w", clientText(lang, "error.health_request_create"), err)
+	}
+	req.Header.Set("Accept-Language", lang)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %w", clientText(lang, "error.health_request_failed"), err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil && retErr == nil {
+			retErr = fmt.Errorf("%s: %w", clientText(lang, "error.health_response_close"), err)
+		}
+	}()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("health endpoint returned HTTP %d", resp.StatusCode)
+		return errors.New(clientTextFormat(lang, "error.health_http", map[string]string{"status": strconv.Itoa(resp.StatusCode)}))
 	}
 	return nil
 }
 
-func validateColor(value string) error {
+func validateColor(value string, selectedLanguage ...string) error {
 	switch value {
 	case "auto", "yes", "no":
 		return nil
 	default:
-		return fmt.Errorf("invalid --color value %q; choose auto, yes, or no", value)
+		lang := "en"
+		if len(selectedLanguage) > 0 && i18n.IsSupported(selectedLanguage[0]) {
+			lang = selectedLanguage[0]
+		}
+		return errors.New(clientTextFormat(lang, "error.color_invalid", map[string]string{"value": value}))
 	}
 }
 
-func parseCoordinate(value string, min, max float64) (string, error) {
+func parseCoordinate(value string, min, max float64, selectedLanguage ...string) (string, error) {
 	parsed, err := strconv.ParseFloat(value, 64)
 	if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed < min || parsed > max {
-		return "", fmt.Errorf("must be a number between %g and %g", min, max)
+		lang := "en"
+		if len(selectedLanguage) > 0 && i18n.IsSupported(selectedLanguage[0]) {
+			lang = selectedLanguage[0]
+		}
+		return "", errors.New(clientTextFormat(lang, "error.coordinate", map[string]string{"min": strconv.FormatFloat(min, 'f', -1, 64), "max": strconv.FormatFloat(max, 'f', -1, 64)}))
 	}
 	return strconv.FormatFloat(parsed, 'f', -1, 64), nil
 }
@@ -559,6 +787,10 @@ func colorEnabled(mode string, output io.Writer) bool {
 }
 
 func printCountries(w io.Writer, items []country, format string, color bool) error {
+	return printCountriesLanguage(w, items, format, color, "en")
+}
+
+func printCountriesLanguage(w io.Writer, items []country, format string, color bool, lang string) error {
 	if format == "json" {
 		return printJSON(w, items, format)
 	}
@@ -571,13 +803,17 @@ func printCountries(w io.Writer, items []country, format string, color bool) err
 		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	header := "CODE\tCOUNTRY\tOFFICIAL NAME\tCAPITAL\tREGION\tTIMEZONES"
+	header := strings.Join([]string{clientText(lang, "table.code"), clientText(lang, "table.country"), clientText(lang, "table.official_name"), clientText(lang, "table.capital"), clientText(lang, "table.region"), clientText(lang, "table.timezones")}, "\t")
 	if color {
 		header = "\x1b[1;36m" + header + "\x1b[0m"
 	}
-	fmt.Fprintln(tw, header)
+	if _, err := fmt.Fprintln(tw, header); err != nil {
+		return err
+	}
 	for _, item := range items {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", item.CCA2, item.Name.Common, item.Name.Official, strings.Join(item.Capital, ", "), item.Region, strings.Join(item.Timezones, ", "))
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", item.CCA2, item.Name.Common, item.Name.Official, strings.Join(item.Capital, ", "), item.Region, strings.Join(item.Timezones, ", ")); err != nil {
+			return err
+		}
 	}
 	return tw.Flush()
 }
@@ -588,48 +824,103 @@ func printJSON(w io.Writer, value interface{}, _ string) error {
 	return encoder.Encode(value)
 }
 
-func printHelp(w io.Writer) {
-	fmt.Fprintln(w, `countries-cli — query a Countries API server
-
-Usage:
-  countries-cli [flags] COMMAND [arguments]
-
-Commands:
-  list                         List country records
-  get CODE                     Read a country by ISO alpha-2 code
-  search QUERY                 Search country names
-  nearest LAT LON              Find the nearest country centroid
-  nearby LAT LON RADIUS_KM     Find countries within a radius
-  stats                        Read dataset statistics
-
-Flags:
-  --server URL                 Server base URL
-  --output FORMAT              table, plain, or json (default: table)
-  --color MODE                 auto, yes, or no
-  --debug                      Print request diagnostics to stderr
-  -h, --help                   Show this help
-  -v, --version                Show version information
-
-The server URL can also come from COUNTRIES_SERVER_PRIMARY or
-~/.config/apimgr/countries/cli.yml.`)
+func printHelp(w io.Writer) error {
+	return printHelpLanguage(w, "en")
 }
 
-func printVersion(w io.Writer) {
+func printHelpLanguage(w io.Writer, lang string) error {
+	name := filepath.Base(os.Args[0])
+	lines := []string{
+		clientText(lang, "help.title"),
+		"",
+		clientText(lang, "help.usage"),
+		"  " + name + " [flags] COMMAND [arguments]",
+		"  " + name + " [flags] QUERY",
+		"",
+		clientText(lang, "help.commands"),
+		"  list                         " + clientText(lang, "command.list"),
+		"  get CODE                     " + clientText(lang, "command.get"),
+		"  search QUERY                 " + clientText(lang, "command.search"),
+		"  nearest LAT LON              " + clientText(lang, "command.nearest"),
+		"  nearby LAT LON RADIUS_KM     " + clientText(lang, "command.nearby"),
+		"  stats                        " + clientText(lang, "command.stats"),
+		"  request METHOD /api/v1/PATH [JSON]  " + clientText(lang, "command.request"),
+		"",
+		clientText(lang, "help.flags"),
+		"  --server URL                 " + clientText(lang, "flag.server"),
+		"  --config PATH                " + clientText(lang, "flag.config"),
+		"  --token TOKEN                " + clientText(lang, "flag.token"),
+		"  --token-file FILE            " + clientText(lang, "flag.token_file"),
+		"  --lang CODE                  " + clientText(lang, "flag.lang"),
+		"  --output FORMAT              " + clientText(lang, "flag.output"),
+		"  --color MODE                 " + clientText(lang, "flag.color"),
+		"  --update ACTION              " + clientText(lang, "flag.update"),
+		"  --debug                      " + clientText(lang, "flag.debug"),
+		"  --shell completions [SHELL]  " + clientText(lang, "flag.shell_completions"),
+		"  --shell init [SHELL]         " + clientText(lang, "flag.shell_init"),
+		"  -h, --help                   " + clientText(lang, "flag.help"),
+		"  -v, --version                " + clientText(lang, "flag.version"),
+		"  " + clientText(lang, "help.language_count"),
+		"",
+		clientText(lang, "help.config_hint"),
+	}
+	_, err := io.WriteString(w, strings.Join(lines, "\n")+"\n")
+	return err
+}
+
+func printVersion(w io.Writer) error {
+	return printVersionLanguage(w, "en")
+}
+
+func printVersionLanguage(w io.Writer, lang string) error {
 	built := BuildDate
 	if epoch, err := strconv.ParseInt(BuildEpoch, 10, 64); err == nil && epoch > 0 {
 		built = time.Unix(epoch, 0).UTC().Format(time.RFC3339)
 	}
-	fmt.Fprintf(w, "%s-cli %s\nBuilt: %s\nGo: %s\nOS/Arch: %s/%s\n", projectName, Version, built, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+	lines := []string{
+		fmt.Sprintf("%s %s (%s)", filepath.Base(os.Args[0]), Version, CommitID),
+		clientTextFormat(lang, "version.built", map[string]string{"date": built}),
+		clientTextFormat(lang, "version.go", map[string]string{"version": runtime.Version()}),
+		clientTextFormat(lang, "version.os_arch", map[string]string{"os": runtime.GOOS, "arch": runtime.GOARCH}),
+	}
+	_, err := io.WriteString(w, strings.Join(lines, "\n")+"\n")
+	return err
+}
+
+func contains(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+func clientCommandFormScreen(command string) string {
+	if command == "request" {
+		return "request"
+	}
+	return "arguments"
 }
 
 // selectLanguage picks the first supported language from the flag, config, then the LANG environment, falling back to English.
 func selectLanguage(flagValue, configValue string) string {
-	envValue := strings.SplitN(os.Getenv("LANG"), ".", 2)[0]
+	envValue := os.Getenv("LC_ALL")
+	if envValue == "" {
+		envValue = os.Getenv("LANG")
+	}
+	envValue = strings.SplitN(envValue, ".", 2)[0]
 	envValue = strings.SplitN(envValue, "_", 2)[0]
 	for _, candidate := range []string{flagValue, configValue, envValue} {
 		candidate = strings.ToLower(strings.TrimSpace(candidate))
-		if candidate != "" && i18n.IsSupported(candidate) {
-			return candidate
+		if candidate == "auto" {
+			continue
+		}
+		if candidate != "" {
+			if i18n.IsSupported(candidate) {
+				return candidate
+			}
+			return "en"
 		}
 	}
 	return "en"

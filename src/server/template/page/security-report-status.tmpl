@@ -1,0 +1,20 @@
+{{define "page"}}{{template "public.tmpl" .}}{{end}}
+{{define "title"}}{{t .Lang "security.report_status_title"}} · {{.AppName}}{{end}}
+{{define "meta"}}<meta name="url-prefix" content="{{.URLPrefix}}">
+<meta name="robots" content="noindex, nofollow">
+  <meta name="description" content="{{t .Lang "security.report_status_lead"}}">{{end}}
+{{define "content"}}
+<main class="container container-md" id="main-content">
+    <header class="page-header">
+      <h1 class="page-title">{{t .Lang "security.report_status_title"}}</h1>
+      <p class="page-lead">{{t .Lang "security.report_status_lead"}}</p>
+    </header>
+    <section class="section-card" aria-labelledby="report-status">
+      <h2 id="report-status">{{t .Lang "security.report_status_heading"}}</h2>
+      <p>{{t .Lang "security.tracking_id"}}: {{.TrackingID}}</p>
+      <p>{{t .Lang "security.status"}}: <span class="badge">{{.ReportStatus}}</span></p>
+      {{if .DisclosureDate}}<p>{{t .Lang "security.expected_disclosure"}}: {{.DisclosureDate}}</p>{{end}}
+    </section>
+    {{if .ResearcherComment}}<section class="section-card" aria-labelledby="maintainer-update"><h2 id="maintainer-update">{{t .Lang "security.maintainer_update"}}</h2><p>{{.ResearcherComment}}</p></section>{{end}}
+  </main>
+{{end}}

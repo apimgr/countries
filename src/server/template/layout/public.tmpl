@@ -1,0 +1,18 @@
+{{define "public.tmpl"}}
+<!doctype html>
+<html lang="{{.Lang}}" dir="{{.Dir}}" class="theme-{{.Theme}}">
+{{template "head" .}}
+<body>
+  <div id="offline-indicator" class="offline-indicator" role="status" aria-live="polite" hidden>{{t .Lang "pwa.offline_notice"}}</div>
+  {{trackingNoscript .Request}}
+  <a class="skip-link" href="#main-content">{{t .Lang "nav.skip_main"}}</a>
+  <a class="skip-link" href="#site-navigation">{{t .Lang "nav.skip_navigation"}}</a>
+  <template id="announcement-slot"></template>
+  {{template "site-header" .}}
+  {{block "content" .}}{{end}}
+  {{template "site-footer" .}}
+  {{template "consent-banner" .}}
+  {{template "scripts" .}}
+</body>
+</html>
+{{end}}

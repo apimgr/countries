@@ -1,0 +1,219 @@
+{{define "page"}}{{template "public.tmpl" .}}{{end}}
+{{define "title"}}{{if eq .Path "/server/healthz"}}{{.HealthPage.Title}}{{else}}{{if .LocalizedTitle}}{{.LocalizedTitle}}{{else}}{{.Title}}{{end}} · {{.AppName}}{{end}}{{end}}
+{{define "meta"}}<meta name="url-prefix" content="{{.URLPrefix}}">
+<meta name="description" content="{{.Description}}">{{end}}
+{{define "content"}}
+    {{$termsContent := operatorHTML .Request "terms"}}
+<main class="container container-md" id="main-content">
+    {{if eq .Path "/server/healthz"}}
+    <header class="page-header health-header">
+      <h1 class="page-title">{{.HealthPage.Response.Project.Name}}</h1>
+      <p class="tagline">{{.HealthPage.Response.Project.Tagline}}</p>
+      <p class="page-lead">{{.HealthPage.Response.Project.Description}}</p>
+    </header>
+    <div class="status-banner {{.HealthPage.StatusClass}}" role="status">
+      <span class="status-icon" aria-hidden="true">{{.HealthPage.StatusIcon}}</span>
+      <span class="status-text">{{.HealthPage.StatusText}}</span>
+    </div>
+    {{if .HealthPage.Response.PendingRestart}}<aside class="section-card" role="note"><p>{{.HealthPage.RestartNotice}}</p>{{if .HealthPage.RestartReasons}}<ul>{{range .HealthPage.RestartReasons}}<li>{{.}}</li>{{end}}</ul>{{end}}</aside>{{end}}
+    <section class="section-card" aria-labelledby="health-version">
+      <h2 id="health-version">{{.HealthPage.VersionLabel}}</h2>
+      <dl class="info-list">
+        <dt>{{.HealthPage.VersionLabel}}</dt><dd><code>{{.HealthPage.Response.Version}}</code></dd>
+        <dt>{{.HealthPage.GoVersionLabel}}</dt><dd><code>{{.HealthPage.Response.GoVersion}}</code></dd>
+        <dt>{{.HealthPage.BuildLabel}}</dt><dd><code>{{.HealthPage.Response.Build.Commit}}</code>{{if .HealthPage.BuildDateText}} <time datetime="{{.HealthPage.Response.Build.Date}}">{{.HealthPage.BuildDateText}}</time>{{end}}</dd>
+      </dl>
+    </section>
+    <section class="section-card" aria-labelledby="health-runtime">
+      <h2 id="health-runtime">{{.HealthPage.RuntimeLabel}}</h2>
+      <dl class="info-list">
+        <dt>{{.HealthPage.UptimeLabel}}</dt><dd>{{.HealthPage.UptimeText}}</dd>
+        <dt>{{.HealthPage.ModeLabel}}</dt><dd><span class="badge badge-{{.HealthPage.Response.Mode}}">{{.HealthPage.ModeText}}</span></dd>
+        <dt>{{.HealthPage.TimestampLabel}}</dt><dd><time datetime="{{.HealthPage.Response.Timestamp.Format "2006-01-02T15:04:05Z07:00"}}">{{.HealthPage.TimestampText}}</time></dd>
+      </dl>
+    </section>
+    <section class="section-card" aria-labelledby="health-cluster">
+      <h2 id="health-cluster">{{.HealthPage.ClusterLabel}}</h2>
+      <p>{{.HealthPage.ClusterText}}</p>
+    </section>
+    <section class="section-card" aria-labelledby="health-features">
+      <h2 id="health-features">{{.HealthPage.FeaturesLabel}}</h2>
+      <ul class="feature-list">
+        <li class="{{if .HealthPage.Response.Features.Tor.Enabled}}feature-enabled{{else}}feature-disabled{{end}}">{{.HealthPage.TorLabel}}: <span class="status {{healthCheckClass .HealthPage.Response.Features.Tor.Status}}">{{.HealthPage.TorStatus}}</span>{{if .HealthPage.Response.Features.Tor.Hostname}}<div class="code-block"><code class="code-content">{{.HealthPage.Response.Features.Tor.Hostname}}</code><button class="copy-btn btn btn-secondary" type="button" data-copy="{{.HealthPage.Response.Features.Tor.Hostname}}" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "health.copy_address"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button></div>{{end}}</li>
+        <li class="{{if .HealthPage.Response.Features.I2P.Enabled}}feature-enabled{{else}}feature-disabled{{end}}">{{.HealthPage.I2PLabel}}: <span class="status {{healthCheckClass .HealthPage.Response.Features.I2P.Status}}">{{.HealthPage.I2PStatus}}</span>{{if .HealthPage.Response.Features.I2P.Hostname}}<div class="code-block"><code class="code-content">{{.HealthPage.Response.Features.I2P.Hostname}}</code><button class="copy-btn btn btn-secondary" type="button" data-copy="{{.HealthPage.Response.Features.I2P.Hostname}}" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "health.copy_address"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button></div>{{end}}</li>
+        <li class="{{if .HealthPage.Response.Features.GeoIP}}feature-enabled{{else}}feature-disabled{{end}}">{{.HealthPage.GeoIPLabel}}: {{.HealthPage.GeoIPStatus}}</li>
+      </ul>
+    </section>
+    <section class="section-card" aria-labelledby="health-checks">
+      <h2 id="health-checks">{{.HealthPage.ChecksLabel}}</h2>
+      <div class="table-wrapper"><table class="data-table"><caption>{{t .Lang "health.checks_caption"}}</caption><thead><tr><th scope="col">{{t .Lang "health.component"}}</th><th scope="col">{{t .Lang "health.status_label"}}</th></tr></thead><tbody>
+        {{range .HealthPage.CheckRows}}<tr><th scope="row">{{.Label}}</th><td><span class="status {{.CSSClass}}">{{.Status}}</span></td></tr>{{end}}
+      </tbody></table></div>
+    </section>
+    <section class="section-card" aria-labelledby="health-stats">
+      <h2 id="health-stats">{{.HealthPage.StatsLabel}}</h2>
+      <dl class="info-list stats-grid">
+        <dt>{{.HealthPage.RequestTotalLabel}}</dt><dd>{{.HealthPage.RequestTotalText}}</dd>
+        <dt>{{.HealthPage.Requests24hLabel}}</dt><dd>{{.HealthPage.Requests24hText}}</dd>
+        <dt>{{.HealthPage.ActiveConnectionsLabel}}</dt><dd>{{.HealthPage.ActiveConnectionsText}}</dd>
+        {{range .HealthPage.ProjectStats}}<dt>{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}
+      </dl>
+    </section>
+    {{else}}
+    <header class="page-header">
+      {{if eq .Path "/server/help/mcp"}}<nav class="breadcrumb" aria-label="{{t .Lang "nav.breadcrumb"}}"><a href="{{path .URLPrefix "/server/help"}}">{{t .Lang "help.back"}}</a></nav>{{end}}
+      <h1 class="page-title">{{if .LocalizedTitle}}{{.LocalizedTitle}}{{else}}{{.Title}}{{end}}</h1>
+      <p class="page-lead">{{if and (eq .Path "/server/about") .Tagline}}{{.Tagline}}{{else}}{{.Description}}{{end}}</p>
+    </header>
+    {{end}}
+    {{if eq .Path "/server/dpo"}}
+    <section class="section-card" aria-labelledby="dpo-contact">
+      <h2 id="dpo-contact">{{t .Lang "dpo.contact"}}</h2>
+      {{if .DPOName}}<p>{{.DPOName}}</p>{{end}}
+      {{if .DPOEmail}}<p><a href="mailto:{{.DPOEmail}}">{{.DPOEmail}}</a></p>{{else}}<p>{{t .Lang "dpo.missing"}}</p><p><a href="{{path .URLPrefix "/server/security"}}">{{t .Lang "dpo.security_link"}}</a></p>{{end}}
+      <p><a href="{{.PrivacyURL}}">{{t .Lang "dpo.privacy"}}</a></p>
+    </section>
+    {{end}}
+    {{if eq .Path "/server/security"}}
+    <section class="section-card" aria-labelledby="security-reporting"><h2 id="security-reporting">{{t .Lang "security.reporting_title"}}</h2>
+      <p><a href="https://github.com/apimgr/countries/security/advisories/new">{{t .Lang "security.github_reporting"}}</a></p>
+      {{if .SecurityFormURL}}<p><a href="{{.SecurityFormURL}}">{{t .Lang "security.deployment_reporting_link"}}</a></p>{{end}}
+      {{if .SecurityEmail}}<p><a href="mailto:{{.SecurityEmail}}">{{t .Lang "security.security_email"}}: {{.SecurityEmail}}</a></p>{{end}}
+      <p><strong>{{t .Lang "server.page.security.expires"}}:</strong> <time datetime="{{.SecurityExpires}}">{{.SecurityExpires}}</time></p>
+      {{if .SecurityPGPURL}}<p><strong>{{t .Lang "server.page.security.encryption"}}:</strong> <a href="{{.SecurityPGPURL}}">{{t .Lang "server.page.security.pgp_public_key"}}</a> (<code>{{.SecurityFingerprint}}</code>)</p>{{end}}
+      {{if .ReportFormURL}}<p>{{t .Lang "security.other_reports"}} <a href="{{.ReportFormURL}}">{{t .Lang "security.report_form"}}</a>.</p>{{end}}
+      <nav aria-label="{{t .Lang "server.page.security.resources"}}"><ul><li><a href="{{path .URLPrefix "/server/security/policy"}}">{{t .Lang "server.page.security.disclosure_policy"}}</a></li><li><a href="{{path .URLPrefix "/server/security/thanks"}}">{{t .Lang "server.page.security.researcher_acknowledgments"}}</a></li><li><a href="{{path .URLPrefix "/.well-known/security.txt"}}">{{t .Lang "server.page.security.security_txt"}}</a></li>{{if .SecurityPGPURL}}<li><a href="{{path .URLPrefix "/.well-known/pgp-key.asc"}}">{{t .Lang "server.page.security.pgp_public_key"}}</a></li>{{end}}</ul></nav>
+    </section>
+    {{end}}
+    {{if eq .Path "/server/security/policy"}}
+    <section class="section-card" aria-labelledby="security-policy-content"><h2 id="security-policy-content">{{t .Lang "server.page.security.disclosure_policy"}}</h2>{{.SecurityPolicyHTML}}</section>
+    {{end}}
+    {{if eq .Path "/server/security/thanks"}}
+    <section class="section-card" aria-labelledby="security-thanks"><h2 id="security-thanks">{{t .Lang "server.page.security.acknowledged_researchers"}}</h2>
+      {{if .SecurityThanks}}<div class="table-wrapper"><table class="data-table"><caption>{{t .Lang "server.page.security.researchers_caption"}}</caption><thead><tr><th scope="col">{{t .Lang "server.page.security.researcher"}}</th><th scope="col">{{t .Lang "server.page.security.date"}}</th><th scope="col">{{t .Lang "server.page.security.severity"}}</th></tr></thead><tbody>{{range .SecurityThanks}}<tr><td>{{.Credit}}</td><td><time datetime="{{.Date}}">{{.Date}}</time></td><td>{{t $.Lang (printf "server.page.contact.severity_%s" .Severity)}}</td></tr>{{end}}</tbody></table></div>{{else}}<p>{{t .Lang "server.page.security.no_acknowledgments"}}</p>{{end}}
+    </section>
+    {{end}}
+    {{if eq .Path "/server/help/mcp"}}
+    <section class="section-card" id="overview" aria-labelledby="mcp-overview"><h2 id="mcp-overview">{{t .Lang "help.mcp.overview_title"}}</h2><p>{{t .Lang "help.mcp.overview"}}</p></section>
+    <section class="section-card" id="endpoint" aria-labelledby="mcp-endpoint"><h2 id="mcp-endpoint">{{t .Lang "help.mcp.endpoint_title"}}</h2>
+      <div class="code-block"><code class="code-content copy-value">{{.MCP.URL}}</code><button class="copy-btn btn btn-secondary" type="button" data-copy="{{.MCP.URL}}" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "help.mcp.copy_endpoint"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button></div>
+      <h3>{{t .Lang "help.mcp.aliases_title"}}</h3><ul>{{range .MCP.Aliases}}<li><code>{{.}}</code></li>{{end}}</ul>
+    </section>
+    <section class="section-card" id="authentication" aria-labelledby="mcp-authentication"><h2 id="mcp-authentication">{{t .Lang "help.mcp.authentication_title"}}</h2><p>{{t .Lang "help.mcp.authentication"}}</p><p><code>{{.MCP.AuthScheme}}</code></p><p><a href="{{path .URLPrefix "/server/preferences/tokens"}}">{{t .Lang "help.mcp.linked_token"}}</a></p></section>
+    <section class="section-card" id="connect" aria-labelledby="mcp-connect"><h2 id="mcp-connect">{{t .Lang "help.mcp.connect_title"}}</h2>
+      <h3>{{t .Lang "help.mcp.claude_code"}}</h3><div class="code-block"><pre><code>claude mcp add --transport http countries "{{.MCP.URL}}" --header "Authorization: Bearer $MCP_TOKEN"</code></pre><button class="copy-btn btn btn-secondary" type="button" data-copy="claude mcp add --transport http countries {{.MCP.URL}} --header &quot;Authorization: Bearer $MCP_TOKEN&quot;" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button></div>
+      <h3>{{t .Lang "help.mcp.generic_client"}}</h3><div class="code-block"><pre><code>{
+  "mcpServers": {
+    "countries": {
+      "type": "http",
+      "url": "{{.MCP.URL}}",
+      "headers": {"Authorization": "Bearer ${MCP_TOKEN}"}
+    }
+  }
+}</code></pre><button class="copy-btn btn btn-secondary" type="button" data-copy="{&#34;mcpServers&#34;:{&#34;countries&#34;:{&#34;type&#34;:&#34;http&#34;,&#34;url&#34;:&#34;{{.MCP.URL}}&#34;,&#34;headers&#34;:{&#34;Authorization&#34;:&#34;Bearer ${MCP_TOKEN}&#34;}}}}" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button></div>
+      <h3>{{t .Lang "help.mcp.verify_connection"}}</h3><div class="code-block"><pre><code>curl -q -LSsf -X POST "{{.MCP.URL}}" \
+  -H "Authorization: Bearer $MCP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"{{index .MCP.ProtocolVersions 0}}","capabilities":{},"clientInfo":{"name":"countries-cli","version":"{{.Version}}"}}}'</code></pre></div>
+    </section>
+    <section class="section-card" id="tools" aria-labelledby="mcp-tools"><h2 id="mcp-tools">{{t .Lang "help.mcp.tools_title"}}</h2>
+      {{if .MCP.Tools}}<div class="table-wrapper"><table class="data-table"><caption>{{t .Lang "help.mcp.tools_caption"}}</caption><thead><tr><th scope="col">{{t .Lang "help.mcp.tool_name"}}</th><th scope="col">{{t .Lang "help.mcp.tool_description"}}</th></tr></thead><tbody>{{range .MCP.Tools}}<tr><td><code>{{.Name}}</code></td><td>{{markdownToHTML .Description}}</td></tr>{{end}}</tbody></table></div>{{else}}<p class="empty-state">{{t .Lang "help.mcp.no_tools"}}</p>{{end}}
+      <p>{{t .Lang "help.mcp.operator_tools_note"}}</p>
+    </section>
+    <section class="section-card" id="limits" aria-labelledby="mcp-limits"><h2 id="mcp-limits">{{t .Lang "help.mcp.limits_title"}}</h2><ul><li>{{t .Lang "help.mcp.post_only"}}</li><li>{{t .Lang "help.mcp.no_sessions"}}</li><li>{{t .Lang "help.mcp.shared_rate_limits"}}</li><li>{{t .Lang "help.mcp.origin_validation"}}</li></ul><h3>{{t .Lang "help.mcp.protocol_versions"}}</h3><ul>{{range .MCP.ProtocolVersions}}<li><code>{{.}}</code></li>{{end}}</ul></section>
+    <section class="section-card" id="troubleshooting" aria-labelledby="mcp-troubleshooting"><h2 id="mcp-troubleshooting">{{t .Lang "help.mcp.troubleshooting_title"}}</h2>
+      <div class="table-wrapper"><table class="data-table"><caption>{{t .Lang "help.mcp.troubleshooting_caption"}}</caption><thead><tr><th scope="col">{{t .Lang "help.mcp.status"}}</th><th scope="col">{{t .Lang "help.mcp.cause"}}</th><th scope="col">{{t .Lang "help.mcp.fix"}}</th></tr></thead><tbody>
+      <tr><td>400</td><td>{{t .Lang "help.mcp.error_400"}}</td><td>{{t .Lang "help.mcp.fix_400"}}</td></tr><tr><td>401</td><td>{{t .Lang "help.mcp.error_401"}}</td><td>{{t .Lang "help.mcp.fix_401"}}</td></tr><tr><td>403</td><td>{{t .Lang "help.mcp.error_403"}}</td><td>{{t .Lang "help.mcp.fix_403"}}</td></tr><tr><td>405</td><td>{{t .Lang "help.mcp.error_405"}}</td><td>{{t .Lang "help.mcp.fix_405"}}</td></tr>
+      </tbody></table></div>
+    </section>
+    {{if .MCP.Project}}<section class="section-card" id="project" aria-labelledby="mcp-project"><h2 id="mcp-project">{{t .Lang "help.mcp.project_title"}}</h2>{{.MCP.Project}}</section>{{end}}
+    {{end}}
+    {{if eq .Path "/server/privacy"}}
+    <section class="section-card" aria-labelledby="privacy-summary">
+      <h2 id="privacy-summary">{{t .Lang "privacy.summary"}}</h2>
+      {{if .Privacy.Data.StoredOnServer}}<p>{{t .Lang "privacy.stored_on_server"}}</p>{{else}}<p>{{t .Lang "privacy.not_stored_on_server"}}</p>{{end}}
+      {{if .Privacy.Data.Sold}}
+      <p>{{t .Lang "privacy.data_may_be_sold"}} <a href="#ccpa-opt-out">{{t .Lang "privacy.ccpa_opt_out_link"}}</a></p>
+      {{else}}<p>{{t .Lang "privacy.data_not_sold"}}</p>{{end}}
+    </section>
+    <section class="section-card" aria-labelledby="privacy-cookies">
+      <h2 id="privacy-cookies">{{t .Lang "privacy.cookies"}}</h2>
+      <h3>{{t .Lang "privacy.essential_cookies"}}</h3>{{if .Privacy.Cookies.Essential.Enabled}}<p>{{.Privacy.Cookies.Essential.Description}}</p>{{else}}<p>{{t .Lang "privacy.cookies_disabled"}}</p>{{end}}
+      <h3>{{t .Lang "privacy.preference_cookies"}}</h3>{{if .Privacy.Cookies.Preferences.Enabled}}<p>{{.Privacy.Cookies.Preferences.Description}}</p>{{else}}<p>{{t .Lang "privacy.cookies_disabled"}}</p>{{end}}
+      <h3>{{t .Lang "privacy.analytics_cookies"}}</h3>{{if .Privacy.Cookies.Analytics.Enabled}}<p>{{.Privacy.GetAnalyticsDescription}}</p>{{else}}<p>{{t .Lang "privacy.cookies_disabled"}}</p>{{end}}
+      {{if .TrackingEnabled}}<p>{{.TrackingMessage}}</p>{{end}}
+      <p><a class="btn btn-secondary" href="{{path .URLPrefix "/server/preferences"}}">{{t .Lang "privacy.manage_preferences"}}</a></p>
+    </section>
+    <section class="section-card" aria-labelledby="privacy-collection">
+      <h2 id="privacy-collection">{{t .Lang "privacy.data_collection"}}</h2>
+      {{markdownToHTML .PrivacyContent.DataCollection}}
+    </section>
+    <section class="section-card" aria-labelledby="privacy-usage">
+      <h2 id="privacy-usage">{{t .Lang "privacy.data_usage"}}</h2>
+      {{if .Privacy.Data.Sold}}{{markdownToHTML .PrivacyContent.DataUsageIfSold}}{{else}}{{markdownToHTML .PrivacyContent.DataUsage}}{{end}}
+    </section>
+    <section class="section-card" aria-labelledby="privacy-security">
+      <h2 id="privacy-security">{{t .Lang "privacy.data_security"}}</h2>
+      {{markdownToHTML .PrivacyContent.DataSecurity}}
+    </section>
+    <section class="section-card" aria-labelledby="privacy-sharing">
+      <h2 id="privacy-sharing">{{t .Lang "privacy.data_storage_sharing"}}</h2>
+      {{if .Privacy.Data.StoredOnServer}}<p>{{t .Lang "privacy.all_data_stored_on_server"}}</p>{{end}}
+      {{if .Privacy.Data.Sharing}}<ul>{{range .Privacy.Data.Sharing}}<li><strong>{{.Condition}}:</strong> {{.When}} — {{.Data}}</li>{{end}}</ul>{{else}}<p>{{t .Lang "privacy.no_data_sharing"}}</p>{{end}}
+      {{if .Privacy.Data.Sold}}<p>{{t .Lang "privacy.data_may_be_sold"}}</p>{{else}}<p>{{t .Lang "privacy.data_not_sold"}}</p>{{end}}
+    </section>
+    <section class="section-card" aria-labelledby="privacy-retention">
+      <h2 id="privacy-retention">{{t .Lang "privacy.retention"}}</h2><p>{{.Privacy.Retention.Period}}</p>
+    </section>
+    <section class="section-card" aria-labelledby="privacy-third-parties">
+      <h2 id="privacy-third-parties">{{t .Lang "privacy.third_parties"}}</h2>
+      {{if .Privacy.ThirdParty.Services}}
+      <div class="table-wrapper"><table class="data-table"><caption>{{t .Lang "privacy.third_parties_caption"}}</caption><thead><tr><th scope="col">{{t .Lang "privacy.service"}}</th><th scope="col">{{t .Lang "privacy.purpose"}}</th><th scope="col">{{t .Lang "privacy.data_sent"}}</th><th scope="col">{{t .Lang "privacy.privacy_policy"}}</th></tr></thead><tbody>
+      {{range .Privacy.ThirdParty.Services}}<tr><td>{{.Name}}</td><td>{{.Purpose}}</td><td>{{.DataSent}}</td><td>{{if .PolicyURL}}<a href="{{.PolicyURL}}" rel="noopener noreferrer">{{t $.Lang "privacy.view_policy"}}</a>{{end}}</td></tr>{{end}}
+      </tbody></table></div>
+      {{else}}<p>{{t .Lang "privacy.no_third_parties"}}</p>{{end}}
+    </section>
+    <section class="section-card" aria-labelledby="privacy-rights">
+      <h2 id="privacy-rights">{{t .Lang "privacy.your_rights"}}</h2>
+      <ul><li>{{t .Lang "privacy.right_access"}}</li>{{if .Privacy.Retention.ExportAvailable}}<li>{{t .Lang "privacy.right_export"}}</li>{{end}}{{if .Privacy.Retention.DeletionAvailable}}<li>{{t .Lang "privacy.right_deletion"}}</li>{{end}}<li>{{t .Lang "privacy.right_correction"}}</li></ul>
+      <p><a class="btn btn-secondary" href="{{path .URLPrefix "/server/preferences"}}">{{t .Lang "privacy.manage_preferences"}}</a></p>
+    </section>
+    {{if .Privacy.IsCCPAApplicable}}
+    <section class="section-card" id="ccpa-opt-out" aria-labelledby="privacy-ccpa">
+      <h2 id="privacy-ccpa">{{t .Lang "privacy.ccpa_title"}}</h2><p>{{t .Lang "privacy.ccpa_description"}}</p>
+      {{if .CCPAOptedOut}}<p role="status">{{t .Lang "privacy.ccpa_opted_out"}}</p>{{end}}
+      <form method="post" action="{{path .URLPrefix "/server/ccpa"}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        {{if .CCPAOptedOut}}<input type="hidden" name="choice" value="opt-in"><button class="btn btn-secondary" type="submit">{{t .Lang "privacy.ccpa_opt_in"}}</button>
+        {{else}}<input type="hidden" name="choice" value="opt-out"><button class="btn btn-primary" type="submit">{{t .Lang "privacy.ccpa_opt_out"}}</button>{{end}}
+      </form>
+    </section>
+    {{end}}
+    {{with operatorHTML .Request "privacy"}}<section class="section-card" aria-labelledby="privacy-operator-content"><h2 id="privacy-operator-content">{{t $.Lang "privacy.additional_information"}}</h2>{{.}}</section>{{end}}
+    <section class="section-card" aria-labelledby="privacy-contact">
+      <h2 id="privacy-contact">{{t .Lang "privacy.contact"}}</h2>
+      {{if .DPOEmail}}<p>{{if .DPOName}}{{.DPOName}}: {{end}}<a href="mailto:{{.DPOEmail}}">{{.DPOEmail}}</a></p>{{else}}<p><a href="{{path .URLPrefix "/server/security"}}">{{t .Lang "privacy.security_contact"}}</a></p>{{end}}
+    </section>
+    {{end}}
+    {{if and (ne .Path "/server/healthz") (not (and (eq .Path "/server/terms") $termsContent))}}{{range .Sections}}
+    <section class="section-card" aria-labelledby="{{.ID}}">
+      <h2 id="{{.ID}}">{{.Title}}</h2>
+      {{if eq .ID "help-api"}}
+      <p>{{t $.Lang "help.api_documentation_lead"}}</p>
+      <ul><li><a href="{{path $.URLPrefix "/server/docs/swagger"}}">{{t $.Lang "help.swagger_ui"}}</a> — {{t $.Lang "help.swagger_description"}}</li><li><a href="{{path $.URLPrefix "/server/docs/graphql"}}">{{t $.Lang "help.graphql_explorer"}}</a> — {{t $.Lang "help.graphql_description"}}</li></ul>
+      {{else}}
+      {{if .Text}}<p>{{.Text}}</p>{{end}}
+      {{if .Bullets}}<ul>{{range .Bullets}}<li>{{.}}</li>{{end}}</ul>{{end}}
+      {{end}}
+      {{if and (eq $.Path "/server/about") (eq .ID "about-attribution")}}<p><a href="https://db-ip.com/">IP Geolocation by DB-IP</a></p>{{end}}
+      {{if and (eq $.Path "/server/about") (eq .ID "about-project")}}<p><a href="https://github.com/apimgr/countries">{{t $.Lang "about.repository"}}</a></p>{{end}}
+    </section>
+    {{end}}
+    {{end}}
+    {{if eq .Path "/server/help"}}<section class="section-card" aria-labelledby="more-help"><h2 id="more-help">{{t .Lang "help.more"}}</h2><ul class="hub-list">{{range .HelpPages}}<li class="hub-item"><a class="hub-link" href="{{path $.URLPrefix .Path}}"><span class="hub-title">{{t $.Lang .TitleKey}}</span><span class="hub-desc">{{t $.Lang .DescriptionKey}}</span></a></li>{{end}}</ul></section>{{end}}
+    {{if eq .Path "/server/about"}}{{with operatorHTML .Request "about"}}<section class="section-card" aria-labelledby="about-operator-content"><h2 id="about-operator-content">{{t $.Lang "about.additional_information"}}</h2>{{.}}</section>{{end}}{{end}}
+    {{if and (eq .Path "/server/terms") $termsContent}}<section class="section-card" aria-labelledby="terms-operator-content"><h2 id="terms-operator-content">{{t .Lang "terms.operator_content"}}</h2>{{$termsContent}}</section>{{end}}
+    {{if and .Version (eq .Path "/server/about")}}<section class="section-card" aria-labelledby="about-version"><h2 id="about-version">{{t .Lang "about.version"}}</h2><p>{{.Version}}{{if .BuildDate}} · {{t .Lang "about.built"}} {{.BuildDate}}{{end}}</p></section>{{end}}
+  </main>
+{{end}}

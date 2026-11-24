@@ -80,6 +80,12 @@ func TestGraphQLRequestLimit(t *testing.T) {
 	}
 }
 
+func TestGeneratedSchemaMatchesAnnotations(t *testing.T) {
+	if schemaDefinition != SchemaSDL() {
+		t.Fatal("generated GraphQL schema is stale; run go generate ./src/graphql")
+	}
+}
+
 func quoteJSONString(value string) string {
 	var output bytes.Buffer
 	if err := json.NewEncoder(&output).Encode(value); err != nil {

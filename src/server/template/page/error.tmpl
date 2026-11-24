@@ -1,0 +1,17 @@
+{{define "page"}}{{template "public.tmpl" .}}{{end}}
+{{define "title"}}{{t .Lang "error.title"}} · {{.AppName}}{{end}}
+{{define "meta"}}<meta name="url-prefix" content="{{.URLPrefix}}">
+<meta name="description" content="{{t .Lang "error.generic"}}">{{end}}
+{{define "content"}}
+<main class="container container-md" id="main-content">
+    <header class="page-header">
+      <h1 class="page-title">{{t .Lang "error.title"}}</h1>
+    </header>
+    <section class="section-card" aria-labelledby="error-details">
+      <h2 id="error-details">{{t .Lang "error.generic"}}</h2>
+      <p class="badge">{{.StatusCode}}</p>
+      <p role="alert">{{.ErrorMessage}}</p>
+      <p><a class="btn btn-secondary" href="{{path .URLPrefix "/"}}">{{t .Lang "error.home"}}</a></p>
+    </section>
+  </main>
+{{end}}

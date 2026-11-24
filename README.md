@@ -87,7 +87,7 @@ Country data is available under `/api/v1/`. The service also provides a read-onl
 | `POST /api/v1/server/graphql` | Execute a GraphQL query |
 | `POST /api/v1/server/mcp` | Call MCP with a bearer token |
 
-The web interface includes country search, coordinate lookup, API explorers, help, privacy, security, terms, contact/reporting, and guest preference pages. Browse `/` on your deployment; the API and browser route details are in the [API guide](docs/api.md).
+The web interface includes country search, coordinate lookup, API explorers, help, privacy, security, terms, contact/reporting, guest preference and consent controls, and anonymous owner-token management for MCP access. Browse `/` on your deployment; the API and browser route details are in the [API guide](docs/api.md).
 
 ## More documentation
 

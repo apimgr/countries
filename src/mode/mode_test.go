@@ -11,6 +11,7 @@ func resetMode(t *testing.T) {
 	t.Helper()
 	mu.Lock()
 	currentMode = Production
+	debugEnabled = false
 	mu.Unlock()
 }
 
@@ -24,6 +25,7 @@ func TestParseMode(t *testing.T) {
 		{"development", Development, false},
 		{"prod", Production, false},
 		{"production", Production, false},
+		{"debug", Debug, false},
 		{"", "", true},
 		{"bogus", "", true},
 		// Parsing must be case-sensitive and must not match uppercase input.
@@ -82,6 +84,12 @@ func TestIsDevelopmentIsProduction(t *testing.T) {
 	if IsProduction() || !IsDevelopment() {
 		t.Error("expected IsProduction=false, IsDevelopment=true after Set(development)")
 	}
+	if err := Set("debug"); err != nil {
+		t.Fatalf("Set(debug): %v", err)
+	}
+	if !IsDebug() || IsProduction() {
+		t.Error("expected IsDebug=true and IsProduction=false after Set(debug)")
+	}
 }
 
 func TestInitialize_Priority(t *testing.T) {
@@ -112,6 +120,16 @@ func TestInitialize_Priority(t *testing.T) {
 	}
 	if Get() != Production {
 		t.Errorf("Initialize() with no input = %q, want default %q", Get(), Production)
+	}
+	if err := Initialize("debug"); err != nil {
+		t.Fatalf("Initialize(debug) error: %v", err)
+	}
+	if Get() != Debug || !DebugEnabled() {
+		t.Errorf("Initialize(debug) = mode %q, debug %v; want debug mode with diagnostics enabled", Get(), DebugEnabled())
+	}
+	SetDebugEnabled(false)
+	if DebugEnabled() {
+		t.Error("explicit debug disable should override debug mode default")
 	}
 }
 
@@ -153,26 +171,38 @@ func TestGetErrorDetail(t *testing.T) {
 func TestShouldShowDebugEndpoints(t *testing.T) {
 	defer resetMode(t)
 
-	Set("production")
+	if err := Set("production"); err != nil {
+		t.Fatalf("Set(production): %v", err)
+	}
 	if ShouldShowDebugEndpoints() {
 		t.Error("ShouldShowDebugEndpoints() should be false in production")
 	}
-	Set("development")
+	if err := Set("development"); err != nil {
+		t.Fatalf("Set(development): %v", err)
+	}
+	if ShouldShowDebugEndpoints() {
+		t.Error("ShouldShowDebugEndpoints() should be false in development without debug enabled")
+	}
+	SetDebugEnabled(true)
 	if !ShouldShowDebugEndpoints() {
-		t.Error("ShouldShowDebugEndpoints() should be true in development")
+		t.Error("ShouldShowDebugEndpoints() should be true when debug is enabled")
 	}
 }
 
 func TestGetCacheHeaders(t *testing.T) {
 	defer resetMode(t)
 
-	Set("development")
+	if err := Set("development"); err != nil {
+		t.Fatalf("Set(development): %v", err)
+	}
 	devHeaders := GetCacheHeaders()
 	if devHeaders["Cache-Control"] != "no-cache, no-store, must-revalidate" {
 		t.Errorf("dev Cache-Control = %q, want no-cache directive", devHeaders["Cache-Control"])
 	}
 
-	Set("production")
+	if err := Set("production"); err != nil {
+		t.Fatalf("Set(production): %v", err)
+	}
 	prodHeaders := GetCacheHeaders()
 	if prodHeaders["Cache-Control"] != "public, max-age=31536000, immutable" {
 		t.Errorf("prod Cache-Control = %q, want long-lived cache directive", prodHeaders["Cache-Control"])
@@ -182,11 +212,15 @@ func TestGetCacheHeaders(t *testing.T) {
 func TestGetLogLevel(t *testing.T) {
 	defer resetMode(t)
 
-	Set("development")
+	if err := Set("development"); err != nil {
+		t.Fatalf("Set(development): %v", err)
+	}
 	if GetLogLevel() != "debug" {
 		t.Errorf("GetLogLevel() in dev = %q, want debug", GetLogLevel())
 	}
-	Set("production")
+	if err := Set("production"); err != nil {
+		t.Fatalf("Set(production): %v", err)
+	}
 	if GetLogLevel() != "info" {
 		t.Errorf("GetLogLevel() in prod = %q, want info", GetLogLevel())
 	}
@@ -195,12 +229,16 @@ func TestGetLogLevel(t *testing.T) {
 func TestShouldCacheTemplatesAndStaticFiles(t *testing.T) {
 	defer resetMode(t)
 
-	Set("production")
+	if err := Set("production"); err != nil {
+		t.Fatalf("Set(production): %v", err)
+	}
 	if !ShouldCacheTemplates() || !ShouldCacheStaticFiles() {
 		t.Error("expected caching enabled in production")
 	}
 
-	Set("development")
+	if err := Set("development"); err != nil {
+		t.Fatalf("Set(development): %v", err)
+	}
 	if ShouldCacheTemplates() || ShouldCacheStaticFiles() {
 		t.Error("expected caching disabled in development")
 	}
@@ -209,12 +247,16 @@ func TestShouldCacheTemplatesAndStaticFiles(t *testing.T) {
 func TestShouldEnableAutoReloadAndProfiling(t *testing.T) {
 	defer resetMode(t)
 
-	Set("development")
+	if err := Set("development"); err != nil {
+		t.Fatalf("Set(development): %v", err)
+	}
 	if !ShouldEnableAutoReload() || !ShouldEnableProfiling() {
 		t.Error("expected auto-reload and profiling enabled in development")
 	}
 
-	Set("production")
+	if err := Set("production"); err != nil {
+		t.Fatalf("Set(production): %v", err)
+	}
 	if ShouldEnableAutoReload() || ShouldEnableProfiling() {
 		t.Error("expected auto-reload and profiling disabled in production")
 	}
@@ -223,12 +265,16 @@ func TestShouldEnableAutoReloadAndProfiling(t *testing.T) {
 func TestGetPanicRecoveryDetail(t *testing.T) {
 	defer resetMode(t)
 
-	Set("production")
+	if err := Set("production"); err != nil {
+		t.Fatalf("Set(production): %v", err)
+	}
 	if got := GetPanicRecoveryDetail("oops"); got != "Internal Server Error" {
 		t.Errorf("GetPanicRecoveryDetail() in prod = %q, want generic message", got)
 	}
 
-	Set("development")
+	if err := Set("development"); err != nil {
+		t.Fatalf("Set(development): %v", err)
+	}
 	got := GetPanicRecoveryDetail("oops")
 	if got == "Internal Server Error" || got == "" {
 		t.Errorf("GetPanicRecoveryDetail() in dev = %q, want detailed panic output", got)
@@ -251,13 +297,17 @@ func TestConcurrentAccess(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 100; i++ {
-			Set("development")
+			if err := Set("development"); err != nil {
+				t.Errorf("Set(development): %v", err)
+			}
 		}
 		done <- struct{}{}
 	}()
 	go func() {
 		for i := 0; i < 100; i++ {
-			Set("production")
+			if err := Set("production"); err != nil {
+				t.Errorf("Set(production): %v", err)
+			}
 		}
 		done <- struct{}{}
 	}()

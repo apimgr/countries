@@ -16,11 +16,14 @@ const (
 	Production Mode = "production"
 	// Development mode - optimized for development
 	Development Mode = "development"
+	// Debug mode - maximum diagnostics with security checks retained.
+	Debug Mode = "debug"
 )
 
 var (
-	currentMode Mode = Production // Default mode
-	mu          sync.RWMutex
+	currentMode  Mode = Production // Default mode
+	debugEnabled bool
+	mu           sync.RWMutex
 )
 
 // Get returns the current application mode
@@ -45,21 +48,28 @@ func Set(mode string) error {
 }
 
 // ParseMode parses a mode string and returns the corresponding Mode
-// Accepts: "dev", "development", "prod", "production"
+// Accepts production, development, debug, and their documented shortcuts.
 func ParseMode(s string) (Mode, error) {
 	switch s {
-	case "dev", "development":
+	case "dev", "devel", "development":
 		return Development, nil
 	case "prod", "production":
 		return Production, nil
+	case "debug":
+		return Debug, nil
 	default:
-		return "", fmt.Errorf("invalid mode: %s (valid options: dev, development, prod, production)", s)
+		return "", fmt.Errorf("invalid mode: %s (valid options: dev, development, prod, production, debug)", s)
 	}
 }
 
 // IsDevelopment returns true if the current mode is development
 func IsDevelopment() bool {
 	return Get() == Development
+}
+
+// IsDebug returns true when the process is running in debug mode.
+func IsDebug() bool {
+	return Get() == Debug
 }
 
 // IsProduction returns true if the current mode is production
@@ -86,7 +96,28 @@ func Initialize(cliMode string) error {
 		}
 	}
 
-	return Set(modeStr)
+	if err := Set(modeStr); err != nil {
+		return err
+	}
+	defaultDebug := Get() == Debug
+	mu.Lock()
+	debugEnabled = defaultDebug
+	mu.Unlock()
+	return nil
+}
+
+// SetDebugEnabled explicitly controls debug endpoints and diagnostics.
+func SetDebugEnabled(enabled bool) {
+	mu.Lock()
+	debugEnabled = enabled
+	mu.Unlock()
+}
+
+// DebugEnabled reports whether debug endpoints and diagnostics are enabled.
+func DebugEnabled() bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return debugEnabled
 }
 
 // GetErrorDetail returns error details based on the current mode
@@ -97,7 +128,7 @@ func GetErrorDetail(err error) string {
 		return ""
 	}
 
-	if IsDevelopment() {
+	if IsDevelopment() || IsDebug() {
 		// Return detailed error with stack trace
 		stack := debug.Stack()
 		return fmt.Sprintf("Error: %v\n\nStack trace:\n%s", err, string(stack))
@@ -109,14 +140,14 @@ func GetErrorDetail(err error) string {
 
 // ShouldShowDebugEndpoints returns true if debug endpoints should be enabled
 func ShouldShowDebugEndpoints() bool {
-	return IsDevelopment()
+	return DebugEnabled()
 }
 
 // GetCacheHeaders returns appropriate cache headers based on the current mode
 // Development: no-cache headers to ensure fresh content
 // Production: cache headers for optimization
 func GetCacheHeaders() map[string]string {
-	if IsDevelopment() {
+	if !IsProduction() {
 		return map[string]string{
 			"Cache-Control": "no-cache, no-store, must-revalidate",
 			"Pragma":        "no-cache",
@@ -132,7 +163,7 @@ func GetCacheHeaders() map[string]string {
 
 // GetLogLevel returns the appropriate log level for the current mode
 func GetLogLevel() string {
-	if IsDevelopment() {
+	if IsDevelopment() || IsDebug() || DebugEnabled() {
 		return "debug"
 	}
 	return "info"
@@ -140,29 +171,29 @@ func GetLogLevel() string {
 
 // ShouldCacheTemplates returns true if templates should be cached
 func ShouldCacheTemplates() bool {
-	return IsProduction()
+	return IsProduction() && !DebugEnabled()
 }
 
 // ShouldCacheStaticFiles returns true if static files should be cached
 func ShouldCacheStaticFiles() bool {
-	return IsProduction()
+	return IsProduction() && !DebugEnabled()
 }
 
 // ShouldEnableAutoReload returns true if auto-reload should be enabled
 func ShouldEnableAutoReload() bool {
-	return IsDevelopment()
+	return IsDevelopment() || IsDebug()
 }
 
 // ShouldEnableProfiling returns true if profiling should be enabled
 func ShouldEnableProfiling() bool {
-	return IsDevelopment()
+	return IsDevelopment() || IsDebug()
 }
 
 // GetPanicRecoveryDetail returns panic recovery details based on mode
 // Development: full stack trace
 // Production: generic error message
 func GetPanicRecoveryDetail(recovered interface{}) string {
-	if IsDevelopment() {
+	if IsDevelopment() || IsDebug() {
 		stack := debug.Stack()
 		return fmt.Sprintf("Panic: %v\n\nStack trace:\n%s", recovered, string(stack))
 	}

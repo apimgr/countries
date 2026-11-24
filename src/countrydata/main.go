@@ -4,6 +4,7 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -172,7 +173,7 @@ func generate(countriesFile, populationFile, tzdbFile, outputFile string) error 
 	return nil
 }
 
-func readSource(client *http.Client, path, sourceURL string) ([]byte, error) {
+func readSource(client *http.Client, path, sourceURL string) (source []byte, retErr error) {
 	if path != "" {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -192,7 +193,11 @@ func readSource(client *http.Client, path, sourceURL string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil && retErr == nil {
+			retErr = fmt.Errorf("close source response: %w", err)
+		}
+	}()
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("source returned HTTP %d", response.StatusCode)
 	}
@@ -210,7 +215,16 @@ func readSource(client *http.Client, path, sourceURL string) ([]byte, error) {
 }
 
 func zoneTableFromTar(data []byte) ([]byte, error) {
-	reader := tar.NewReader(bytes.NewReader(data))
+	var source io.Reader = bytes.NewReader(data)
+	if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b {
+		compressed, err := gzip.NewReader(source)
+		if err != nil {
+			return nil, fmt.Errorf("open tzdb gzip archive: %w", err)
+		}
+		defer func() { _ = compressed.Close() }()
+		source = compressed
+	}
+	reader := tar.NewReader(source)
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {

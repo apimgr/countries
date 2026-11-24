@@ -11,6 +11,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func CanApplyStaged() bool {
+	return false
+}
+
 func replaceBinary(currentPath, newBinaryPath string) error {
 	backupPath := currentPath + ".old"
 	if _, err := os.Stat(backupPath); err == nil {

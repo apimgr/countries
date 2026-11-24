@@ -14,7 +14,6 @@ import (
 func TestRateLimiterAppliesSlidingClassAndGlobalLimits(t *testing.T) {
 	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 	limiter := newRateLimiter(config.RateLimitConfig{
-		Enabled:     true,
 		Read:        config.RateLimitRuleConfig{Requests: 2, Window: 10},
 		Write:       config.RateLimitRuleConfig{Requests: 1, Window: 10},
 		Health:      config.RateLimitRuleConfig{Requests: 2, Window: 10},
@@ -39,10 +38,8 @@ func TestRateLimiterAppliesSlidingClassAndGlobalLimits(t *testing.T) {
 		t.Fatalf("expired sliding window result = (%v, %q), want (true, empty)", allowed, retry)
 	}
 }
-
 func TestRateLimitMiddlewareReturnsCanonical429(t *testing.T) {
 	limiter := newRateLimiter(config.RateLimitConfig{
-		Enabled:     true,
 		Read:        config.RateLimitRuleConfig{Requests: 1, Window: 60},
 		Write:       config.RateLimitRuleConfig{Requests: 1, Window: 60},
 		Health:      config.RateLimitRuleConfig{Requests: 1, Window: 60},
@@ -68,15 +65,73 @@ func TestRateLimitMiddlewareReturnsCanonical429(t *testing.T) {
 	}
 }
 
-func TestRateLimiterDisabled(t *testing.T) {
-	limiter := newRateLimiter(config.RateLimitConfig{Enabled: false})
-	called := false
-	recorder := httptest.NewRecorder()
-	limiter.middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		called = true
-		w.WriteHeader(http.StatusNoContent)
-	})).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
-	if !called || recorder.Code != http.StatusNoContent {
-		t.Fatal("disabled limiter did not pass the request through")
+func TestRateLimiterUsesValidBearerTokenInsteadOfClientIP(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Server.Token = "adm_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	cfg.Server.RateLimit.Read = config.RateLimitRuleConfig{Requests: 1, Window: 60}
+	cfg.Server.RateLimit.GlobalBurst = 10
+	s := newTestServerWithConfig(t, cfg)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/countries", nil)
+	request.RemoteAddr = "192.0.2.8:1234"
+	request.Header.Set("Authorization", "Bearer "+cfg.Server.Token)
+	first := httptest.NewRecorder()
+	s.router.ServeHTTP(first, request)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first authenticated request status = %d, want 200", first.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/countries", nil)
+	request.RemoteAddr = "198.51.100.9:1234"
+	request.Header.Set("Authorization", "Bearer "+cfg.Server.Token)
+	secondTokenRequest := httptest.NewRecorder()
+	s.router.ServeHTTP(secondTokenRequest, request)
+	if secondTokenRequest.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request for the same bearer token status = %d, want 429", secondTokenRequest.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/countries", nil)
+	request.RemoteAddr = "192.0.2.8:4321"
+	third := httptest.NewRecorder()
+	s.router.ServeHTTP(third, request)
+	if third.Code != http.StatusOK {
+		t.Fatalf("anonymous request sharing the IP status = %d, want 200", third.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/countries", nil)
+	request.RemoteAddr = "203.0.113.7:1234"
+	request.Header.Set("Authorization", "Bearer invalid-token")
+	fourth := httptest.NewRecorder()
+	s.router.ServeHTTP(fourth, request)
+	if fourth.Code != http.StatusOK {
+		t.Fatalf("invalid optional bearer request status = %d, want public read 200", fourth.Code)
+	}
+}
+
+func TestFailedMCPAuthenticationLocksOutClientIP(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Server.Token = "adm_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	cfg.Server.RateLimit.AuthFailures = config.RateLimitRuleConfig{Requests: 2, Window: 900}
+	s := newTestServerWithConfig(t, cfg)
+	request := func(token string) *httptest.ResponseRecorder {
+		payload := mcpPayload("tools/list", map[string]interface{}{})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/server/mcp", strings.NewReader(string(payload)))
+		req.RemoteAddr = "192.0.2.10:1234"
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Mcp-Method", "tools/list")
+		req.Header.Set("MCP-Protocol-Version", mcpProtocolVersion)
+		req.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		s.router.ServeHTTP(response, req)
+		return response
+	}
+	if first := request("invalid-token"); first.Code != http.StatusUnauthorized {
+		t.Fatalf("first invalid bearer status = %d, want 401", first.Code)
+	}
+	if second := request("invalid-token"); second.Code != http.StatusTooManyRequests {
+		t.Fatalf("threshold invalid bearer status = %d, want 429", second.Code)
+	}
+	if valid := request(cfg.Server.Token); valid.Code != http.StatusTooManyRequests {
+		t.Fatalf("valid bearer during IP lockout status = %d, want 429", valid.Code)
 	}
 }

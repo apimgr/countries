@@ -1,0 +1,129 @@
+{{define "page"}}{{template "public.tmpl" .}}{{end}}
+{{define "title"}}{{t .Lang "server.page.home.document_title"}}{{end}}
+{{define "meta"}}<meta name="url-prefix" content="{{.URLPrefix}}">
+<meta name="description" content="{{t .Lang "server.page.home.meta_description"}}">
+    <meta name="theme-color" content="#6366f1">
+    <link rel="manifest" href="{{path .URLPrefix "/manifest.json"}}">{{end}}
+{{define "content"}}
+<main id="main-content">
+        <!-- Hero Section -->
+        <section class="hero">
+            <div class="container">
+                <div class="hero-content">
+                    <div class="hero-badge">
+                        <span class="hero-badge-dot"></span>
+                        <span>{{t .Lang "server.page.home.api_live"}}</span>
+                    </div>
+                    <h1 class="hero-title">
+                        {{t .Lang "home.title"}}
+                    </h1>
+                    <p class="hero-description">
+                        {{t .Lang "home.description"}}
+                    </p>
+                    <div class="hero-actions">
+                        <a href="{{path .URLPrefix "/search"}}" class="btn btn-primary btn-lg">
+                            {{t .Lang "home.start_searching"}}
+                        </a>
+                        <a href="{{path .URLPrefix "/server/docs/swagger"}}" class="btn btn-secondary btn-lg">
+                            {{t .Lang "home.view_api"}}
+                        </a>
+                    </div>
+                    <div class="hero-stats">
+                        <div class="hero-stat">
+                            <div class="hero-stat-value">{{.TotalCountries}}</div>
+                            <div class="hero-stat-label">{{t .Lang "home.countries"}}</div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Features Section -->
+        <section class="features">
+            <div class="container">
+                <div class="section-header">
+                    <h2 class="section-title">{{t .Lang "server.page.home.features_heading"}}</h2>
+                    <p class="section-description">{{t .Lang "server.page.home.features_intro"}}</p>
+                </div>
+                <div class="features-grid">
+                    <a href="{{path .URLPrefix "/search"}}" class="feature-card">
+                        <div class="feature-icon">🔍</div>
+                        <h3 class="feature-title">{{t .Lang "server.page.home.search_title"}}</h3>
+                        <p class="feature-description">{{t .Lang "server.page.home.search_description"}}</p>
+                    </a>
+                    <a href="{{path .URLPrefix "/coordinates"}}" class="feature-card">
+                        <div class="feature-icon">📍</div>
+                        <h3 class="feature-title">{{t .Lang "server.page.home.geolocation_title"}}</h3>
+                        <p class="feature-description">{{t .Lang "server.page.home.geolocation_description"}}</p>
+                    </a>
+                    <a href="{{path .URLPrefix "/server/docs/swagger"}}" class="feature-card">
+                        <div class="feature-icon">⚡</div>
+                        <h3 class="feature-title">{{t .Lang "server.page.home.rest_title"}}</h3>
+                        <p class="feature-description">{{t .Lang "server.page.home.rest_description"}}</p>
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- API Preview Section -->
+        <section class="search-section">
+            <div class="container container-sm">
+                <div class="section-header">
+                    <h2 class="section-title">{{t .Lang "server.page.home.quick_start"}}</h2>
+                    <p class="section-description">{{t .Lang "server.page.home.quick_start_intro"}}</p>
+                </div>
+
+                <div class="code-block api-example">
+                    <div class="code-header">
+                        <span class="code-lang">{{t .Lang "server.page.home.example_get_all"}}</span>
+                    </div>
+                    <div class="code-content">
+                        <pre><code>curl "{{.BaseURL}}{{.APIBasePath}}/countries"</code></pre>
+                    </div>
+                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl {{.BaseURL}}{{.APIBasePath}}/countries" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
+                </div>
+
+                <div class="code-block api-example">
+                    <div class="code-header">
+                        <span class="code-lang">{{t .Lang "server.page.home.example_search"}}</span>
+                    </div>
+                    <div class="code-content">
+                        <pre><code>curl "{{.BaseURL}}{{.APIBasePath}}/countries/search?q=united"</code></pre>
+                    </div>
+                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl {{.BaseURL}}{{.APIBasePath}}/countries/search?q=united" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
+                </div>
+
+                <div class="code-block api-example">
+                    <div class="code-header">
+                        <span class="code-lang">{{t .Lang "server.page.home.example_get_by_code"}}</span>
+                    </div>
+                    <div class="code-content">
+                        <pre><code>curl "{{.BaseURL}}{{.APIBasePath}}/countries/US"</code></pre>
+                    </div>
+                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl {{.BaseURL}}{{.APIBasePath}}/countries/US" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
+                </div>
+
+                <div class="code-block api-example">
+                    <div class="code-header">
+                        <span class="code-lang">{{t .Lang "server.page.home.example_nearest"}}</span>
+                    </div>
+                    <div class="code-content">
+                        <pre><code>curl "{{.BaseURL}}{{.APIBasePath}}/coordinates?lat=40.71&amp;lon=-74.01"</code></pre>
+                    </div>
+                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl {{.BaseURL}}{{.APIBasePath}}/coordinates?lat=40.71&amp;lon=-74.01" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
+                </div>
+
+                <div class="code-block api-example">
+                    <div class="code-header">
+                        <span class="code-lang">{{t .Lang "server.page.home.example_list"}}</span>
+                    </div>
+                    <div class="code-content">
+                        <pre><code>curl "{{.BaseURL}}{{.APIBasePath}}/countries"</code></pre>
+                    </div>
+                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl {{.BaseURL}}{{.APIBasePath}}/countries" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
+                </div>
+            </div>
+        </section>
+    </main>
+{{end}}

@@ -1,0 +1,11 @@
+{{define "consent-banner"}}
+{{if not .HasConsentCookie}}
+<aside class="cookie-banner" aria-label="Cookie consent">
+  <p>{{t .Lang "consent.message"}} <a href="{{path .URLPrefix "/server/privacy"}}">{{t .Lang "consent.policy"}}</a></p>
+  <div class="cookie-buttons">
+    <form method="post" action="{{path .URLPrefix "/server/consent"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="choice" value="decline"><input type="hidden" name="redirect" value="{{path .URLPrefix .Path}}"><button type="submit">{{t .Lang "consent.decline"}}</button></form>
+    <form method="post" action="{{path .URLPrefix "/server/consent"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="choice" value="accept"><input type="hidden" name="redirect" value="{{path .URLPrefix .Path}}"><button type="submit">{{t .Lang "consent.accept"}}</button></form>
+  </div>
+</aside>
+{{end}}
+{{end}}

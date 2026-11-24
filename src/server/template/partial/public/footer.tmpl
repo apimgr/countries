@@ -1,0 +1,10 @@
+{{define "site-footer"}}
+<footer class="footer"><div class="footer-content">
+  <a class="footer-link" href="{{path .URLPrefix "/server/about"}}">{{t .Lang "nav.about"}}</a>
+  <a class="footer-link" href="{{path .URLPrefix "/server/privacy"}}">{{t .Lang "dpo.privacy"}}</a>
+  <a class="footer-link" href="{{path .URLPrefix (pageHubPath "help")}}">{{t .Lang "nav.help"}}</a>
+  <a class="footer-link" href="{{path .URLPrefix (pageHubPath "preferences")}}">{{t .Lang "preferences.title"}}</a>
+  <a class="footer-link" href="{{path .URLPrefix (pageHubPath "preferences")}}#language">{{languageName .Lang}}</a>
+</div></footer>
+
+{{end}}

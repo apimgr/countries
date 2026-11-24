@@ -1,0 +1,59 @@
+{{define "page"}}{{template "public.tmpl" .}}{{end}}
+{{define "title"}}{{t .Lang "preferences.title"}} · {{.AppName}}{{end}}
+{{define "meta"}}<meta name="url-prefix" content="{{.URLPrefix}}">
+<meta name="description" content="{{t .Lang "preferences.description"}}">{{end}}
+{{define "content"}}
+<main class="container container-md" id="main-content">
+    <header class="page-header">
+      <h1 class="page-title">{{t .Lang "preferences.title"}}</h1>
+      <p class="page-lead">{{t .Lang "preferences.description"}}</p>
+    </header>
+    <form method="post" action="{{path .URLPrefix "/server/preferences"}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="redirect" value="/server/preferences">
+      <section class="section-card" aria-labelledby="preferences-appearance"><h2 id="preferences-appearance">{{t .Lang "preferences.appearance"}}</h2>
+      <fieldset>
+        <legend>{{t .Lang "preferences.appearance"}}</legend>
+        <label for="theme">{{t .Lang "theme.label"}}</label>
+        <select id="theme" name="theme">
+          <option value="dark" {{if eq .Theme "dark"}}selected{{end}}>{{t .Lang "theme.dark"}}</option>
+          <option value="light" {{if eq .Theme "light"}}selected{{end}}>{{t .Lang "theme.light"}}</option>
+          <option value="auto" {{if eq .Theme "auto"}}selected{{end}}>{{t .Lang "theme.auto"}}</option>
+        </select>
+      </fieldset>
+      </section>
+      <section class="section-card" aria-labelledby="preferences-language"><h2 id="preferences-language">{{t .Lang "preferences.language"}}</h2>
+      <fieldset id="language">
+        <legend>{{t .Lang "preferences.language"}}</legend>
+        <label for="preference-language">{{t .Lang "nav.language"}}</label>
+        <select id="preference-language" name="lang">
+          <option value="auto" {{if eq .LanguagePreference "auto"}}selected{{end}}>{{t .Lang "language.automatic"}} ({{.DetectedLanguageName}})</option>
+          {{range .Languages}}<option lang="{{.Code}}" value="{{.Code}}" {{if eq .Code $.LanguagePreference}}selected{{end}}>{{.NativeName}}</option>{{end}}
+        </select>
+      </fieldset>
+      </section>
+      <section class="section-card" aria-labelledby="preferences-privacy"><h2 id="preferences-privacy">{{t .Lang "preferences.privacy"}}</h2>
+      <fieldset>
+        <legend>{{t .Lang "preferences.privacy"}}</legend>
+        <input type="hidden" name="consent_form" value="1">
+        <label><input type="checkbox" checked disabled> {{t .Lang "preferences.essential"}}</label>
+        <label><input type="checkbox" name="consent_preferences" {{if .ConsentPreferences}}checked{{end}}> {{t .Lang "preferences.preference_cookies"}}</label>
+        <label><input type="checkbox" name="consent_analytics" {{if .ConsentAnalytics}}checked{{end}}> {{t .Lang "preferences.analytics_cookies"}}</label>
+        {{if .ShowCCPA}}<label><input type="checkbox" name="ccpa_opt_out" {{if .CCPAOptOut}}checked{{end}}> {{t .Lang "preferences.ccpa"}}</label>{{end}}
+      </fieldset>
+      </section>
+      <div class="preference-actions">
+        <a href="{{path .URLPrefix "/server/preferences"}}">{{t .Lang "preferences.cancel"}}</a>
+        <button type="button" popovertarget="reset-warning">{{t .Lang "preferences.reset"}}</button>
+        <button type="submit">{{t .Lang "theme.save"}}</button>
+      </div>
+      <div id="reset-warning" popover>
+        <h2>{{t .Lang "preferences.forget_title"}}</h2>
+        <p>{{t .Lang "preferences.reset_warning"}}</p>
+        <button type="button" popovertarget="reset-warning" popovertargetaction="hide">{{t .Lang "preferences.keep"}}</button>
+        <button type="submit" name="action" value="reset">{{t .Lang "preferences.erase"}}</button>
+      </div>
+    </form>
+    <section class="section-card" aria-labelledby="more-preferences"><h2 id="more-preferences">{{t .Lang "preferences.more"}}</h2><ul class="hub-list">{{range .PreferencePages}}<li class="hub-item"><a class="hub-link" href="{{path $.URLPrefix .Path}}"><span class="hub-title">{{t $.Lang .TitleKey}}</span><span class="hub-desc">{{t $.Lang .DescriptionKey}}</span></a></li>{{end}}</ul></section>
+  </main>
+{{end}}

@@ -1,0 +1,7 @@
+{{define "application-nav"}}
+<nav class="nav-links" id="site-navigation" aria-label="{{t .Lang "nav.primary"}}">
+    <a href="{{path .URLPrefix "/"}}" class="nav-link{{if eq .Path "/"}} active{{end}}"{{if eq .Path "/"}} aria-current="page"{{end}}>{{t .Lang "nav.home"}}</a>
+    <a href="{{path .URLPrefix "/search"}}" class="nav-link{{if eq .Path "/search"}} active{{end}}"{{if eq .Path "/search"}} aria-current="page"{{end}}>{{t .Lang "nav.search"}}</a>
+    <a href="{{path .URLPrefix "/coordinates"}}" class="nav-link{{if eq .Path "/coordinates"}} active{{end}}"{{if eq .Path "/coordinates"}} aria-current="page"{{end}}>{{t .Lang "nav.location"}}</a>
+  </nav>
+{{end}}

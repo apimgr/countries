@@ -1,0 +1,94 @@
+{{define "page"}}{{template "public.tmpl" .}}{{end}}
+{{define "title"}}{{t .Lang "server.page.contact.document_title"}} · {{.AppName}}{{end}}
+{{define "meta"}}<meta name="url-prefix" content="{{.URLPrefix}}">
+<meta name="robots" content="noindex, nofollow">
+  <meta name="description" content="{{t .Lang "server.page.contact.purpose"}}">
+  {{if and .Type (eq .CaptchaProvider "recaptcha")}}<script src="https://www.google.com/recaptcha/api.js" async defer></script>{{end}}
+  {{if and .Type (eq .CaptchaProvider "hcaptcha")}}<script src="https://js.hcaptcha.com/1/api.js" async defer></script>{{end}}{{end}}
+{{define "content"}}
+<main class="container container-sm" id="main-content">
+    <header class="page-header">
+      <h1 class="page-title">{{if .Success}}{{t .Lang "contact.success_title"}}{{else if .Review}}{{t .Lang "contact.review_title"}}{{else}}{{t .Lang "server.page.contact.title"}}{{end}}</h1>
+      <p class="page-lead">{{t .Lang "server.page.contact.purpose"}}</p>
+    </header>
+    {{if .Error}}<p class="alert alert-danger" role="alert">{{.Error}}</p>{{end}}
+    {{if .Success}}
+    <section class="section-card" aria-labelledby="contact-success"><h2 id="contact-success">{{t .Lang "contact.success_title"}}</h2><p class="alert alert-success">{{.Success}}</p></section>
+    {{else if .Review}}
+    <div class="contact-review-backdrop"><section class="section-card contact-review-panel" aria-labelledby="review-heading">
+      <h2 id="review-heading">{{t .Lang "contact.review_title"}}</h2>
+    <form method="post" action="{{path .URLPrefix "/server/contact"}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="step" value="confirm">
+      <input type="hidden" name="type" value="{{.Type}}">
+      <input type="hidden" name="review_token" value="{{.Token}}">
+      {{range $key, $value := .Values}}<input type="hidden" name="{{$key}}" value="{{$value}}">{{end}}
+      <p class="contact-review-email">{{.Values.email}}</p>
+      <p><strong>{{t .Lang "server.page.contact.type_label"}}:</strong> {{t .Lang (printf "server.page.contact.type_%s" .Type)}} · <strong>{{t .Lang "server.page.contact.subject"}}:</strong> {{.Values.subject}}</p>
+      <label><input type="checkbox" name="confirmed" required> {{t .Lang "server.page.contact.confirm_statement"}}</label>
+      <button class="btn btn-primary" type="submit">{{t .Lang "contact.confirm"}}</button>
+    </form>
+    <form method="post" action="{{path .URLPrefix "/server/contact"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="step" value="edit"><input type="hidden" name="type" value="{{.Type}}">{{range $key,$value := .Values}}<input type="hidden" name="{{$key}}" value="{{$value}}">{{end}}<button class="btn btn-secondary" type="submit">{{t .Lang "contact.edit"}}</button></form>
+    </section></div>
+    {{else if .Type}}
+    <section class="section-card" aria-labelledby="contact-form-heading">
+      <h2 id="contact-form-heading">{{t .Lang "contact.form_title"}}</h2>
+    <form method="post" action="{{path .URLPrefix "/server/contact"}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="type" value="{{.Type}}">
+      <input type="hidden" name="form_token" value="{{.Token}}">
+      <input type="hidden" name="captcha_id" value="{{index .Values "captcha_id"}}">
+      {{if .SecurityID}}<input type="hidden" name="security_id" value="{{.SecurityID}}">{{end}}
+      <label class="contact-trap" aria-hidden="true">{{t .Lang "server.page.contact.honeypot_label"}}<input name="website" maxlength="200" tabindex="-1" autocomplete="off"></label>
+      <label>{{t .Lang "server.page.contact.name"}} <span>{{t .Lang "server.page.contact.required"}}</span><input name="name" maxlength="100" value="{{.Values.name}}" required></label>
+      <label>{{t .Lang "server.page.contact.email"}} <span>{{t .Lang "server.page.contact.required"}}</span><input name="email" type="email" maxlength="254" value="{{.Values.email}}" required></label>
+      {{if eq .Type "security"}}
+      <label>{{t .Lang "server.page.contact.researcher_gpg"}} <span>{{t .Lang "server.page.contact.optional"}}</span><textarea name="researcher_gpg" maxlength="16384">{{.Values.researcher_gpg}}</textarea></label>
+      <label>{{t .Lang "server.page.contact.component"}} <span>{{t .Lang "server.page.contact.required"}}</span><select name="component" required><option value="api"{{if eq .Values.component "api"}} selected{{end}}>{{t .Lang "server.page.contact.component_api"}}</option><option value="graphql"{{if eq .Values.component "graphql"}} selected{{end}}>{{t .Lang "server.page.contact.component_graphql"}}</option><option value="frontend"{{if eq .Values.component "frontend"}} selected{{end}}>{{t .Lang "server.page.contact.component_frontend"}}</option><option value="cli"{{if eq .Values.component "cli"}} selected{{end}}>{{t .Lang "server.page.contact.component_cli"}}</option><option value="data"{{if eq .Values.component "data"}} selected{{end}}>{{t .Lang "server.page.contact.component_data"}}</option><option value="deployment"{{if eq .Values.component "deployment"}} selected{{end}}>{{t .Lang "server.page.contact.component_deployment"}}</option><option value="other"{{if eq .Values.component "other"}} selected{{end}}>{{t .Lang "server.page.contact.other"}}</option></select></label>
+      <label>{{t .Lang "server.page.contact.other_component"}} <span>{{t .Lang "server.page.contact.required_when_other"}}</span><input name="component_other" maxlength="255" value="{{.Values.component_other}}"></label>
+      <label>{{t .Lang "server.page.contact.endpoint"}} <span>{{t .Lang "server.page.contact.optional"}}</span><input name="endpoint" maxlength="2048" value="{{.Values.endpoint}}"></label>
+      <label>{{t .Lang "server.page.contact.severity"}} <span>{{t .Lang "server.page.contact.required"}}</span><select name="severity" required><option value="critical"{{if eq .Values.severity "critical"}} selected{{end}}>{{t .Lang "server.page.contact.severity_critical"}}</option><option value="high"{{if eq .Values.severity "high"}} selected{{end}}>{{t .Lang "server.page.contact.severity_high"}}</option><option value="medium"{{if eq .Values.severity "medium"}} selected{{end}}>{{t .Lang "server.page.contact.severity_medium"}}</option><option value="low"{{if eq .Values.severity "low"}} selected{{end}}>{{t .Lang "server.page.contact.severity_low"}}</option><option value="informational"{{if eq .Values.severity "informational"}} selected{{end}}>{{t .Lang "server.page.contact.severity_informational"}}</option></select></label>
+      <label>{{t .Lang "server.page.contact.summary"}} <span>{{t .Lang "server.page.contact.required"}}</span><input name="summary" maxlength="200" value="{{.Values.summary}}" required></label>
+      <label>{{t .Lang "server.page.contact.steps"}} <span>{{t .Lang "server.page.contact.required"}}</span><textarea name="steps" maxlength="10000" required>{{.Values.steps}}</textarea></label>
+      <label>{{t .Lang "server.page.contact.impact"}} <span>{{t .Lang "server.page.contact.required"}}</span><textarea name="impact" maxlength="5000" required>{{.Values.impact}}</textarea></label>
+      <label>{{t .Lang "server.page.contact.suggested_fix"}} <span>{{t .Lang "server.page.contact.optional"}}</span><textarea name="suggested_fix" maxlength="5000">{{.Values.suggested_fix}}</textarea></label>
+      <label><input type="checkbox" name="cve_requested"{{if eq .Values.cve_requested "on"}} checked{{end}}> {{t .Lang "server.page.contact.request_cve"}} ({{t .Lang "server.page.contact.optional"}})</label>
+      <label>{{t .Lang "server.page.contact.disclosure_days"}} <span>{{t .Lang "server.page.contact.optional"}}</span><input name="disclosure_days" inputmode="numeric" value="{{if .Values.disclosure_days}}{{.Values.disclosure_days}}{{else}}90{{end}}"></label>
+      <label>{{t .Lang "server.page.contact.credit_preference"}} <span>{{t .Lang "server.page.contact.required"}}</span><select name="credit_preference" required><option value="no"{{if eq .Values.credit_preference "no"}} selected{{end}}>{{t .Lang "server.page.contact.credit_no"}}</option><option value="real_name"{{if eq .Values.credit_preference "real_name"}} selected{{end}}>{{t .Lang "server.page.contact.credit_real_name"}}</option><option value="handle"{{if eq .Values.credit_preference "handle"}} selected{{end}}>{{t .Lang "server.page.contact.credit_handle_option"}}</option><option value="anonymous"{{if eq .Values.credit_preference "anonymous"}} selected{{end}}>{{t .Lang "server.page.contact.credit_anonymous"}}</option></select></label>
+      <label>{{t .Lang "server.page.contact.credit_handle_label"}} <span>{{t .Lang "server.page.contact.required_when_handle"}}</span><input name="credit_handle" maxlength="100" value="{{.Values.credit_handle}}"></label>
+      <label><input type="checkbox" name="coordinated_disclosure" required{{if eq .Values.coordinated_disclosure "on"}} checked{{end}}> {{t .Lang "server.page.contact.coordinated_disclosure"}}</label>
+      <input type="hidden" name="app_version" value="{{.Values.app_version}}"><input type="hidden" name="commit_hash" value="{{.Values.commit_hash}}"><input type="hidden" name="timestamp" value="{{.Values.timestamp}}"><input type="hidden" name="request_user_agent" value="{{.Values.request_user_agent}}">
+      {{else if eq .Type "abuse"}}
+      <label>{{t .Lang "server.page.contact.reported_url"}} <span>{{t .Lang "server.page.contact.required"}}</span><input name="reported_url" type="url" maxlength="2048" value="{{.Values.reported_url}}" required><small>{{t .Lang "server.page.contact.reported_url_help"}} https://{{.FQDN}}/...</small></label>
+      <label>{{t .Lang "server.page.contact.reason"}} <span>{{t .Lang "server.page.contact.required"}}</span><select name="reason" required><option value="">{{t .Lang "server.page.contact.choose"}}</option><option value="illegal_content"{{if eq .Values.reason "illegal_content"}} selected{{end}}>{{t .Lang "server.page.contact.reason_illegal_content"}}</option><option value="terms_violation"{{if eq .Values.reason "terms_violation"}} selected{{end}}>{{t .Lang "server.page.contact.reason_terms_violation"}}</option><option value="harassment"{{if eq .Values.reason "harassment"}} selected{{end}}>{{t .Lang "server.page.contact.reason_harassment"}}</option><option value="malware_phishing"{{if eq .Values.reason "malware_phishing"}} selected{{end}}>{{t .Lang "server.page.contact.reason_malware_phishing"}}</option><option value="other"{{if eq .Values.reason "other"}} selected{{end}}>{{t .Lang "server.page.contact.other"}}</option></select></label>
+      {{else if eq .Type "dmca"}}
+      <label>{{t .Lang "server.page.contact.reported_url"}} <span>{{t .Lang "server.page.contact.required"}}</span><input name="reported_url" type="url" maxlength="2048" value="{{.Values.reported_url}}" required><small>{{t .Lang "server.page.contact.reported_url_help"}} https://{{.FQDN}}/...</small></label>
+      <label>{{t .Lang "server.page.contact.copyrighted_work"}} <span>{{t .Lang "server.page.contact.required"}}</span><textarea name="copyrighted_work" maxlength="2000" required>{{.Values.copyrighted_work}}</textarea></label>
+      <label><input type="checkbox" name="good_faith" required{{if eq .Values.good_faith "on"}} checked{{end}}> <span>{{t .Lang "server.page.contact.required"}}</span> {{t .Lang "server.page.contact.good_faith_statement"}}</label>
+      <label><input type="checkbox" name="accuracy" required{{if eq .Values.accuracy "on"}} checked{{end}}> <span>{{t .Lang "server.page.contact.required"}}</span> {{t .Lang "server.page.contact.accuracy_statement"}}</label>
+      <label>{{t .Lang "server.page.contact.signature"}} <span>{{t .Lang "server.page.contact.required"}}</span><input name="signature" maxlength="100" value="{{.Values.signature}}" required></label>
+      {{else if eq .Type "privacy"}}
+      <label>{{t .Lang "server.page.contact.request_kind"}} <span>{{t .Lang "server.page.contact.required"}}</span><select name="request_kind" required><option value="">{{t .Lang "server.page.contact.choose"}}</option><option value="access"{{if eq .Values.request_kind "access"}} selected{{end}}>{{t .Lang "server.page.contact.request_access"}}</option><option value="export"{{if eq .Values.request_kind "export"}} selected{{end}}>{{t .Lang "server.page.contact.request_export"}}</option><option value="deletion"{{if eq .Values.request_kind "deletion"}} selected{{end}}>{{t .Lang "server.page.contact.request_deletion"}}</option><option value="correction"{{if eq .Values.request_kind "correction"}} selected{{end}}>{{t .Lang "server.page.contact.request_correction"}}</option><option value="opt_out"{{if eq .Values.request_kind "opt_out"}} selected{{end}}>{{t .Lang "server.page.contact.request_opt_out"}}</option><option value="other"{{if eq .Values.request_kind "other"}} selected{{end}}>{{t .Lang "server.page.contact.other"}}</option></select></label>
+      {{end}}
+      {{if ne .Type "security"}}<label>{{t .Lang "server.page.contact.subject"}} <span>{{t .Lang "server.page.contact.required"}}</span><input name="subject" maxlength="200" value="{{.Values.subject}}" required></label>
+      <label>{{t .Lang "server.page.contact.message"}} <span>{{t .Lang "server.page.contact.required"}}</span><textarea name="message" maxlength="5000" required>{{.Values.message}}</textarea></label>{{end}}
+      {{if eq .CaptchaProvider "recaptcha"}}<div class="g-recaptcha" data-sitekey="{{.CaptchaSiteKey}}"></div><noscript><label>{{t .Lang "contact.captcha.solve"}} {{.Challenge}} <input name="captcha_answer" inputmode="numeric" required></label><input type="hidden" name="captcha_id" value="{{index .Values "captcha_id"}}"></noscript>{{else if eq .CaptchaProvider "hcaptcha"}}<div class="h-captcha" data-sitekey="{{.CaptchaSiteKey}}"></div><noscript><label>{{t .Lang "contact.captcha.solve"}} {{.Challenge}} <input name="captcha_answer" inputmode="numeric" required></label><input type="hidden" name="captcha_id" value="{{index .Values "captcha_id"}}"></noscript>{{else}}<label>{{t .Lang "contact.captcha.solve"}} {{.Challenge}} <span>{{t .Lang "server.page.contact.required"}}</span><input name="captcha_answer" inputmode="numeric" required></label>{{end}}
+      <input type="hidden" name="step" value="submit">
+      <button class="btn btn-primary" type="submit">{{t .Lang "contact.review"}}</button>
+    </form>
+    <p>{{t .Lang "server.page.contact.security_pointer"}} <a href="{{path .URLPrefix "/server/security"}}">/server/security</a>.</p>
+    </section>
+    {{else}}
+    <section class="section-card" aria-labelledby="contact-chooser-heading">
+      <h2 id="contact-chooser-heading">{{t .Lang "contact.choose_type"}}</h2>
+      <ul class="hub-list">
+        <li><a class="hub-link" href="{{path .URLPrefix "/server/contact"}}?type=abuse"><span class="hub-title">{{t .Lang "contact.type_abuse"}}</span></a></li>
+        <li><a class="hub-link" href="{{path .URLPrefix "/server/contact"}}?type=dmca"><span class="hub-title">{{t .Lang "contact.type_dmca"}}</span></a></li>
+        <li><a class="hub-link" href="{{path .URLPrefix "/server/contact"}}?type=privacy"><span class="hub-title">{{t .Lang "contact.type_privacy"}}</span></a></li>
+      </ul>
+    </section>
+    <section class="section-card" aria-labelledby="contact-security"><h2 id="contact-security">{{t .Lang "contact.security_issues"}}</h2><p>{{t .Lang "server.page.contact.security_pointer"}} <a href="{{path .URLPrefix "/server/security"}}">/server/security</a>.</p></section>
+    <section class="section-card" aria-labelledby="contact-abuse"><h2 id="contact-abuse">{{t .Lang "contact.abuse_reports"}}</h2><p>{{t .Lang "server.page.contact.abuse_pointer"}}{{if .AbuseEmail}} {{t .Lang "contact.abuse_email"}} <a href="mailto:{{.AbuseEmail}}">{{.AbuseEmail}}</a>{{end}}</p></section>
+    {{end}}
+  </main>
+{{end}}

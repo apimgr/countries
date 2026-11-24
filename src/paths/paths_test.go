@@ -7,6 +7,32 @@ import (
 	"testing"
 )
 
+func testTempDir(t *testing.T) string {
+	t.Helper()
+	directory, err := CreateTempDir("countries")
+	if err != nil {
+		t.Fatalf("CreateTempDir() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(directory); err != nil {
+			t.Fatalf("remove temporary directory: %v", err)
+		}
+	})
+	return directory
+}
+
+func TestIsContainerTreatsSystemManagersAsHost(t *testing.T) {
+	t.Setenv("RC_SVCNAME", "countries")
+	if IsContainer() {
+		t.Fatal("OpenRC service process was detected as an application container")
+	}
+	t.Setenv("RC_SVCNAME", "")
+	t.Setenv("INVOCATION_ID", "test-unit")
+	if IsContainer() {
+		t.Fatal("systemd service process was detected as an application container")
+	}
+}
+
 // Tests for the environment-variable override paths, since those are
 // deterministic across any OS/container/user without needing root.
 func TestGetConfigDir_EnvOverride(t *testing.T) {
@@ -24,9 +50,25 @@ func TestGetDataDir_EnvOverride(t *testing.T) {
 }
 
 func TestGetLogsDir_EnvOverride(t *testing.T) {
+	t.Setenv("LOG_DIR", "")
 	t.Setenv("LOGS_DIR", "/custom/logs")
 	if got := GetLogsDir("app"); got != "/custom/logs" {
 		t.Errorf("GetLogsDir() = %q, want %q", got, "/custom/logs")
+	}
+}
+
+func TestGetLogsDirPrefersCanonicalEnvOverride(t *testing.T) {
+	t.Setenv("LOGS_DIR", "/legacy/logs")
+	t.Setenv("LOG_DIR", "/custom/logs")
+	if got := GetLogsDir("app"); got != "/custom/logs" {
+		t.Errorf("GetLogsDir() = %q, want canonical LOG_DIR", got)
+	}
+}
+
+func TestGetCacheDirEnvOverride(t *testing.T) {
+	t.Setenv("CACHE_DIR", "/custom/cache")
+	if got := GetCacheDir("app"); got != "/custom/cache" {
+		t.Errorf("GetCacheDir() = %q, want /custom/cache", got)
 	}
 }
 
@@ -47,15 +89,13 @@ func TestGetConfigDir_EmptyEnvFallsThrough(t *testing.T) {
 	}
 }
 
-// Inside a container isContainer() short-circuits to a fixed path
-// ("/config") that intentionally omits appName; outside a container the
-// path is derived per-OS and must embed appName.
+// Container and native defaults are scoped to the application name.
 func TestGetConfigDir_ContainsAppName(t *testing.T) {
 	t.Setenv("CONFIG_DIR", "")
 	got := GetConfigDir("myapp")
 	if isContainer() {
-		if got != "/config" {
-			t.Errorf("GetConfigDir() in container = %q, want /config", got)
+		if got != "/config/myapp" {
+			t.Errorf("GetConfigDir() in container = %q, want /config/myapp", got)
 		}
 		return
 	}
@@ -64,15 +104,13 @@ func TestGetConfigDir_ContainsAppName(t *testing.T) {
 	}
 }
 
-// Inside a container isContainer() short-circuits to a fixed path
-// ("/data") that intentionally omits appName; outside a container the
-// path is derived per-OS and must embed appName.
+// Container and native defaults are scoped to the application name.
 func TestGetDataDir_ContainsAppName(t *testing.T) {
 	t.Setenv("DATA_DIR", "")
 	got := GetDataDir("myapp")
 	if isContainer() {
-		if got != "/data" {
-			t.Errorf("GetDataDir() in container = %q, want /data", got)
+		if got != "/data/myapp" {
+			t.Errorf("GetDataDir() in container = %q, want /data/myapp", got)
 		}
 		return
 	}
@@ -81,15 +119,14 @@ func TestGetDataDir_ContainsAppName(t *testing.T) {
 	}
 }
 
-// Inside a container isContainer() short-circuits to a fixed path
-// ("/logs") that intentionally omits appName; outside a container the
-// path is derived per-OS and must embed appName.
+// Container and native defaults are scoped to the application name.
 func TestGetLogsDir_ContainsAppName(t *testing.T) {
+	t.Setenv("LOG_DIR", "")
 	t.Setenv("LOGS_DIR", "")
 	got := GetLogsDir("myapp")
 	if isContainer() {
-		if got != "/logs" {
-			t.Errorf("GetLogsDir() in container = %q, want /logs", got)
+		if got != "/data/log/myapp" {
+			t.Errorf("GetLogsDir() in container = %q, want /data/log/myapp", got)
 		}
 		return
 	}
@@ -101,6 +138,7 @@ func TestGetLogsDir_ContainsAppName(t *testing.T) {
 func TestGetDefaultDirs(t *testing.T) {
 	t.Setenv("CONFIG_DIR", "/cfg")
 	t.Setenv("DATA_DIR", "/data")
+	t.Setenv("LOG_DIR", "")
 	t.Setenv("LOGS_DIR", "/logs")
 
 	cfg, data, logs := GetDefaultDirs("app")
@@ -111,7 +149,7 @@ func TestGetDefaultDirs(t *testing.T) {
 
 // EnsureDir must create nested directories that do not yet exist.
 func TestEnsureDir(t *testing.T) {
-	base := t.TempDir()
+	base := testTempDir(t)
 	nested := filepath.Join(base, "a", "b", "c")
 
 	if err := EnsureDir(nested); err != nil {
@@ -129,7 +167,7 @@ func TestEnsureDir(t *testing.T) {
 
 // EnsureDir on an already-existing directory must be idempotent.
 func TestEnsureDir_Idempotent(t *testing.T) {
-	base := t.TempDir()
+	base := testTempDir(t)
 
 	if err := EnsureDir(base); err != nil {
 		t.Fatalf("first EnsureDir() error = %v", err)
@@ -140,7 +178,7 @@ func TestEnsureDir_Idempotent(t *testing.T) {
 }
 
 func TestEnsureDirs(t *testing.T) {
-	base := t.TempDir()
+	base := testTempDir(t)
 	dir1 := filepath.Join(base, "one")
 	dir2 := filepath.Join(base, "two")
 
@@ -162,10 +200,113 @@ func TestEnsureDirs_Empty(t *testing.T) {
 	}
 }
 
+func TestEnsurePrivateTreeSecuresNestedDirectoriesAndFiles(t *testing.T) {
+	base := testTempDir(t)
+	root := filepath.Join(base, "private")
+	nested := filepath.Join(root, "tor", "site")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(root, "server.yml")
+	if err := os.WriteFile(config, []byte("server: {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(nested, "private.key")
+	if err := os.WriteFile(key, []byte("private"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePrivateTree(root); err != nil {
+		t.Fatalf("EnsurePrivateTree() error = %v", err)
+	}
+	for _, path := range []string{root, filepath.Join(root, "tor"), nested} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat private directory %s: %v", path, err)
+		}
+		if got := info.Mode().Perm(); got != 0700 {
+			t.Errorf("directory %s permissions = %04o, want 0700", path, got)
+		}
+	}
+	for _, path := range []string{config, key} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat private file %s: %v", path, err)
+		}
+		if got := info.Mode().Perm(); got != 0600 {
+			t.Errorf("file %s permissions = %04o, want 0600", path, got)
+		}
+	}
+}
+
+func TestEnsurePrivateTreeRejectsSymlinks(t *testing.T) {
+	base := testTempDir(t)
+	root := filepath.Join(base, "private")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(base, "outside")
+	if err := os.WriteFile(outside, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsurePrivateTree(root); err == nil {
+		t.Fatal("EnsurePrivateTree() accepted a symlink")
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil || string(data) != "keep" {
+		t.Fatalf("symlink target changed: %q, err=%v", data, err)
+	}
+}
+
 func TestGetBackupDir_ContainsAppName(t *testing.T) {
+	t.Setenv("BACKUP_DIR", "")
 	got := GetBackupDir("myapp")
 	if !strings.Contains(got, "myapp") {
 		t.Errorf("GetBackupDir() = %q, want it to contain appName", got)
+	}
+}
+
+func TestCreateTempDirUsesProjectNamespaceAndPrivatePermissions(t *testing.T) {
+	tempRoot := filepath.Join(os.TempDir(), orgName)
+	if err := os.MkdirAll(tempRoot, 0755); err != nil {
+		t.Fatalf("create temp namespace: %v", err)
+	}
+	tempBase, err := os.MkdirTemp(tempRoot, "countries-test-")
+	if err != nil {
+		t.Fatalf("create test temp base: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tempBase) })
+	t.Setenv("TMPDIR", tempBase)
+	dir, err := CreateTempDir("countries")
+	if err != nil {
+		t.Fatalf("CreateTempDir() error = %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	if filepath.Dir(filepath.Dir(dir)) != os.TempDir() {
+		t.Errorf("CreateTempDir() = %q, want a directory nested below the OS temp root and project namespace", dir)
+	}
+	if filepath.Base(filepath.Dir(dir)) != orgName {
+		t.Errorf("CreateTempDir() parent = %q, want %q", filepath.Base(filepath.Dir(dir)), orgName)
+	}
+	if !strings.HasPrefix(filepath.Base(dir), "countries-") {
+		t.Errorf("CreateTempDir() basename = %q, want countries- prefix", filepath.Base(dir))
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat temp directory: %v", err)
+	}
+	if info.Mode().Perm() != 0700 {
+		t.Errorf("temp directory permissions = %04o, want 0700", info.Mode().Perm())
+	}
+}
+
+func TestCreateTempDirRejectsPathNames(t *testing.T) {
+	for _, name := range []string{"", "..", "../other", "/tmp/other"} {
+		if _, err := CreateTempDir(name); err == nil {
+			t.Errorf("CreateTempDir(%q) succeeded, want invalid-name error", name)
+		}
 	}
 }
 

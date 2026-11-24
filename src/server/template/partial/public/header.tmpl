@@ -1,0 +1,28 @@
+{{define "theme-preference"}}
+<form class="theme-toggle-form" method="post" action="{{path .URLPrefix "/server/preferences"}}">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="theme" value="{{nextTheme .Theme}}">
+  <input type="hidden" name="redirect" value="{{path .URLPrefix .Path}}">
+  <button type="submit" aria-label="{{t .Lang "theme.switch"}}" title="{{t .Lang "theme.switch"}}">{{themeName .Lang (nextTheme .Theme)}}</button>
+</form>
+{{end}}
+{{define "site-header"}}
+<input type="checkbox" id="nav-toggle" class="nav-checkbox" hidden>
+<header class="header">
+  <a href="{{path .URLPrefix "/"}}" class="nav-brand">{{.AppName}}</a>
+  {{template "application-nav" .}}
+  <label for="nav-toggle" class="nav-toggle" aria-label="{{t .Lang "nav.toggle"}}">☰</label>
+  <div class="header-actions">
+    <a href="{{path .URLPrefix "/server/preferences"}}" class="header-link">{{t .Lang "preferences.title"}}</a>
+    {{template "theme-preference" .}}
+  </div>
+  {{with operatorHTML .Request "header"}}{{.}}{{end}}
+</header>
+<div class="nav-panel" id="nav-panel">
+  <label for="nav-toggle" class="nav-close" aria-label="{{t .Lang "nav.close"}}">✕</label>
+  <a href="{{path .URLPrefix "/"}}"{{if eq .Path "/"}} aria-current="page"{{end}}>{{t .Lang "nav.home"}}</a>
+  <a href="{{path .URLPrefix "/search"}}"{{if eq .Path "/search"}} aria-current="page"{{end}}>{{t .Lang "nav.search"}}</a>
+  <a href="{{path .URLPrefix "/coordinates"}}"{{if eq .Path "/coordinates"}} aria-current="page"{{end}}>{{t .Lang "nav.location"}}</a>
+</div>
+<label for="nav-toggle" class="nav-overlay" aria-label="{{t .Lang "nav.close"}}"></label>
+{{end}}

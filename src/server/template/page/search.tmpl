@@ -1,0 +1,99 @@
+{{define "page"}}{{template "public.tmpl" .}}{{end}}
+{{define "title"}}{{t .Lang "server.page.search.document_title"}}{{end}}
+{{define "meta"}}<meta name="url-prefix" content="{{.URLPrefix}}">
+<meta name="description" content="{{t .Lang "search.description"}}">
+    <meta name="api-base-path" content="{{.APIBasePath}}">
+    <meta name="theme-color" content="#6366f1">
+    <link rel="manifest" href="{{path .URLPrefix "/manifest.json"}}">{{end}}
+{{define "content"}}
+<main id="main-content">
+        <!-- Search Section -->
+        <section class="search-section">
+            <div class="container container-sm">
+                <div class="section-header">
+                    <h1 class="section-title">{{t .Lang "search.title"}}</h1>
+                    <p class="section-description">{{t .Lang "search.description"}}</p>
+                </div>
+
+                <form id="searchForm" class="search-form" method="get" action="{{path .URLPrefix "/search"}}"
+                    data-result-count-one="{{t .Lang "server.page.search.result_count_one"}}"
+                    data-result-count-many="{{t .Lang "server.page.search.result_count_many"}}"
+                    data-capital-label="{{t .Lang "server.page.search.capital"}}"
+                    data-latitude-label="{{t .Lang "server.page.search.latitude"}}"
+                    data-longitude-label="{{t .Lang "server.page.search.longitude"}}"
+                    data-timezones-label="{{t .Lang "server.page.search.timezones"}}"
+                    data-not-available="{{t .Lang "server.page.search.not_available"}}"
+                    data-error-title="{{t .Lang "server.page.search.error_title"}}"
+                    data-error-description="{{t .Lang "server.page.search.error_description"}}">
+                    <div class="form-group">
+                        <label for="query" class="form-label">{{t .Lang "search.label"}}</label>
+                        <input
+                            type="text"
+                            id="query"
+                            name="q"
+                            class="form-input form-input-lg"
+                            placeholder="{{t .Lang "search.placeholder"}}"
+                            value="{{.Query}}"
+                            required
+                            minlength="2"
+                            autocomplete="off"
+                        >
+                        <p class="form-hint">{{t .Lang "search.hint"}}</p>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-lg btn-block">
+                        <span class="btn-icon">🔍</span>
+                        {{t .Lang "search.submit"}}
+                    </button>
+                </form>
+
+                {{if .HasSearch}}
+                <section class="results-section" aria-labelledby="server-results-title">
+                    <div class="results-header">
+                        <h2 class="results-title" id="server-results-title">{{t .Lang "search.results"}}</h2>
+                        <span class="results-count">{{len .Results}} {{t .Lang "search.count"}}</span>
+                    </div>
+                    {{if .Results}}
+                    <div class="results-grid">
+                        {{range .Results}}
+                        <article class="result-card">
+                            <div class="result-card-header">
+                                <h3 class="result-card-title">{{.Flag}} {{.Name.Common}}</h3>
+                                <span class="result-card-badge">{{.CCA2}}</span>
+                            </div>
+                            <p>{{.Name.Official}}</p>
+                            <p>{{.Region}}{{if .Subregion}} · {{.Subregion}}{{end}}</p>
+                            <a href="{{path $.URLPrefix "/search"}}?q={{urlquery .CCA2}}">{{t $.Lang "server.page.search.view_matching_record"}}</a>
+                        </article>
+                        {{end}}
+                    </div>
+                    {{else}}
+                    <p>{{t .Lang "search.no_results"}}</p>
+                    {{end}}
+                </section>
+                {{end}}
+
+                <!-- Loading State -->
+                <div id="loading" class="loading-state" aria-live="polite" hidden>
+                    <div class="loading-spinner"></div>
+                    <p>{{t .Lang "server.page.search.loading"}}</p>
+                </div>
+
+                <!-- Results Section -->
+                <section id="results" class="results-section" aria-live="polite" hidden>
+                    <div class="results-header">
+                        <h2 class="results-title">{{t .Lang "search.results"}}</h2>
+                        <span id="resultCount" class="results-count"></span>
+                    </div>
+                    <div id="resultsList" class="results-grid"></div>
+                </section>
+
+                <!-- Empty State -->
+                <div id="emptyState" class="empty-state" hidden>
+                    <div class="empty-state-icon">🔍</div>
+                    <h3 class="empty-state-title">{{t .Lang "server.page.search.no_countries"}}</h3>
+                    <p class="empty-state-description">{{t .Lang "server.page.search.try_different_query"}}</p>
+                </div>
+            </div>
+        </section>
+    </main>
+{{end}}

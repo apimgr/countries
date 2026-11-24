@@ -105,12 +105,12 @@ func (q *queryResolver) Stats() *statsResolver {
 func (r *countryResolver) Name() *countryNameResolver {
 	return &countryNameResolver{value: r.value.Name}
 }
-func (r *countryResolver) Cca2() string { return r.value.CCA2 }
-func (r *countryResolver) Cca3() string { return r.value.CCA3 }
+func (r *countryResolver) Cca2() string        { return r.value.CCA2 }
+func (r *countryResolver) Cca3() string        { return r.value.CCA3 }
 func (r *countryResolver) NumericCode() string { return r.value.NumericCode }
-func (r *countryResolver) Capital() []string { return r.value.Capital }
-func (r *countryResolver) Region() string { return r.value.Region }
-func (r *countryResolver) Subregion() string { return r.value.Subregion }
+func (r *countryResolver) Capital() []string   { return r.value.Capital }
+func (r *countryResolver) Region() string      { return r.value.Region }
+func (r *countryResolver) Subregion() string   { return r.value.Subregion }
 func (r *countryResolver) Currencies() []*currencyResolver {
 	codes := make([]string, 0, len(r.value.Currencies))
 	for code := range r.value.Currencies {
@@ -149,17 +149,17 @@ func (r *countryResolver) PopulationYear() *int32 {
 	value := int32(r.value.PopulationYear)
 	return &value
 }
-func (r *countryResolver) Area() float64 { return r.value.Area }
-func (r *countryResolver) Flag() string { return r.value.Flag }
-func (r *countryResolver) FlagSvgURL() string { return r.value.FlagSVGURL }
+func (r *countryResolver) Area() float64       { return r.value.Area }
+func (r *countryResolver) Flag() string        { return r.value.Flag }
+func (r *countryResolver) FlagSvgURL() string  { return r.value.FlagSVGURL }
 func (r *countryResolver) Timezones() []string { return r.value.Timezones }
-func (r *countryResolver) Latlng() []float64 { return r.value.LatLng }
-func (r *countryResolver) Borders() []string { return r.value.Borders }
-func (r *countryResolver) Tld() []string { return r.value.TLD }
+func (r *countryResolver) Latlng() []float64   { return r.value.LatLng }
+func (r *countryResolver) Borders() []string   { return r.value.Borders }
+func (r *countryResolver) Tld() []string       { return r.value.TLD }
 
 type countryNameResolver struct{ value countries.CountryName }
 
-func (r *countryNameResolver) Common() string { return r.value.Common }
+func (r *countryNameResolver) Common() string   { return r.value.Common }
 func (r *countryNameResolver) Official() string { return r.value.Official }
 
 type currencyResolver struct {
@@ -167,8 +167,8 @@ type currencyResolver struct {
 	value countries.Currency
 }
 
-func (r *currencyResolver) Code() string { return r.code }
-func (r *currencyResolver) Name() string { return r.value.Name }
+func (r *currencyResolver) Code() string   { return r.code }
+func (r *currencyResolver) Name() string   { return r.value.Name }
 func (r *currencyResolver) Symbol() string { return r.value.Symbol }
 
 type languageResolver struct {
@@ -185,4 +185,4 @@ func (r *distanceResolver) Country() *countryResolver {
 func (r *distanceResolver) Distance() float64 { return r.value.Distance }
 
 func (r *statsResolver) TotalCountries() int32 { return r.total }
-func (r *statsResolver) Version() string { return r.version }
+func (r *statsResolver) Version() string       { return r.version }

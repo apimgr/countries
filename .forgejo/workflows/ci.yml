@@ -1,0 +1,199 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Weekly security run (Monday 06:00 UTC) — only security jobs run on schedule
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CGO_ENABLED: "0"
+  GOFLAGS: -buildvcs=false
+  GOMODCACHE: /tmp/countries-go-cache/mod
+  GOCACHE: /tmp/countries-go-cache/build
+
+concurrency:
+  group: ${{ forgejo.workflow }}-${{ forgejo.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    if: forgejo.event_name != 'schedule'
+    runs-on: ubuntu-26.04
+    container:
+      image: casjaysdev/go:latest
+      options: "--user 0:0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.2.4
+        with:
+          path: /tmp/countries-go-cache
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+      - run: go vet ./...
+      - run: staticcheck ./...
+
+  secret-scan:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Full history — truffleHog scans the commit range
+          fetch-depth: 0
+      # Empty base/head = full-history scan (schedule runs and new-branch pushes)
+      - name: Determine scan range
+        id: range
+        run: |
+          BASE=""; HEAD=""
+          if [ "${{ forgejo.event_name }}" = "push" ] && [ "${{ forgejo.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            BASE="${{ forgejo.event.before }}"; HEAD="${{ forgejo.sha }}"
+          elif [ "${{ forgejo.event_name }}" = "pull_request" ]; then
+            BASE="${{ forgejo.event.pull_request.base.sha }}"; HEAD="${{ forgejo.event.pull_request.head.sha }}"
+          fi
+          echo "base=$BASE" >> "$FORGEJO_OUTPUT"
+          echo "head=$HEAD" >> "$FORGEJO_OUTPUT"
+      - name: Scan for secrets (truffleHog)
+        uses: trufflesecurity/trufflehog@b2b0a92070f206ab7b5a1105d82a7f2f48d92341  # v3.99.0
+        with:
+          base: ${{ steps.range.outputs.base }}
+          head: ${{ steps.range.outputs.head }}
+          # Range scans (push/PR) block on verified AND unknown; a full-history scan (empty base) blocks only on verified
+          extra_args: --results=${{ steps.range.outputs.base == '' && 'verified' || 'verified,unknown' }} --exclude-paths=.github/trufflehog-exclude.txt
+
+  workflow-policy:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Enforce SHA-pinned third-party actions
+        run: |
+          # Every third-party action must be pinned to a full 40-char commit SHA
+          bad=$(grep -RnE '^[[:space:]]*uses:' .github/ .gitea/ .forgejo/ 2>/dev/null | grep -vE '@[0-9a-f]{40}([[:space:]]|$)' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::unpinned actions found:"
+            echo "$bad"
+            exit 1
+          fi
+          if grep -R -nE '^[[:space:]]*pull_request_target:' .github/ .gitea/ .forgejo/; then
+            echo "::error::pull_request_target must not run untrusted project code"
+            exit 1
+          fi
+
+  test:
+    if: forgejo.event_name != 'schedule'
+    runs-on: ubuntu-26.04
+    container:
+      image: casjaysdev/go:latest
+      options: "--user 0:0"
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.2.4
+        with:
+          path: /tmp/countries-go-cache
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+      - name: Run tests with coverage
+        run: |
+          TEMP_ROOT="${TMPDIR:-/tmp}/${{ forgejo.repository_owner }}"
+          mkdir -p "$TEMP_ROOT"
+          COVDIR=$(mktemp -d "$TEMP_ROOT/$(basename "${{ forgejo.repository }}")-XXXXXX")
+          export TMPDIR="$COVDIR"
+          echo "COVDIR=$COVDIR" >> "$FORGEJO_ENV"
+          go test -cover -coverprofile="$COVDIR/coverage.out" ./...
+      - name: Enforce coverage threshold
+        run: |
+          THRESHOLD=60
+          PCT=$(go tool cover -func="$COVDIR/coverage.out" | awk '/^total:/ {gsub("%","",$3); print int($3)}')
+          if [ "$PCT" -lt "$THRESHOLD" ]; then
+            echo "::error::coverage $PCT% < threshold $THRESHOLD%"
+            exit 1
+          fi
+
+  build:
+    if: forgejo.event_name != 'schedule'
+    needs: [lint, test]
+    runs-on: ubuntu-26.04
+    container:
+      image: casjaysdev/go:latest
+      options: "--user 0:0"
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.2.4
+        with:
+          path: /tmp/countries-go-cache
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+      - run: go build -buildvcs=false ./...
+
+  vuln-scan:
+    runs-on: ubuntu-26.04
+    container:
+      image: casjaysdev/go:latest
+      options: "--user 0:0"
+    env:
+      GOFLAGS: -buildvcs=false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.2.4
+        with:
+          path: /tmp/countries-go-cache
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+      - run: govulncheck ./...
+
+  image-scan:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Build image for scanning
+        # Only when the project ships a Docker image
+        if: hashFiles('docker/Dockerfile') != ''
+        run: |
+          docker build -t local/scan-target:ci -f docker/Dockerfile .
+          docker build -t local/scan-target:devel -f docker/Dockerfile.dev .
+      - name: Verify runtime image and Tor health
+        if: hashFiles('docker/Dockerfile') != ''
+        run: |
+          set -eu
+          for image in local/scan-target:ci local/scan-target:devel; do
+            for command in bash curl tor i2pd tini; do
+              docker run --rm --entrypoint sh "$image" -c "command -v ${command} >/dev/null"
+            done
+            container="countries-image-check-$(date +%s)-$$"
+            trap 'docker rm --force "$container" >/dev/null 2>&1 || true' EXIT
+            docker run --detach --name "$container" "$image"
+            deadline=$(( $(date +%s) + 180 ))
+            while [ "$(date +%s)" -lt "$deadline" ]; do
+              if docker exec "$container" curl --fail --silent --header 'Accept: text/plain' http://127.0.0.1/server/healthz | grep -Fq 'features.tor: healthy'; then
+                docker rm --force "$container" >/dev/null
+                container=""
+                break
+              fi
+              sleep 5
+            done
+            if [ -n "$container" ]; then
+              docker logs "$container"
+              echo "Tor did not become healthy in $image within 180 seconds" >&2
+              exit 1
+            fi
+          done
+      - name: Scan image (Trivy)
+        if: hashFiles('docker/Dockerfile') != ''
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: local/scan-target:ci
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+      - name: Scan devel image (Trivy)
+        if: hashFiles('docker/Dockerfile.dev') != ''
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: local/scan-target:devel
+          exit-code: '1'
+          severity: CRITICAL,HIGH

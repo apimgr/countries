@@ -4,6 +4,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -18,6 +19,13 @@ import (
 var eventSequence atomic.Uint64
 
 var schema = []string{
+	`CREATE TABLE IF NOT EXISTS app_secrets (name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS captcha_challenges (id VARCHAR(32) PRIMARY KEY, answer_hash VARCHAR(64) NOT NULL, expires_at TIMESTAMP NOT NULL)`,
+	`CREATE INDEX IF NOT EXISTS idx_captcha_challenges_expires ON captcha_challenges(expires_at)`,
+	`CREATE TABLE IF NOT EXISTS security_reports (tracking_id VARCHAR(32) PRIMARY KEY, security_id VARCHAR(64) NOT NULL DEFAULT '', id_window BIGINT NOT NULL DEFAULT 0, severity VARCHAR(16) NOT NULL, component VARCHAR(255) NOT NULL, status VARCHAR(16) NOT NULL DEFAULT 'received', body_enc BLOB NOT NULL, body_alg VARCHAR(16) NOT NULL, contact_enc BLOB, credit_pref VARCHAR(8) NOT NULL DEFAULT 'no', credit_name VARCHAR(100), researcher_comment TEXT NOT NULL DEFAULT '', disclosure_date DATE, cve_requested BOOLEAN NOT NULL DEFAULT FALSE, token_hash VARCHAR(64) NOT NULL, token_last_used DATE, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, closed_at TIMESTAMP)`,
+	`CREATE INDEX IF NOT EXISTS idx_security_reports_status ON security_reports(status, created_at)`,
+	`CREATE TABLE IF NOT EXISTS security_thanks (tracking_id VARCHAR(32) PRIMARY KEY, credit VARCHAR(120) NOT NULL, severity VARCHAR(16) NOT NULL, disclosed_on DATE NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS pgp_keys (fingerprint CHAR(40) PRIMARY KEY, created_at TIMESTAMP NOT NULL, expires_at TIMESTAMP NOT NULL, last_rotated_at TIMESTAMP, keyservers_published TEXT NOT NULL DEFAULT '[]', revoked BOOLEAN NOT NULL DEFAULT FALSE)`,
 	`CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'string', updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')))`,
 	`CREATE TABLE IF NOT EXISTS config_meta (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')))`,
 	`INSERT OR IGNORE INTO config_meta (id, version) VALUES (1, 1)`,
@@ -27,6 +35,9 @@ var schema = []string{
 	`CREATE INDEX IF NOT EXISTS idx_config_key_prefix ON config(key)`,
 	`CREATE TABLE IF NOT EXISTS rate_limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 1, window_start INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')))`,
 	`CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits(window_start)`,
+	`CREATE TABLE IF NOT EXISTS health_request_stats (id INTEGER PRIMARY KEY CHECK (id = 1), requests_total INTEGER NOT NULL DEFAULT 0)`,
+	`INSERT OR IGNORE INTO health_request_stats (id, requests_total) VALUES (1, 0)`,
+	`CREATE TABLE IF NOT EXISTS health_request_hours (hour INTEGER PRIMARY KEY, requests INTEGER NOT NULL DEFAULT 0)`,
 	`CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), level TEXT NOT NULL DEFAULT 'info', category TEXT NOT NULL, action TEXT NOT NULL, actor_ip TEXT, target_type TEXT, target_id TEXT, details TEXT, success INTEGER NOT NULL DEFAULT 1)`,
 	`CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp)`,
 	`CREATE INDEX IF NOT EXISTS idx_audit_category ON audit_log(category)`,
@@ -39,7 +50,7 @@ var schema = []string{
 	`CREATE TABLE IF NOT EXISTS backups (id INTEGER PRIMARY KEY AUTOINCREMENT, filename TEXT NOT NULL UNIQUE, filepath TEXT NOT NULL, size_bytes INTEGER NOT NULL, type TEXT NOT NULL DEFAULT 'auto', created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), checksum TEXT, notes TEXT)`,
 	`CREATE INDEX IF NOT EXISTS idx_backups_created ON backups(created_at)`,
 	`CREATE TABLE IF NOT EXISTS owners (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), last_seen_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')))`,
-	`CREATE TABLE IF NOT EXISTS api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK (kind IN ('primary', 'linked')), name TEXT, token_hash TEXT NOT NULL UNIQUE, token_prefix TEXT NOT NULL, token_enc TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), rotated_at INTEGER, expires_at INTEGER, last_used_at INTEGER, revoked_at INTEGER, revoked_reason TEXT)`,
+	`CREATE TABLE IF NOT EXISTS api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK (kind IN ('primary', 'linked')), name TEXT, token_hash TEXT NOT NULL UNIQUE, token_prefix TEXT NOT NULL, token_last4 TEXT NOT NULL DEFAULT '', token_enc TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), rotated_at INTEGER, expires_at INTEGER, last_used_at INTEGER, revoked_at INTEGER, revoked_reason TEXT)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_primary ON api_tokens(owner_id) WHERE kind = 'primary' AND revoked_at IS NULL`,
 	`CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash)`,
 	`CREATE INDEX IF NOT EXISTS idx_api_tokens_prefix ON api_tokens(token_prefix)`,
@@ -60,20 +71,21 @@ func Open(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("resolve database path: %w", err)
 	}
 	dsn := (&url.URL{Scheme: "file", Path: absPath}).String() + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("countries-sqlite-instrumented", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
+	pingCtx, cancelPing := context.WithTimeout(context.Background(), 5*time.Second)
+	err = db.PingContext(pingCtx)
+	cancelPing()
+	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("verify SQLite database: %w", err)
 	}
-	if err := EnsureSchema(ctx, db); err != nil {
+	if err := EnsureSchema(context.Background(), db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -93,7 +105,49 @@ func EnsureSchema(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("initialize server database schema: %w", err)
 		}
 	}
+	if err := ensureTokenLast4(ctx, db); err != nil {
+		return fmt.Errorf("migrate API token metadata schema: %w", err)
+	}
+	// Schema update 7107920 adds the canonical report window and erases legacy rotating identifiers.
+	if _, err := db.ExecContext(ctx, `ALTER TABLE security_reports ADD COLUMN id_window BIGINT NOT NULL DEFAULT 0`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return fmt.Errorf("add security report window column: %w", err)
+	}
+	legacySecurityID, err := hasColumn(ctx, db, "security_reports", "security_id")
+	if err != nil {
+		return fmt.Errorf("inspect legacy security report metadata: %w", err)
+	}
+	if legacySecurityID {
+		if _, err := db.ExecContext(ctx, `UPDATE security_reports SET id_window = COALESCE(CAST(strftime('%s', created_at) / 172800 AS INTEGER), 0), security_id = '' WHERE id_window = 0 AND security_id <> ''`); err != nil {
+			return fmt.Errorf("migrate security report window metadata: %w", err)
+		}
+	}
 	return nil
+}
+
+func hasColumn(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return false, err
+	}
+	found := false
+	for rows.Next() {
+		var index, notNull, primaryKey int
+		var name, dataType string
+		var defaultValue any
+		if err := rows.Scan(&index, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, errors.Join(err, rows.Close())
+		}
+		if name == column {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, errors.Join(err, rows.Close())
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	return found, nil
 }
 
 // AllowRateLimit persists a request event and checks the class and global sliding windows.
@@ -104,7 +158,7 @@ func AllowRateLimit(ctx context.Context, db *sql.DB, client, class string, now t
 	if err != nil {
 		return false, 0, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	classPrefix := "ip:" + client + ":" + class + ":"
 	globalPrefix := "ip:" + client + ":global:"
 	classCount, classFirst, err := countEvents(ctx, tx, classPrefix, now.Add(-classWindow))
@@ -136,6 +190,57 @@ func AllowRateLimit(ctx context.Context, db *sql.DB, client, class string, now t
 	}
 	if err := tx.Commit(); err != nil {
 		return false, 0, err
+	}
+	return true, 0, nil
+}
+
+// CheckRateLimit reports whether a class-specific event limit has been reached.
+func CheckRateLimit(ctx context.Context, db *sql.DB, client, class string, now time.Time, requests int, window time.Duration) (bool, time.Duration, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var count int
+	var first int64
+	prefix := "ip:" + client + ":" + class + ":"
+	cutoff := now.Add(-window)
+	err := db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MIN(window_start), 0) FROM rate_limits WHERE key LIKE ? AND window_start >= ?`, prefix+"%", cutoff.Unix()).Scan(&count, &first)
+	if err != nil {
+		return false, 0, err
+	}
+	if count < requests {
+		return false, 0, nil
+	}
+	return true, maxRetry(time.Unix(first, 0).Add(window).Sub(now)), nil
+}
+
+// RecordRateLimitClass stores one event without consuming the global request bucket.
+func RecordRateLimitClass(ctx context.Context, db *sql.DB, client, class string, now time.Time, requests int, window time.Duration) (bool, time.Duration, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	prefix := "ip:" + client + ":" + class + ":"
+	var count int
+	var first int64
+	cutoff := now.Add(-window)
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MIN(window_start), 0) FROM rate_limits WHERE key LIKE ? AND window_start >= ?`, prefix+"%", cutoff.Unix()).Scan(&count, &first); err != nil {
+		return false, 0, err
+	}
+	if count >= requests {
+		return false, maxRetry(time.Unix(first, 0).Add(window).Sub(now)), nil
+	}
+	nowUnix := now.Unix()
+	key := fmt.Sprintf("%s%d-%d", prefix, now.UnixNano(), eventSequence.Add(1))
+	if _, err := tx.ExecContext(ctx, `INSERT INTO rate_limits (key, count, window_start, updated_at) VALUES (?, 1, ?, ?)`, key, nowUnix, nowUnix); err != nil {
+		return false, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, 0, err
+	}
+	if count+1 >= requests {
+		return false, maxRetry(time.Unix(first, 0).Add(window).Sub(now)), nil
 	}
 	return true, 0, nil
 }

@@ -1,0 +1,26 @@
+{{define "page"}}{{template "public.tmpl" .}}{{end}}
+{{define "title"}}{{t .Lang "graphql.title"}} · {{.AppName}}{{end}}
+{{define "meta"}}<meta name="url-prefix" content="{{.URLPrefix}}">
+  <meta name="api-base-path" content="{{.APIBasePath}}">
+<meta name="description" content="{{t .Lang "graphql.description"}}">{{end}}
+{{define "content"}}
+<main class="container container-md" id="main-content">
+    <header class="page-header">
+      <h1 class="page-title">{{t .Lang "graphql.title"}}</h1>
+      <p class="page-lead">{{t .Lang "graphql.description"}}</p>
+    </header>
+    <section class="section-card" aria-labelledby="graphql-query-heading">
+    <h2 id="graphql-query-heading">{{t .Lang "graphql.query"}}</h2>
+    <form id="graphql-form" method="post" action="{{path .URLPrefix "/server/docs/graphql"}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div class="form-group"><label for="graphql-query">{{t .Lang "graphql.query"}}</label>
+      <textarea class="form-input" id="graphql-query" name="query" rows="12" required>{{.GraphQLQuery}}</textarea></div>
+      <button class="btn btn-primary" type="submit">{{t .Lang "graphql.run"}}</button>
+    </form>
+    </section>
+    <section class="section-card" aria-labelledby="graphql-response-heading">
+    <h2 id="graphql-response-heading">{{t .Lang "graphql.response"}}</h2>
+    <pre id="graphql-result" role="status" aria-live="polite" data-loading="{{t .Lang "server.page.graphql.loading"}}" data-request-failed="{{t .Lang "server.page.graphql.request_failed"}}">{{if .GraphQLResult}}{{.GraphQLResult}}{{else}}{{t .Lang "graphql.initial"}}{{end}}</pre>
+    </section>
+  </main>
+{{end}}

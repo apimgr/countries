@@ -1,6 +1,8 @@
 # Build and release artifacts
 /binaries/
 /releases/
+/countries
+/site/
 *.exe
 *.test
 *.out

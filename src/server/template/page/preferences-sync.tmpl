@@ -1,0 +1,23 @@
+{{define "page"}}{{template "public.tmpl" .}}{{end}}
+{{define "title"}}{{t .Lang "preferences.sync_title"}} · {{.AppName}}{{end}}
+{{define "meta"}}<meta name="url-prefix" content="{{.URLPrefix}}">
+<meta name="description" content="{{t .Lang "preferences.sync_title"}}">{{end}}
+{{define "content"}}
+<main class="container container-sm" id="main-content">
+    <header class="page-header">
+      <nav class="breadcrumb" aria-label="Breadcrumb"><a href="{{path .URLPrefix "/server/preferences"}}">{{t .Lang "preferences.back"}}</a></nav>
+      <h1 class="page-title">{{t .Lang "preferences.sync_title"}}</h1>
+      <p class="page-lead">{{t .Lang "preferences.sync_description"}}</p>
+    </header>
+    <section class="section-card" aria-labelledby="sync-export-url"><h2 id="sync-export-url">{{t .Lang "preferences.export_url"}}</h2><div class="code-block"><code class="code-content copy-value">{{.ExportURL}}</code><button class="copy-btn btn btn-secondary" type="button" data-copy="{{.ExportURL}}" data-copy-label="{{t .Lang "preferences.copy"}}" data-copied="{{t .Lang "tokens.copied"}}" data-copy-failed="{{t .Lang "tokens.copy_failed"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button></div></section>
+    <section class="section-card" aria-labelledby="sync-export-code"><h2 id="sync-export-code">{{t .Lang "preferences.export_code"}}</h2><div class="code-block"><code class="code-content copy-value">{{.ExportCode}}</code><button class="copy-btn btn btn-secondary" type="button" data-copy="{{.ExportCode}}" data-copy-label="{{t .Lang "preferences.copy"}}" data-copied="{{t .Lang "tokens.copied"}}" data-copy-failed="{{t .Lang "tokens.copy_failed"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button></div></section>
+    <section class="section-card" aria-labelledby="sync-import"><h2 id="sync-import">{{t .Lang "preferences.import_button"}}</h2>
+    <form method="post" action="{{path .URLPrefix "/server/preferences/sync"}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div class="form-group"><label for="preference-code">{{t .Lang "preferences.import_label"}}</label>
+      <textarea class="form-input" id="preference-code" name="code" rows="4" maxlength="2048"></textarea></div>
+      <button class="btn btn-primary" type="submit">{{t .Lang "preferences.import_button"}}</button>
+    </form>
+    </section>
+  </main>
+{{end}}

@@ -7,13 +7,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/apimgr/countries/src/backup"
 	"github.com/apimgr/countries/src/config"
+	"github.com/apimgr/countries/src/database"
+	appmode "github.com/apimgr/countries/src/mode"
+	"github.com/apimgr/countries/src/testutil"
 )
 
 func captureOutput(t *testing.T, fn func()) string {
@@ -82,15 +85,19 @@ func TestMaintenanceAndModeCommands(t *testing.T) {
 	previousReleaseURL := updaterReleaseURL
 	updaterReleaseURL = releaseServer.URL
 	t.Cleanup(func() { updaterReleaseURL = previousReleaseURL })
-	configPath := filepath.Join(t.TempDir(), "server.yml")
+	configPath := filepath.Join(testutil.TempDir(t), "server.yml")
 	cfg := config.DefaultConfig()
 	cfg.Server.Port = "54321"
+	cfg.Server.Mode = "development"
 	if err := config.Save(configPath, cfg); err != nil {
 		t.Fatal(err)
 	}
 
-	if output := captureOutput(t, func() { setApplicationMode("development", configPath) }); !strings.Contains(output, "development") {
-		t.Fatalf("mode output = %q", output)
+	if got := resolveRuntimeMode("debug", "production", cfg.Server.Mode); got != "debug" {
+		t.Fatalf("CLI mode priority = %q, want debug", got)
+	}
+	if got := resolveRuntimeMode("", "production", cfg.Server.Mode); got != "production" {
+		t.Fatalf("environment mode priority = %q, want production", got)
 	}
 	loaded, err := config.Load(configPath)
 	if err != nil {
@@ -99,12 +106,16 @@ func TestMaintenanceAndModeCommands(t *testing.T) {
 	if loaded.Server.Mode != "development" {
 		t.Fatalf("saved mode = %q", loaded.Server.Mode)
 	}
+	if err := appmode.Initialize(loaded.Server.Mode); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = appmode.Initialize("production") })
 
 	oldFlags := flag.CommandLine
 	t.Cleanup(func() { flag.CommandLine = oldFlags })
 	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
 	if output := captureOutput(t, func() {
-		handleMaintenanceCommand("mode", "", t.TempDir(), t.TempDir(), configPath)
+		handleMaintenanceCommand("mode", "", testutil.TempDir(t), testutil.TempDir(t), configPath)
 	}); !strings.Contains(output, "development") {
 		t.Fatalf("maintenance mode output = %q", output)
 	}
@@ -113,7 +124,7 @@ func TestMaintenanceAndModeCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	if output := captureOutput(t, func() {
-		handleMaintenanceCommand("setup", "", t.TempDir(), t.TempDir(), configPath)
+		handleMaintenanceCommand("setup", "", testutil.TempDir(t), testutil.TempDir(t), configPath)
 	}); !strings.Contains(output, "Setup complete") {
 		t.Fatalf("maintenance setup output = %q", output)
 	}
@@ -144,13 +155,13 @@ func TestMaintenanceAndModeCommands(t *testing.T) {
 	if err := flag.CommandLine.Parse(nil); err != nil {
 		t.Fatal(err)
 	}
-	if output := captureOutput(t, func() { handleMaintenanceCommand("update", "", t.TempDir(), t.TempDir(), configPath) }); !strings.Contains(output, "up to date") {
+	if output := captureOutput(t, func() { handleMaintenanceCommand("update", "", testutil.TempDir(t), testutil.TempDir(t), configPath) }); !strings.Contains(output, "up to date") {
 		t.Fatalf("maintenance update output = %q", output)
 	}
 }
 
 func TestServiceHelpAndRunCommand(t *testing.T) {
-	if output := captureOutput(t, func() { handleServiceCommand("--help", t.TempDir()) }); !strings.Contains(output, "Service commands:") {
+	if output := captureOutput(t, func() { handleServiceCommand("--help", testutil.TempDir(t)) }); !strings.Contains(output, "Service commands:") {
 		t.Fatalf("service help output = %q", output)
 	}
 	runCmd("true")
@@ -158,53 +169,68 @@ func TestServiceHelpAndRunCommand(t *testing.T) {
 }
 
 func TestMaintenanceBackupAndRestoreUseTempPaths(t *testing.T) {
-	tempDir := t.TempDir()
+	tempDir := testutil.TempDir(t)
 	configDir := filepath.Join(tempDir, "config")
 	dataDir := filepath.Join(tempDir, "data")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "config.yml"), []byte("safe: true\n"), 0600); err != nil {
+	configPath := filepath.Join(configDir, "server.yml")
+	cfg := config.DefaultConfig()
+	cfg.Server.Backup.Password = "test-backup-password"
+	if err := config.Save(configPath, cfg); err != nil {
 		t.Fatal(err)
 	}
-	archive := filepath.Join(tempDir, "backup.tar.gz")
-	oldFlags := flag.CommandLine
-	t.Cleanup(func() { flag.CommandLine = oldFlags })
-	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
-	if err := flag.CommandLine.Parse([]string{archive}); err != nil {
-		t.Fatal(err)
-	}
-	captureOutput(t, func() { handleMaintenanceCommand("backup", configDir, dataDir, t.TempDir(), "") })
-	if info, err := os.Stat(archive); err != nil || info.Size() == 0 {
-		t.Fatalf("backup archive info=%v err=%v", info, err)
-	}
-
-	payload := filepath.Join(tempDir, "restore-payload")
-	if err := os.MkdirAll(payload, 0755); err != nil {
-		t.Fatal(err)
-	}
-	marker := filepath.Join(payload, "restored.txt")
-	if err := os.WriteFile(marker, []byte("restored"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	restoreArchive := filepath.Join(tempDir, "restore.tar.gz")
-	relativePayload, err := filepath.Rel(string(filepath.Separator), payload)
+	databasePath := filepath.Join(dataDir, "db", "server.db")
+	t.Setenv("DATABASE_DIR", filepath.Dir(databasePath))
+	db, err := database.Open(databasePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output, err := exec.Command("tar", "-czf", restoreArchive, "-C", string(filepath.Separator), relativePayload).CombinedOutput(); err != nil {
-		t.Fatalf("create restore fixture: %v: %s", err, output)
-	}
-	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
-	if err := flag.CommandLine.Parse([]string{restoreArchive}); err != nil {
+	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	captureOutput(t, func() { handleMaintenanceCommand("restore", "", "", "", "") })
-	if contents, err := os.ReadFile(marker); err != nil || string(contents) != "restored" {
-		t.Fatalf("restored marker = %q, err=%v", contents, err)
+	filename, includeSSL, includeData, err := parseBackupArgs([]string{"--include-data", "--include-ssl"})
+	if err != nil || filename != "" || !includeSSL || !includeData {
+		t.Fatalf("parseBackupArgs() = (%q, %v, %v, %v)", filename, includeSSL, includeData, err)
+	}
+	options, err := manualBackupOptions(configDir, dataDir, cfg, includeSSL, includeData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(tempDir, "countries_backup_2026-11-22_010203.tar.gz.enc")
+	created, err := backup.Create(t.Context(), archive, options)
+	if err != nil {
+		t.Fatalf("backup.Create() error = %v", err)
+	}
+	if !created.Manifest.Encrypted {
+		t.Fatal("backup manifest is not encrypted")
+	}
+	if _, err := backup.Verify(t.Context(), archive, options.Password, options.Limits); err != nil {
+		t.Fatalf("backup.Verify() error = %v", err)
+	}
+	restoredConfig := filepath.Join(tempDir, "restored-config")
+	restoredData := filepath.Join(tempDir, "restored-data")
+	restoredDatabase := filepath.Join(restoredData, "db", "server.db")
+	if _, err := backup.Restore(t.Context(), archive, options.Password, backup.RestoreOptions{
+		ConfigDir: restoredConfig, DataDir: restoredData, DatabasePath: restoredDatabase, Limits: options.Limits,
+	}); err != nil {
+		t.Fatalf("backup.Restore() error = %v", err)
+	}
+	if restored, err := os.ReadFile(filepath.Join(restoredConfig, "server.yml")); err != nil || len(restored) == 0 {
+		t.Fatalf("restored server.yml size = %d, error = %v", len(restored), err)
+	}
+	if _, err := os.Stat(restoredDatabase); err != nil {
+		t.Fatalf("restored database is missing: %v", err)
+	}
+	if contents, err := os.ReadFile(filepath.Join(configDir, "server.yml")); err != nil || len(contents) == 0 {
+		t.Fatalf("source server.yml size = %d, error = %v", len(contents), err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "should-not-appear.txt"), []byte("outside backup roots"), 0600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -221,5 +247,38 @@ func TestResolveServerPortPrecedence(t *testing.T) {
 		if got := resolveServerPort(tc.flagPort, tc.envPort, tc.configPort); got != tc.want {
 			t.Errorf("resolveServerPort(%q, %q, %q) = %q, want %q", tc.flagPort, tc.envPort, tc.configPort, got, tc.want)
 		}
+	}
+}
+
+func TestResolveServerAddressPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		flagAddress, listenEnv, configAddress, want string
+	}{
+		{"127.0.0.1", "0.0.0.0", "::", "127.0.0.1"},
+		{"", "0.0.0.0", "::", "0.0.0.0"},
+		{"", "", "127.0.0.1", "127.0.0.1"},
+		{"", "", "", "::"},
+		{" ", " ", " ", "::"},
+	} {
+		if got := resolveServerAddress(tc.flagAddress, tc.listenEnv, tc.configAddress); got != tc.want {
+			t.Errorf("resolveServerAddress(%q, %q, %q) = %q, want %q", tc.flagAddress, tc.listenEnv, tc.configAddress, got, tc.want)
+		}
+	}
+}
+
+func TestFallbackIPv4ListenerAddress(t *testing.T) {
+	address, fallback, err := fallbackIPv4ListenerAddress("::")
+	if err != nil {
+		t.Fatalf("fallbackIPv4ListenerAddress() error = %v", err)
+	}
+	if fallback && address != "0.0.0.0" {
+		t.Fatalf("fallback address = %q, want 0.0.0.0", address)
+	}
+	if !fallback && address != "::" {
+		t.Fatalf("dual-stack address = %q, want ::", address)
+	}
+	address, fallback, err = fallbackIPv4ListenerAddress("127.0.0.1")
+	if err != nil || fallback || address != "127.0.0.1" {
+		t.Fatalf("explicit IPv4 address = (%q, %t, %v), want (127.0.0.1, false, nil)", address, fallback, err)
 	}
 }
