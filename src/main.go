@@ -245,7 +245,6 @@ func run() int {
 		fmt.Println("OK")
 		return 0
 	}
-	startupSettings := config.PeekStartupSettings(configPath)
 	var startupUpdateErr error
 	if startedElevated {
 		if executable, executableErr := os.Executable(); executableErr != nil {
@@ -267,6 +266,38 @@ func run() int {
 		}
 		serviceIdentity = &identity
 	}
+	databaseDir := paths.GetDatabaseDir(dataDir)
+	yamlDirectory := filepath.Join(configDir, "yaml.d")
+	sslDirectory := filepath.Join(configDir, "ssl")
+	if err := paths.EnsureDirs(configDir, dataDir, logsDir, cacheDir, backupDirResolved, databaseDir, yamlDirectory, sslDirectory); err != nil {
+		log.Fatalf("Failed to create directories: %v", err)
+	}
+	if startedElevated && paths.IsContainer() && filepath.Clean(configDir) == filepath.Join("/config", projectName) {
+		configParent := filepath.Dir(configDir)
+		if err := os.Chown(configParent, 0, 0); err != nil {
+			log.Fatalf("Failed to secure container configuration directory: %v", err)
+		}
+		if err := os.Chmod(configParent, 0755); err != nil {
+			log.Fatalf("Failed to set container configuration directory permissions: %v", err)
+		}
+	}
+	if serviceIdentity != nil && (serviceIdentity.Created || serviceIdentity.GroupCreated) {
+		if err := service.RecordServiceAccount(*serviceIdentity, projectName); err != nil {
+			log.Fatalf("Failed to record service account ownership: %v", err)
+		}
+	}
+	if err := paths.EnsurePrivateTree(sslDirectory); err != nil {
+		log.Fatalf("Failed to secure SSL directory: %v", err)
+	}
+	if serviceIdentity != nil {
+		if err := chownServicePaths(*serviceIdentity, configDir, dataDir, logsDir, cacheDir, backupDirResolved, databaseDir); err != nil {
+			log.Fatalf("Failed to set service directory ownership: %v", err)
+		}
+	}
+	if err := config.PrepareStartupConfig(configPath); err != nil {
+		log.Fatalf("Failed to prepare startup configuration permissions: %v", err)
+	}
+	startupSettings := config.PeekStartupSettings(configPath)
 	pidFilePath := *pidFileFlag
 	if pidFilePath == "" {
 		pidFilePath = paths.GetPIDFilePath(projectName, dataDir, startedElevated)
@@ -285,26 +316,6 @@ func run() int {
 				log.Fatalf("Failed to set PID directory ownership: %v", err)
 			}
 		}
-	}
-	if err := paths.EnsureDirs(configDir, dataDir, logsDir, cacheDir); err != nil {
-		log.Fatalf("Failed to create directories: %v", err)
-	}
-	if serviceIdentity != nil {
-		if serviceIdentity.Created || serviceIdentity.GroupCreated {
-			if err := service.RecordServiceAccount(*serviceIdentity, projectName); err != nil {
-				log.Fatalf("Failed to record service account ownership: %v", err)
-			}
-		}
-		databaseDir := paths.GetDatabaseDir(dataDir)
-		if err := paths.EnsureDirs(backupDirResolved, databaseDir, filepath.Join(configDir, "yaml.d")); err != nil {
-			log.Fatalf("Failed to prepare service directories: %v", err)
-		}
-		if err := chownServicePaths(*serviceIdentity, configDir, dataDir, logsDir, cacheDir, backupDirResolved, databaseDir); err != nil {
-			log.Fatalf("Failed to set service directory ownership: %v", err)
-		}
-	}
-	if err := paths.EnsurePrivateTree(filepath.Join(configDir, "ssl")); err != nil {
-		log.Fatalf("Failed to secure SSL directory: %v", err)
 	}
 	_, configStatErr := os.Stat(configPath)
 	firstConfigRun := os.IsNotExist(configStatErr)

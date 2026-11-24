@@ -49,3 +49,55 @@ func TestPeekStartupSettingsPIDFileDefaultsAndOverrides(t *testing.T) {
 		t.Fatal("server.pidfile: false should disable PID file handling")
 	}
 }
+
+func TestPeekStartupSettingsDoesNotCreateOrChangeFiles(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "missing")
+	configPath := filepath.Join(directory, "server.yml")
+	if got := PeekStartupSettings(configPath); !got.PIDFile {
+		t.Fatal("missing server.pidfile should use the enabled default")
+	}
+	if _, err := os.Stat(directory); !os.IsNotExist(err) {
+		t.Fatalf("PeekStartupSettings created the config directory: stat error = %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(directory, "yaml.d"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("server:\n  port: '8123'\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	modeBefore := fileMode(t, configPath)
+	if got := PeekStartupSettings(configPath); got.Port != "8123" {
+		t.Fatalf("Port = %q, want 8123", got.Port)
+	}
+	if modeAfter := fileMode(t, configPath); modeAfter != modeBefore {
+		t.Errorf("PeekStartupSettings changed server.yml mode from %04o to %04o", modeBefore, modeAfter)
+	}
+}
+
+func TestPrepareStartupConfigDoesNotChangeSymlinkTargetMode(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "external.yml")
+	configPath := filepath.Join(directory, "server.yml")
+	if err := os.WriteFile(target, []byte("server:\n  port: '8123'\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, configPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareStartupConfig(configPath); err != nil {
+		t.Fatal(err)
+	}
+	if got := fileMode(t, target); got != 0644 {
+		t.Fatalf("PrepareStartupConfig changed symlink target mode to %04o, want 0644", got)
+	}
+}
+
+func fileMode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Mode().Perm()
+}

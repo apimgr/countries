@@ -23,10 +23,10 @@ type StartupSettings struct {
 func PeekStartupSettings(serverConfigPath string) StartupSettings {
 	settings := StartupSettings{PIDFile: true}
 	sources := make([]yamlConfigSource, 0)
-	appendYAMLConfigSource(&sources, serverConfigPath, serverConfigPath)
+	appendStartupYAMLConfigSource(&sources, serverConfigPath, serverConfigPath)
 
 	dropInDirectory := filepath.Join(filepath.Dir(serverConfigPath), "yaml.d")
-	if ensurePrivateYAMLDirectory(dropInDirectory) == nil {
+	if info, err := os.Lstat(dropInDirectory); err == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
 		entries, err := os.ReadDir(dropInDirectory)
 		if err == nil {
 			sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
@@ -39,7 +39,7 @@ func PeekStartupSettings(serverConfigPath string) StartupSettings {
 				if resolveErr != nil || !eligible {
 					continue
 				}
-				appendYAMLConfigSource(&sources, path, resolved)
+				appendStartupYAMLConfigSource(&sources, path, resolved)
 			}
 		}
 	}
@@ -71,4 +71,61 @@ func PeekStartupSettings(serverConfigPath string) StartupSettings {
 		}
 	}
 	return settings
+}
+
+// PrepareStartupConfig secures the files read during the startup settings peek.
+func PrepareStartupConfig(serverConfigPath string) error {
+	dropInDirectory := filepath.Join(filepath.Dir(serverConfigPath), "yaml.d")
+	if err := ensurePrivateYAMLDirectory(dropInDirectory); err != nil {
+		return err
+	}
+	paths := []string{serverConfigPath}
+	entries, err := os.ReadDir(dropInDirectory)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if isYAMLConfigDropInName(entry.Name()) {
+			path := filepath.Join(dropInDirectory, entry.Name())
+			resolved, eligible, err := resolveYAMLConfigDropIn(dropInDirectory, path)
+			if err != nil {
+				continue
+			}
+			if eligible {
+				paths = append(paths, resolved)
+			}
+		}
+	}
+	for _, path := range paths {
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			continue
+		}
+		if err := os.Chmod(path, 0600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func appendStartupYAMLConfigSource(sources *[]yamlConfigSource, sourcePath, filePath string) {
+	info, err := os.Lstat(filePath)
+	if err != nil || !info.Mode().IsRegular() {
+		return
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil || len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
+		return
+	}
+	*sources = append(*sources, yamlConfigSource{Path: sourcePath, Node: document.Content[0]})
 }
