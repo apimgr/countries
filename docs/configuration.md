@@ -26,10 +26,11 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 | `server.contact.abuse.email` | empty | Public recipient for abuse and DMCA reports; falls back to general, then admin. |
 | `server.contact.admin.email` | empty | Private fallback recipient for report delivery. It is never shown on the report chooser. |
 | `server.contact.security.email` | empty | Private recipient for deployment security reports. |
-| `server.contact.admin.webhooks.{telegram,discord,slack,generic}` | empty | Private notification webhook destinations; never shown publicly. |
-| `server.contact.security.webhooks.{telegram,discord,slack,generic}` | empty | Security-report webhook destinations; empty values fall back to the admin role. |
-| `server.contact.abuse.webhooks.{telegram,discord,slack,generic}` | empty | Abuse-report webhook destinations; empty values fall back through general to admin. |
-| `server.contact.general.webhooks.{telegram,discord,slack,generic}` | empty | General-report webhook destinations; empty values fall back to admin. |
+| `server.contact.{admin,security,abuse,general}.webhooks.{transport}` | empty | Role-based webhook destinations. Built-in transports are Telegram, Discord, Slack, Mattermost, Pushover, Gotify, and generic HTTPS JSON; empty values follow the role fallback chain. Every configured webhook has a generated signing secret stored privately in `secrets.yml`. |
+| `server.notifications.database_error.enabled` | `true` | Enable email alerts for sustained database probe failures; the connection check still runs when alerts are disabled. |
+| `server.notifications.database_error.failures` | `3` | Consecutive failed probes before the first alert. |
+| `server.notifications.database_error.check_interval` | `1m` | Database connection probe interval. |
+| `server.notifications.database_error.repeat` | `24h` | Repeat alert interval while a failure continues. |
 | `server.pages.contact.enabled` | `true` | Enable the report form and its security.txt contact entry. Disabled forms return 404. |
 | `server.pages.contact.captcha` | `simple` | `simple`, `recaptcha`, or `hcaptcha`; external providers retain a simple no-JavaScript fallback. Onion and I2P requests always use `simple`. |
 | `server.pages.contact.captcha_site_key` | empty | Public site key rendered for reCAPTCHA or hCaptcha; not needed for `simple`. |
@@ -118,6 +119,8 @@ Tor settings live in `yaml.d/tor.yml`. The managed Tor hidden service starts aut
 | YAML key | Default | Purpose |
 |---|---|---|
 | `server.tor.binary` | auto-detected | Tor executable path. |
+| `server.tor.expose` | `false` | Advertise the onion address in API autodiscovery. |
+| `server.tor.contact_email` | empty | Email shown only in Tor responses; unset means no email is shown over Tor. |
 | `server.tor.use_network` | `false` | Use the managed Tor network for app-owned outbound connections. |
 | `server.tor.max_circuits` | `32` | Maximum concurrent circuits being built. |
 | `server.tor.startup_timeout` | `60` | Seconds to wait for the control-port file. |
@@ -132,6 +135,7 @@ Tor settings live in `yaml.d/tor.yml`. The managed Tor hidden service starts aut
 | `server.tor.num_intro_points` | `3` | Number of hidden-service introduction points. |
 | `server.tor.virtual_port` | `80` | Virtual port exposed by the hidden service. |
 | `server.i2p.enabled` | `true` in containers; `false` elsewhere | Opt in to the I2P eepsite; the setting is also controllable with `I2P_ENABLED` or `--i2p`. |
+| `server.i2p.expose` | `false` | Advertise the I2P address in API autodiscovery. |
 | `server.i2p.binary` | auto-detected | Optional `i2pd` executable; if absent, use the configured external SAM bridge. |
 | `server.i2p.sam_address` | `127.0.0.1:7656` | External I2P SAMv3 bridge address. |
 | `server.i2p.virtual_port` | `80` | Virtual port exposed by the eepsite. |
@@ -396,6 +400,8 @@ The built-in scheduler is always running and has no global enable/disable settin
 | `server.scheduler.tasks.backup_hourly.enabled` | `false` | Hourly incrementals are disabled by default; this task may be enabled or disabled. |
 | `server.scheduler.tasks.disk_check.schedule` | `@every 5m` | Check available disk space and report low space. |
 | `server.scheduler.tasks.disk_check.enabled` | `true` | Enable disk checks; this task may be disabled. |
+| `server.scheduler.tasks.database_check.schedule` | `@every 1m` | Probe database connectivity. |
+| `server.scheduler.tasks.database_check.enabled` | `true` | Required database connection monitoring task. |
 | `server.scheduler.tasks.healthcheck_self.schedule` | `@every 5m` | Run the server's self-health check. |
 | `server.scheduler.tasks.healthcheck_self.enabled` | `true` | Self-health checks are required and cannot be disabled. |
 | `server.scheduler.tasks.tor_health.schedule` | `@every 10m` | Check Tor connectivity when Tor support is active. |

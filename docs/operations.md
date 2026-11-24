@@ -6,9 +6,15 @@ This guide covers the background services and operational workflows that are not
 
 The built-in scheduler runs in the server process. It uses `server.scheduler.timezone` for cron schedules and `server.scheduler.catch_up_window` to bound missed work after a restart. Each configured task has an `enabled` flag, a schedule, and optional retry behavior. Do not run a second external scheduler for these tasks.
 
-The default task set includes certificate renewal, weekly GeoIP data refresh, daily blocklist and vulnerability-data refresh, security and token cleanup, update checks, log rotation, daily backups, disk and health checks, and Tor/I2P health checks. Hourly incremental backups are disabled by default. Task status and scheduler health are visible through the health endpoints; failed scheduled tasks are written to the application logs and configured notifications.
+The default task set includes certificate renewal, weekly GeoIP data refresh, daily blocklist and vulnerability-data refresh, security and token cleanup, update checks, log rotation, daily backups, disk, database, and health checks, and Tor/I2P health checks. The database check runs every minute by default and reports sustained connection failures after the configured consecutive-failure threshold; it clears the alert after a successful probe. Hourly incremental backups are disabled by default. Task status and scheduler health are visible through the health endpoints; failed scheduled tasks are written to the application logs and configured notifications.
 
 Configure task schedules and retry behavior in `server.yml` under `server.scheduler`. The server validates schedules and timezone values at startup. See the [configuration reference](configuration.md#external-security-data) for data refresh behavior and [backup and restore settings](configuration.md#backup-and-restore).
+
+## Maintenance mode and recovery
+
+Critical database or filesystem failures put the server into read-only maintenance mode. Read requests and the authenticated health/status endpoint remain available; writes receive `503 Service Unavailable` with `Retry-After` and maintenance headers. The server retries recovery every 30 seconds by default and reports its reason, attempt count, and next attempt through `/server/healthz`. `server.maintenance.self_healing.max_attempts: 0` retries without a limit; a positive limit stops retries and leaves the service in maintenance mode until an operator fixes the cause and restarts it. Exhaustion is audited and produces one operator notification when email is configured.
+
+The recovery loop checks database connectivity and filesystem write access, and applies the configured disk cleanup and backup-retention policy when disk pressure is detected. Review the health response and logs for the specific recovery guidance before changing permissions or removing runtime files.
 
 ## Backups and restore
 
