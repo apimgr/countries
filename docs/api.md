@@ -115,7 +115,7 @@ The server-rendered browser forms also accept `POST /server/contact`, `POST /ser
 | GET | `/api/autodiscover` | Unversioned server, API, and CLI discovery for clients. |
 | GET | `/cli/binaries/{binary}` | Download an allowlisted companion CLI release binary. |
 
-The stable unversioned API aliases are `/api/healthz`, `/api/healthz.txt`, `/api/swagger`, `/api/graphql`, `/api/mcp`, and `/mcp`; they call the same handlers as their canonical routes without redirects. Metrics and debug routes are feature/configuration gated and documented in [Integrations](integrations.md) and [Configuration](configuration.md).
+The stable unversioned API aliases are `/api/healthz`, `/api/healthz.txt`, `/api/swagger`, `/api/graphql`, `/api/mcp`, and `/mcp`; they call the same handlers as their canonical routes without redirects. The GraphQL alias accepts both GET queries and JSON POST requests, matching `/api/v1/server/graphql`. Metrics and debug routes are feature/configuration gated and documented in [Integrations](integrations.md) and [Configuration](configuration.md).
 
 ## Well-known discovery
 

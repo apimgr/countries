@@ -180,7 +180,7 @@ Country-data and public information routes below require no authentication. Owne
 | GET | `/.well-known/security.txt`, `/.well-known/pgp-key.asc`, `/.well-known/llms.txt`, `/llms.txt` | Public | Serve security contact, feature-gated PGP key, or generated agent-discovery text. |
 | GET | `/server/tracking.js` | Public | Serve the consent-aware tracking bootstrap script. |
 | GET | `/api/healthz`, `/api/healthz.txt`, `/api/swagger` | Public | Stable unversioned health and OpenAPI discovery aliases. |
-| POST | `/api/graphql` | Public | Stable unversioned GraphQL query alias. |
+| GET, POST | `/api/graphql` | Public | Execute read-only GraphQL queries through the stable unversioned alias; GET accepts `query`, optional `variables`, and `operationName`, and POST accepts a JSON request body. |
 | GET | `/api/autodiscover` | Public | List available CLI binaries. |
 | GET | `/cli/binaries/{binary}` | Public | Download an allowlisted CLI binary. |
 | POST | `/mcp`, `/api/mcp` | Owner token | Handle MCP protocol requests using the compatibility endpoint aliases. |
