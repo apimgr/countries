@@ -2,7 +2,7 @@
 
 ## Download a release
 
-Download the server binary and, when needed, the companion `countries-cli` binary from [GitHub Releases](https://github.com/apimgr/countries/releases/latest). Release assets include Linux, macOS, Windows, and FreeBSD builds for amd64 and arm64. SHA-256 checksums are published as `sha256.txt` with each release.
+Download the server binary and, when needed, the companion `countries-cli` binary from [GitHub Releases](https://github.com/apimgr/countries/releases/latest). Release assets include static Linux, macOS, Windows, and FreeBSD builds for amd64 and arm64, plus optional GUI clients for Linux, macOS, and Windows. SHA-256 checksums are published as `sha256.txt` with each release.
 
 | Platform | Arch | Server asset | Client asset |
 |---|---|---|---|
@@ -14,6 +14,8 @@ Download the server binary and, when needed, the companion `countries-cli` binar
 | Windows | arm64 | `countries-windows-arm64.exe` | `countries-cli-windows-arm64.exe` |
 | FreeBSD | amd64 | `countries-freebsd-amd64` | `countries-cli-freebsd-amd64` |
 | FreeBSD | arm64 | `countries-freebsd-arm64` | `countries-cli-freebsd-arm64` |
+
+GUI clients use the `countries-cli-gui-{os}-{arch}` asset name (for example, `countries-cli-gui-linux-amd64`). They require the dynamic loader from the Go toolchain used to build them and are unavailable for FreeBSD.
 
 On Linux, download the server binary and make it executable:
 

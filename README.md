@@ -18,7 +18,7 @@ Countries provides read-only information about 249 ISO 3166-1 country records th
 
 ## Production
 
-Download the server binary and, if needed, the `countries-cli` client from [GitHub Releases](https://github.com/apimgr/countries/releases/latest). Releases include both binaries for Linux, macOS, Windows, and FreeBSD on amd64 and arm64.
+Download the server binary and, if needed, the `countries-cli` client from [GitHub Releases](https://github.com/apimgr/countries/releases/latest). Releases include static server and client binaries for Linux, macOS, Windows, and FreeBSD on amd64 and arm64, plus optional GUI client binaries for Linux, macOS, and Windows.
 
 | Platform | Architecture | Server | Client |
 |---|---|---|---|
@@ -30,6 +30,8 @@ Download the server binary and, if needed, the `countries-cli` client from [GitH
 | Windows | arm64 | `countries-windows-arm64.exe` | `countries-cli-windows-arm64.exe` |
 | FreeBSD | amd64 | `countries-freebsd-amd64` | `countries-cli-freebsd-amd64` |
 | FreeBSD | arm64 | `countries-freebsd-arm64` | `countries-cli-freebsd-arm64` |
+
+Optional GUI clients use names such as `countries-cli-gui-linux-amd64`. They require the dynamic loader from the Go toolchain used to build them and are not available for FreeBSD.
 
 Linux binary example:
 

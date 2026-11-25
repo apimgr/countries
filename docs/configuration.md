@@ -1,6 +1,6 @@
 # Configuration
 
-The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area files, and `secrets.yml` into one validated configuration. Area files merge by dotted key; later files replace earlier scalar and list values. `server.yml` holds node-specific settings; the area file table below identifies the canonical home for each other section. Files are restricted to owner access. Use `--config DIR`, `--data DIR`, `--log DIR`, and `--pid FILE` to override paths. The matching environment overrides are `CONFIG_DIR`, `DATA_DIR`, and `LOG_DIR`; `DATABASE_DIR` selects the SQLite directory.
+The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area files, and `secrets.yml` into one validated configuration. Area files merge by dotted key; later files replace earlier scalar and list values. `server.yml` holds node-specific settings; the area file table below identifies the canonical home for each other section. Files are restricted to owner access. Use `--config DIR`, `--data DIR`, `--cache DIR`, `--log DIR`, `--backup DIR`, and `--pid FILE` to override paths. The matching environment overrides are `CONFIG_DIR`, `DATA_DIR`, `CACHE_DIR`, `LOG_DIR`, and `BACKUP_DIR`; `DATABASE_DIR` selects the SQLite directory.
 
 ## Server settings
 
@@ -8,7 +8,7 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 |---|---|---|
 | `server.port` | First-run native: random available `64000`–`64999`; container: `80` | Listener port, or an HTTP,HTTPS pair such as `80,443`. `PORT` seeds first-run config; `--port` overrides the listener for that invocation. |
 | `server.address` | `[::]` | Dual-stack listener address; `--address` and `LISTEN` override it. IPv4-only machines fall back to `0.0.0.0`. |
-| `server.fqdn` | `localhost` | FQDN used for public links. |
+| `server.fqdn` | Loopback name recorded during first run | Detected name retained for operator reference. Public links use request origin resolution or the `DOMAIN` environment variable; this setting does not supply the public name. |
 | `server.mode` | `production` | Application mode when neither `--mode` nor `MODE` is set. |
 | `server.database.driver` | `sqlite` | Database driver (`sqlite` or remote `libsql`/Turso). |
 | `server.database.url` | `{data_dir}/db/server.db` | SQLite database file path or remote libsql URL. `DATABASE_DIR` overrides the default SQLite directory. |
@@ -82,7 +82,7 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 | `server.ssl.letsencrypt.dns_credentials` | `{}` | Flat map of lego provider environment-variable names to secret values; stored encrypted in `secrets.yml`. |
 | `server.cache.type` | `memory` | Cache backend: `none`, `memory`, `valkey`, or `redis`. |
 | `server.cache.url` | empty | Full Valkey/Redis connection URL; takes precedence over separate connection fields. |
-| `server.cache.host` | `localhost` | Cache host when no URL is configured. |
+| `server.cache.host` | Loopback address | Cache host when no URL is configured. |
 | `server.cache.port` | `6379` | Cache port when no URL is configured. |
 | `server.cache.username` | empty | Optional Redis ACL username. |
 | `server.cache.password` | empty | Cache password; secret values belong in `secrets.yml`. |
