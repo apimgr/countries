@@ -3,7 +3,7 @@
 ⚠️ **These rules are NON-NEGOTIABLE. Violations are bugs.** ⚠️
 
 ## CRITICAL - NEVER DO
-- Never add Makefile targets beyond the six specified core targets and `clean`.
+- Never add Makefile targets beyond the six specified core targets, housekeeping `clean`, and the internal `release-check` prerequisite.
 - Never make CI depend on the developer Makefile or run Go commands on the host.
 - Never put build, runtime, test, or release artifacts in an unapproved location.
 - Never infer or invent an official site or override user-supplied version data.
@@ -18,9 +18,10 @@
 ## KEY DECISIONS
 | Question | Answer | Spec Reference |
 |---|---|---|
-| Core targets | `build`, `local`, `release`, `docker`, `test`, `dev`, plus housekeeping `clean` | PART 25 |
+| Targets | `build`, `local`, `release`, `docker`, `test`, `dev`; only `clean` and internal `release-check` are additionally permitted | PART 25 |
 | Local version | Explicit user `VERSION`, then nonempty `release.txt`, then short commit/devel | PART 25 |
 | Platforms | Linux, Darwin, Windows, FreeBSD; amd64 and arm64 each | PART 25 |
+| Project identity | `IDEA.md`, then Git remote, then directory name; internal name falls back to project name | PART 25 |
 | Site URL | Omit when not user-provided; never infer from repo/domain | PART 25 |
 
 ## QUICK REFERENCE

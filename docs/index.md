@@ -47,7 +47,7 @@ See the [installation guide](installation.md) for platform downloads and service
 - [GitHub repository](https://github.com/apimgr/countries)
 - [Swagger UI](http://YOUR_SERVER/server/docs/swagger)
 - [GraphiQL explorer](http://YOUR_SERVER/server/docs/graphql)
-- Live service pages: `http://YOUR_SERVER/server/about`, including help, privacy, security, and preferences. Replace `YOUR_SERVER` with your deployment's host.
+- Live service pages: `http://YOUR_SERVER/server/about`, including help, privacy, security, and preferences. Replace `YOUR_SERVER` with the deployment's public address.
 
 ## License
 

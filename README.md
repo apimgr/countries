@@ -1,13 +1,22 @@
 # Countries
 
-Countries provides read-only information about 249 ISO 3166-1 country records through a REST API, GraphQL, a server-rendered web interface, and the `countries-cli` client. The dataset is embedded in the server binary and is not fetched at runtime.
-
 [![CI](https://github.com/apimgr/countries/actions/workflows/ci.yml/badge.svg)](https://github.com/apimgr/countries/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/apimgr/countries)](https://github.com/apimgr/countries/releases)
 [![License](https://img.shields.io/github/license/apimgr/countries)](LICENSE.md)
 [![Documentation](https://readthedocs.org/projects/apimgr-countries/badge/?version=latest)](https://apimgr-countries.readthedocs.io/)
 
-## Install
+## About
+
+Countries provides read-only information about 249 ISO 3166-1 country records through a REST API, GraphQL, a server-rendered web interface, and the `countries-cli` client. The country dataset is embedded in the server binary and is not fetched at runtime.
+
+## Features
+
+- Search country records by name, code, region, currency, or language, and find countries by coordinates.
+- Read the dataset through REST, read-only GraphQL, interactive API explorers, and authenticated MCP access.
+- Browse the mobile-friendly server-rendered interface; core pages and forms work without JavaScript.
+- Use the companion CLI/TUI client or its optional GUI.
+
+## Production
 
 Download the server binary and, if needed, the `countries-cli` client from [GitHub Releases](https://github.com/apimgr/countries/releases/latest). Releases include both binaries for Linux, macOS, Windows, and FreeBSD on amd64 and arm64.
 
@@ -22,7 +31,7 @@ Download the server binary and, if needed, the `countries-cli` client from [GitH
 | FreeBSD | amd64 | `countries-freebsd-amd64` | `countries-cli-freebsd-amd64` |
 | FreeBSD | arm64 | `countries-freebsd-arm64` | `countries-cli-freebsd-arm64` |
 
-Linux example:
+Linux binary example:
 
 ```sh
 curl -q -LSsf https://github.com/apimgr/countries/releases/latest/download/countries-linux-amd64 -o countries
@@ -37,9 +46,9 @@ chmod +x countries
 xattr -d com.apple.quarantine countries 2>/dev/null || true
 ```
 
-On Windows, download the matching `.exe` asset and add its directory to `%PATH%`. For FreeBSD, download the matching `amd64` or `arm64` asset and run `chmod +x` before use. See the [installation guide](docs/installation.md) for service and Docker instructions.
+On Windows, download the matching `.exe` asset and add its directory to `%PATH%`. For FreeBSD, download the matching `amd64` or `arm64` asset and run `chmod +x` before use.
 
-## 🐳 Docker
+### Docker
 
 The production Compose file is [`docker/docker-compose.yml`](docker/docker-compose.yml). Copy it to a deployment directory outside the source checkout so runtime data stays out of the repository:
 
@@ -52,7 +61,13 @@ cd "$DEPLOY_DIR" && docker compose up -d
 
 The service is published on `172.17.0.1:64580` by default. Review the bind address and deployment paths before starting it. The image is `ghcr.io/apimgr/countries:latest`.
 
-## 🖥️ countries-cli
+### Server service
+
+Run the `countries` binary to start the service. On first start, it creates `server.yml` in the operating system's configuration directory and selects an available native port in the `64000`–`64999` range; containers listen on port `80`. Configuration, database, logs, cache, and backups are stored in the operating system's application directories.
+
+On supported systems, install a service with `sudo countries --service --install`. See the [installation guide](docs/installation.md) for supported service managers and lifecycle commands.
+
+## Client
 
 The companion client supports country listing, lookup, search, coordinate and nearby queries, statistics, and supported versioned API requests.
 
@@ -65,13 +80,11 @@ countries-cli --server http://YOUR_SERVER request GET /api/v1/server/healthz
 
 With no command, the client opens its GUI when available, otherwise its terminal interface when attached to an interactive terminal. See the [CLI reference](docs/cli.md) for commands, flags, configuration, and output formats.
 
-## 🤖 Countries Server
+## Configuration
 
-Run the `countries` binary to start the service. On first start, it creates `server.yml` in the operating system's configuration directory and selects an available native port in the `64000`–`64999` range; containers listen on port `80`. Configuration, database, logs, cache, and backups are stored in the operating system's application directories. See the [configuration reference](docs/configuration.md).
+Configuration is stored in `server.yml` with sensitive values kept in `secrets.yml`; see the [configuration reference](docs/configuration.md) for file locations, options, environment overrides, and generated defaults.
 
-On supported systems, install a service with `sudo countries --service --install`. See the [installation guide](docs/installation.md) for supported service managers and lifecycle commands.
-
-## API and web interface
+## API
 
 Country data is available under `/api/v1/`. The service also provides a read-only GraphQL endpoint with the local GraphiQL explorer at `/server/docs/graphql`, the OpenAPI explorer at `/server/docs/swagger`, MCP access for bearer-token holders, and server-rendered pages.
 
@@ -84,12 +97,13 @@ Country data is available under `/api/v1/`. The service also provides a read-onl
 | `GET /api/v1/nearby?lat={lat}&lon={lon}&radius={km}` | Find countries within a radius |
 | `GET /api/v1/stats` | Read dataset statistics |
 | `GET /api/v1/server/healthz` | Read service health |
+| `GET /api/v1/server/graphql?query=...` | Execute a read-only GraphQL query |
 | `POST /api/v1/server/graphql` | Execute a GraphQL query |
 | `POST /api/v1/server/mcp` | Call MCP with a bearer token |
 
 The web interface includes country search, coordinate lookup, API explorers, help, privacy, security, terms, contact/reporting, guest preference and consent controls, and anonymous owner-token management for MCP access. Browse `/` on your deployment; the API and browser route details are in the [API guide](docs/api.md).
 
-## More documentation
+## Other
 
 - [Configuration](docs/configuration.md)
 - [Security and reporting](docs/security.md)
@@ -97,10 +111,6 @@ The web interface includes country search, coordinate lookup, API explorers, hel
 - [Operations, backups, and updates](docs/operations.md)
 - [Development and testing](docs/development.md)
 - [Translation guide](docs/translating.md)
-
-## Disclaimer
-
-This software is provided as is, without warranty of any kind. Evaluate and configure it for your environment before production use. Third-party services used by a deployment have their own terms.
 
 ## Development
 
@@ -114,6 +124,10 @@ make test
 ```
 
 `make dev` builds a static server and CLI/TUI client into a project-scoped operating system temporary directory. Set `BUILD_GUI=1` to also build the optional, dynamically linked GUI client. The Docker binary integration suite is `./tests/run_tests.sh`, the Incus service suite is `./tests/incus.sh`, and browser E2E is `./tests/e2e.sh`. See [development](docs/development.md) for details.
+
+## Disclaimer
+
+This software is provided as is, without warranty of any kind. Evaluate and configure it for your environment before production use. Third-party services used by a deployment have their own terms.
 
 ## License
 

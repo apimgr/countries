@@ -7,8 +7,8 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 | YAML key | Default | Purpose |
 |---|---|---|
 | `server.port` | First-run native: random available `64000`–`64999`; container: `80` | Listener port, or an HTTP,HTTPS pair such as `80,443`. `PORT` seeds first-run config; `--port` overrides the listener for that invocation. |
-| `server.address` | `[::]` | Dual-stack listener address; `--address` and `LISTEN` override it. IPv4-only hosts fall back to `0.0.0.0`. |
-| `server.fqdn` | `localhost` | Configured public host name. |
+| `server.address` | `[::]` | Dual-stack listener address; `--address` and `LISTEN` override it. IPv4-only machines fall back to `0.0.0.0`. |
+| `server.fqdn` | `localhost` | FQDN used for public links. |
 | `server.mode` | `production` | Application mode when neither `--mode` nor `MODE` is set. |
 | `server.database.driver` | `sqlite` | Database driver (`sqlite` or remote `libsql`/Turso). |
 | `server.database.url` | `{data_dir}/db/server.db` | SQLite database file path or remote libsql URL. `DATABASE_DIR` overrides the default SQLite directory. |
@@ -19,7 +19,7 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 | `server.update.auto_install` | `false` | Allows scheduled checks to stage a checksum-verified update when the server started elevated on Unix. The supervisor applies it on restart. User-mode and Windows services receive a manual update command instead. |
 | `server.update.defer_days` | `0` | Scheduled stable/beta update notices ignore releases newer than this many days; devel ignores the setting. Manual update commands are never deferred. |
 | `server.update.cli_min_version` | empty | Minimum companion CLI version. The server returns this value through autodiscovery; a CLI below it refuses further API requests and prints the update command. |
-| `server.trusted_proxies.additional` | `[]` | Additional trusted proxy IPs, CIDRs, or hostnames. |
+| `server.trusted_proxies.additional` | `[]` | Additional trusted proxy IPs, CIDRs, or domain names. |
 | `server.contact.dpo.name` | empty | Optional public name shown on `/server/dpo`. |
 | `server.contact.dpo.email` | empty | Optional DPO email shown on `/server/dpo`; falls back to `server.contact.general.email`. |
 | `server.contact.general.email` | empty | General public contact email used as the DPO fallback. |
@@ -212,7 +212,7 @@ Each message requires a unique `id`, non-empty `title` and `message`, and uses `
 
 ### AI discovery (`llms.txt`)
 
-The generated plain-text AI discovery index is always served at `/llms.txt` and `/.well-known/llms.txt`; there is no enable/disable switch. It is generated for each request so absolute URLs match the host and scheme used by the visitor. Configure these settings in `yaml.d/web.yml`:
+The generated plain-text AI discovery index is always served at `/llms.txt` and `/.well-known/llms.txt`; there is no enable/disable switch. It is generated for each request so absolute URLs match the request origin. Configure these settings in `yaml.d/web.yml`:
 
 | YAML key | Default | Purpose |
 |---|---|---|
@@ -318,7 +318,7 @@ Branding content entries accept a `format` (`md` by default, `html`, or `txt`) a
 | `web.robots.deny` | project defaults | Paths disallowed for crawlers and omitted from the sitemap. |
 | `web.security.policy` | built-in policy | Markdown security disclosure policy. |
 | `web.security.report_url` | GitHub private reporting URL | Primary security reporting destination. |
-| `web.security.keyservers` | `[]` | OpenPGP keyserver hosts for key publication. |
+| `web.security.keyservers` | `[]` | OpenPGP keyserver addresses for key publication. |
 | `web.security.publish_pgp_key` | `true` | Publish the configured PGP public key in security.txt. |
 
 `server.cors`, `server.csrf`, and other `server.*` web controls belong in `yaml.d/web.yml`; the `web.*` settings also belong there, except `web.ui.*`, which belongs in `yaml.d/branding.yml`.
@@ -434,7 +434,7 @@ Each task accepts `enabled` and `schedule`; `retry_on_fail` and `retry_delay` ap
 | `server.privacy.third_party.services[]` | `[]` | Third-party service entries with `name`, `purpose`, `data_sent`, and `policy_url`. |
 | `server.tracking.type` | empty | Optional analytics provider: `google`, `matomo`, `piwik`, `owa`, `fathom`, `plausible`, `umami`, `simple`, or `cloudflare`; empty or `none` disables tracking. |
 | `server.tracking.id` | empty | Provider-specific tracking/site identifier. |
-| `server.tracking.url` | empty | Self-hosted provider URL where required; optional for self-hosted Fathom and Plausible. |
+| `server.tracking.url` | empty | Self-managed provider URL where required; optional for self-managed Fathom and Plausible. |
 | `server.metrics.enabled` | `false` | Enable metrics endpoints. |
 | `server.metrics.root.enabled` | `true` | Mount root `/metrics[/{service}]` aliases. |
 | `server.metrics.auth.allow_unauthenticated` | `false` | Skip metrics bearer-token checks; use only behind a firewall. |
@@ -486,17 +486,17 @@ Runtime mode precedence is `--mode`, then `MODE`, then `server.mode`, then `prod
 
 ### Analytics tracking
 
-Tracking scripts load only when a provider is configured, the visitor has consented to analytics cookies, and the request is not served through Tor or I2P. Provider tags and generated script are omitted otherwise; `/server/tracking.js` returns 404 when tracking is disabled, consent is missing, or the request uses an onion or I2P address. Tracking scripts are served from the same origin where possible, and the configured provider hosts are added to the Content Security Policy. Analytics consent can be withdrawn from the preferences page.
+Tracking scripts load only when a provider is configured, the visitor has consented to analytics cookies, and the request is not served through Tor or I2P. Provider tags and generated script are omitted otherwise; `/server/tracking.js` returns 404 when tracking is disabled, consent is missing, or the request uses an onion or I2P address. Tracking scripts are served from the same origin where possible, and the configured provider domains are added to the Content Security Policy. Analytics consent can be withdrawn from the preferences page.
 
 ```yaml
 server:
   tracking:
     type: plausible
     id: example.com
-    url: "" # Optional self-hosted endpoint; empty uses plausible.io
+    url: "" # Optional self-managed endpoint; empty uses plausible.io
 ```
 
-Use `server.tracking.url` for Matomo, Piwik, Open Web Analytics, and Umami. It is optional for Fathom and Plausible when self-hosted. Google, Simple Analytics, and Cloudflare use their hosted endpoints and do not use this URL field. IDs are validated for the selected provider. Analytics is included in the privacy page and third-party service details when configured.
+Use `server.tracking.url` for Matomo, Piwik, Open Web Analytics, and Umami. It is optional for Fathom and Plausible when self-managed. Google, Simple Analytics, and Cloudflare use their provider endpoints and do not use this URL field. IDs are validated for the selected provider. Analytics is included in the privacy page and third-party service details when configured.
 
 ## CLI settings
 

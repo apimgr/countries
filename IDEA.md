@@ -147,7 +147,7 @@ Country-data and public information routes below require no authentication. Owne
 | POST | `/api/{api_version}/server/preferences/tokens/{id}/rotate` | Owner token | Rotate one linked token. |
 | PATCH | `/api/{api_version}/server/preferences/tokens/{id}` | Owner token | Rename or change the expiry of one linked token. |
 | DELETE | `/api/{api_version}/server/preferences/tokens/{id}` | Owner token | Revoke one linked token. |
-| POST | `/api/{api_version}/server/graphql` | Public | Execute read-only GraphQL queries against the country dataset. |
+| GET, POST | `/api/{api_version}/server/graphql` | Public | Execute read-only GraphQL queries against the country dataset. |
 | POST | `/api/{api_version}/server/mcp` | Owner token | Handle MCP initialize, discovery and tool calls scoped to the owner token. |
 | GET | `/api/{api_version}/server/swagger` | Public | Return the OpenAPI document. |
 | GET | `/` | Public | Render the country-service home page. |

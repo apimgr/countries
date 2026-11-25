@@ -17,6 +17,10 @@ The standard `make dev`, `make local`, and `make build` outputs include a static
 
 The GitHub license workflow runs `scripts/verify-licenses.sh` in `casjaysdev/go:latest`. When dependencies change, run that script in the same container to refresh `licenses.csv` and `third_party_licenses/`, then review the results and update [`LICENSE.md`](https://github.com/apimgr/countries/blob/main/LICENSE.md) as needed. The script requires the repository to be mounted writable because it updates those tracked inventories.
 
+## CI/CD providers
+
+The repository includes CI and release definitions for GitHub Actions, Gitea Actions, Forgejo Actions, GitLab CI, and Jenkins. GitHub Actions runs for this GitHub repository; the other definitions support self-managed mirrors. Go checks use `casjaysdev/go:latest` with CGO disabled. Jenkins requires agents labeled `amd64` and `arm64`, Docker, and Docker Buildx; its registry token is configured in Jenkins credentials and is not stored in the repository.
+
 ## Build the documentation
 
 MkDocs and its plugins are listed in `docs/requirements.txt`. Keep the Python environment and generated site outside the repository:

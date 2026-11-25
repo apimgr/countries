@@ -69,16 +69,16 @@ The command builds the server and CLI into a project-scoped OS temporary directo
 
 ## System service
 
-On a supported host, install the service with the server binary's service command:
+On a supported machine, install the service with the server binary's service command:
 
 ```sh
 sudo countries --service --install
 ```
 
-Start and enable the generated service with the host's service manager. Service installation is a host operation: do not install it inside Docker, Podman, Kubernetes, or an ordinary development container. Incus/LXC system containers running systemd or OpenRC act as hosts and support service installation for integration testing.
+Start and enable the generated service with the machine's service manager. Service installation is a machine operation: do not install it inside Docker, Podman, Kubernetes, or an ordinary development container. Incus/LXC system containers running systemd or OpenRC support native service installation for integration testing.
 
 To remove the service and its runtime state, run `sudo countries --service --uninstall` and confirm the prompt. Uninstall stops and disables the service, removes its service-manager files, configuration, data, cache, logs, backups, and PID directory, then removes a service account or group only when the server recorded that it created it. The binary remains installed; remove it separately when desired.
 
 ## First start
 
-The server creates `server.yml` in its configuration directory when the file is missing. A native first run selects and saves an available port in the `64000`–`64999` range; an application container defaults to port `80`. `PORT` seeds the first-run configuration, while `--port` overrides the listener for that invocation. Use `--config`, `--data`, and `--log` to select runtime directories. The server PID file is enabled by default on native Unix hosts; use `server.pidfile: false` to disable it or `--pid FILE` to choose another path. Docker, Podman, Kubernetes, and Windows do not use this file; Incus/LXC system containers running systemd or OpenRC use native host behavior. See the [configuration reference](configuration.md) for path defaults and settings.
+The server creates `server.yml` in its configuration directory when the file is missing. A native first run selects and saves an available port in the `64000`–`64999` range; an application container defaults to port `80`. `PORT` seeds the first-run configuration, while `--port` overrides the listener for that invocation. Use `--config`, `--data`, and `--log` to select runtime directories. The server PID file is enabled by default on native Unix systems; use `server.pidfile: false` to disable it or `--pid FILE` to choose another path. Docker, Podman, Kubernetes, and Windows do not use this file; Incus/LXC system containers running systemd or OpenRC use native system behavior. See the [configuration reference](configuration.md) for path defaults and settings.

@@ -57,7 +57,7 @@ Versioned and unversioned API aliases are also available. Root `/metrics` aliase
 
 When a Tor binary is available, the server manages its own hidden service and loopback HTTP listener. It does not operate as an exit relay. Tor configuration and key material are kept in the configured runtime directories. The `/server/help` and health pages show the onion address and current status when Tor is enabled.
 
-I2P is enabled by the computed container-aware default or explicit `server.i2p.enabled` / `I2P_ENABLED` / `--i2p` configuration. The server manages its own I2P eepsite and SAM session; it does not manage an external router. Persistent destination keys preserve the address across restarts. The I2P hostname and provider state are shown in `/server/help` and health output when the service is enabled and running.
+I2P is enabled by the computed container-aware default or explicit `server.i2p.enabled` / `I2P_ENABLED` / `--i2p` configuration. The server manages its own I2P eepsite and SAM session; it does not manage an external router. Persistent destination keys preserve the address across restarts. The I2P destination address and provider state are shown in `/server/help` and health output when the service is enabled and running.
 
 Neither overlay is required for ordinary clearnet operation. If an overlay reports unavailable, check its feature status and the project-owned logs in the configured log directory. Do not expose the Tor control port or I2P SAM listener to the network.
 

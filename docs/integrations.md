@@ -3,7 +3,7 @@
 ## Public interfaces
 
 - Versioned read-only REST API under `/api/v1/`.
-- Read-only GraphQL at `/api/v1/server/graphql`, the locally hosted GraphiQL explorer at `/server/docs/graphql`, and OpenAPI JSON at `/api/v1/server/swagger` with its explorer at `/server/docs/swagger`.
+- Read-only GraphQL at `/api/v1/server/graphql`, the same-origin GraphiQL explorer at `/server/docs/graphql`, and OpenAPI JSON at `/api/v1/server/swagger` with its explorer at `/server/docs/swagger`.
 - Streamable HTTP MCP at `/api/v1/server/mcp` (aliases: `/api/mcp` and `/mcp`); every request requires a bearer token.
 - MCP connection details and tool inventory at `/server/help/mcp` and `/api/v1/server/help/mcp`.
 - `/api/autodiscover` for server, API, and companion CLI discovery.
