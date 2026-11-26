@@ -60,7 +60,7 @@ The browser interface also includes `/`, `/search`, and `/coordinates`. Server p
 |---|---|---|
 | GET | `/api/v1/server/healthz` | Health status and loaded country count. |
 | GET | `/api/v1/server/about` | Service information. |
-| GET | `/api/v1/server/help` | Usage help. |
+| GET | `/api/v1/server/help` | Help page data: title, configured Markdown source, `format: markdown`, and registered help pages (`title` and `path`) in hub order. |
 | GET | `/api/v1/server/privacy` | Privacy notice. |
 | GET | `/api/v1/server/terms` | Service terms. |
 | GET | `/api/v1/server/security` | Security overview: configured reporting contacts, expiry, PGP key availability and fingerprint, and absolute policy, thanks, and report URLs. Missing channels are omitted; the PGP URL and fingerprint are `null` when no key exists. |
