@@ -8,7 +8,9 @@ API endpoints return JSON by default. `Accept: application/json` explicitly sele
 
 Metrics endpoints keep their protocol media types: Prometheus endpoints return the exposition text format, while Grafana and Loki endpoints return JSON. When `server.metrics.enabled` is true, these paths appear in the runtime-generated OpenAPI document: `/server/metrics[/{prometheus,grafana,loki}]`, `/api/v1/server/metrics[/{prometheus,grafana,loki}]`, and `/api/metrics[/{prometheus,grafana,loki}]`. `/metrics[/{prometheus,grafana,loki}]` is included when `server.metrics.root.enabled` is true. Each service requires its configured bearer token unless unauthenticated access is enabled.
 
-When debug endpoints are enabled with `--debug` or `DEBUG=true`, every root `/debug/*` route requires the operator bearer token. The routes include `/debug/config`, `/debug/routes`, `/debug/cache`, `/debug/db`, `/debug/scheduler`, `/debug/memory`, `/debug/goroutines`, `/debug/vars`, and `/debug/pprof/*`. Debug routes have no API aliases and are absent when debug mode is off. Configuration output omits secret-only fields; goroutine stacks are returned as plain text.
+Successful public GET responses for country data, search, coordinates, nearby, statistics, and count endpoints use `Cache-Control: public, max-age=60` and vary by language and cookie. Error responses, writes, server pages, and other private API responses use `no-store` or `private, no-store`.
+
+When debug endpoints are enabled with `--debug`, a truthy `DEBUG`, or `MODE=debug` with `DEBUG` unset, every root `/debug/*` route requires the operator bearer token. The routes include `/debug/config`, `/debug/routes`, `/debug/cache`, `/debug/db`, `/debug/scheduler`, `/debug/error500`, `/debug/memory`, `/debug/goroutines`, `/debug/vars`, and `/debug/pprof` with its profile subpaths. `server.debug.pprof` and `server.debug.runtime_endpoints` can disable their endpoint groups. Debug routes have no API aliases and are absent when the runtime debug flag is off. Configuration output omits secret-only fields; goroutine stacks are returned as plain text.
 
 ## Country records
 
@@ -58,9 +60,9 @@ The browser interface also includes `/`, `/search`, and `/coordinates`. Server p
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/v1/server/healthz` | Health status and loaded country count. |
+| GET | `/api/v1/server/healthz` | Public-safe health status, version/build information, enabled features, component checks, and aggregate request statistics. |
 | GET | `/api/v1/server/about` | Service information. |
-| GET | `/api/v1/server/help` | Help page data: title, configured Markdown source, `format: markdown`, and registered help pages (`title` and `path`) in hub order. |
+| GET | `/api/v1/server/help` | Help page data: title, configured Markdown source for the resolved language (then `default`), or built-in localized guidance when no configured entry matches; `format: markdown`; and registered help pages (`title` and `path`) in hub order. |
 | GET | `/api/v1/server/privacy` | Privacy notice. |
 | GET | `/api/v1/server/terms` | Service terms. |
 | GET | `/api/v1/server/security` | Security overview: configured reporting contacts, expiry, PGP key availability and fingerprint, and absolute policy, thanks, and report URLs. Missing channels are omitted; the PGP URL and fingerprint are `null` when no key exists. |
@@ -78,8 +80,8 @@ The browser interface also includes `/`, `/search`, and `/coordinates`. Server p
 | GET | `/server/preferences/sync` | Browser page to copy a code representing the current theme and language preferences and apply a code from another browser. |
 | POST | `/server/preferences` | Save supported theme and language cookies. Browser forms require the CSRF token rendered by server pages. |
 | GET | `/api/v1/server/swagger` | OpenAPI 3.1 document. |
-| GET | `/api/v1/server/graphql?query=...` | Read-only GraphQL query; optional `variables` and `operationName` parameters are JSON and text respectively. |
-| POST | `/api/v1/server/graphql` | Read-only GraphQL query endpoint. |
+| GET | `/api/v1/server/graphql?query=...` | Read-only GraphQL query; optional `variables` and `operationName` parameters are JSON and text respectively. Without `query`, returns a short plain-text usage message. |
+| POST | `/api/v1/server/graphql` | Read-only GraphQL query endpoint. The `read(path:)` field executes allowlisted GET JSON APIs with the caller's bearer token and request context; state-changing GET, text, internal, and documentation paths are excluded. |
 | POST | `/api/v1/server/mcp` | Streamable HTTP MCP endpoint; requires a valid owner or linked bearer token and protocol revision `2026-07-28`. |
 | GET | `/api/v1/server/help/mcp` | MCP connection details, endpoint URL, aliases, and available tools. |
 | GET | `/api/v1/server/preferences/tokens` | List masked owner and linked tokens; primary owner bearer token required. |

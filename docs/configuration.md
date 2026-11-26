@@ -10,6 +10,14 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 | `server.address` | `[::]` | Dual-stack listener address; `--address` and `LISTEN` override it. IPv4-only machines fall back to `0.0.0.0`. |
 | `server.fqdn` | Loopback name recorded during first run | Detected name retained for operator reference. Public links use request origin resolution or the `DOMAIN` environment variable; this setting does not supply the public name. |
 | `server.mode` | `production` | Application mode when neither `--mode` nor `MODE` is set. |
+| `server.debug.pprof` | `true` | Allow pprof endpoints when the per-run debug flag is enabled. |
+| `server.debug.log_queries` | `true` | Log SQL queries only while the per-run debug flag is enabled. |
+| `server.debug.log_cache` | `true` | Log asset-cache hits and misses only while the per-run debug flag is enabled. |
+| `server.debug.log_bodies` | `false` | Capture and redact request and response bodies in debug logs. |
+| `server.debug.max_body_log_size` | `10KB` | Maximum captured request or response body size. |
+| `server.debug.block_profile_rate` | `1` | Block profiling rate while debug is enabled; zero disables block profiling. |
+| `server.debug.mutex_profile_fraction` | `1` | Mutex profiling fraction while debug is enabled; zero disables mutex profiling. |
+| `server.debug.runtime_endpoints` | `true` | Allow `/debug/vars`, `/debug/memory`, and `/debug/goroutines` when debug is enabled. |
 | `server.database.driver` | `sqlite` | Database driver (`sqlite` or remote `libsql`/Turso). |
 | `server.database.url` | `{data_dir}/db/server.db` | SQLite database file path or remote libsql URL. `DATABASE_DIR` overrides the default SQLite directory. |
 | `server.tokens.max_linked` | `25` | Maximum active linked tokens per owner. |
@@ -36,7 +44,7 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 | `server.pages.contact.captcha_site_key` | empty | Public site key rendered for reCAPTCHA or hCaptcha; not needed for `simple`. |
 | `server.pages.contact.captcha_secret_key` | empty | Private provider key stored in `secrets.yml`; never returned by the API or written to logs. |
 | `server.pages.contact.success_message` | `Thank you for your report.` | Confirmation text shown after report submission. |
-| `server.pages.help.content` | built-in help | Optional Markdown for `/server/help`; the API returns the Markdown source. |
+| `server.pages.help.content` | built-in help | Markdown string for all languages or language map; maps resolve by request language, then `default`, then built-in localized help. |
 | `server.pages.help.mcp` | empty | Project-specific Markdown appended after the generated MCP help sections. |
 | `server.pages.contact.antispam.honeypot` | `true` | Enable the hidden website field trap. |
 | `server.pages.contact.antispam.min_fill_seconds` | `3` | Minimum form-open time before accepting a submission. |
@@ -110,7 +118,7 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 | `server.i18n.default_language` | `en` | Language used where no request language applies. |
 | `server.i18n.available_languages` | All embedded locales (`en`, `es`, `fr`, `de`, `it`, `ar`, `zh`, `ja`) | Languages available for server-rendered pages and notifications; operators may narrow the list but cannot remove any of the six required minimum languages. |
 
-The `server.yml` node-specific keys are `server.port`, `server.address`, `server.fqdn`, `server.mode`, `server.api_version`, `server.baseurl`, `server.pidfile`, `server.daemonize`, `server.database`, `server.cache`, `server.ssl`, and `server.trusted_proxies`. Debug mode is selected with the server's `--debug` flag or `DEBUG` environment variable; there is no `server.debug` setting.
+The `server.yml` node-specific keys include `server.debug.*` diagnostic settings, but the runtime debug flag itself has no configuration key. Debug diagnostics require `--debug`, a truthy `DEBUG` value, or `MODE=debug` with `DEBUG` unset; the nested settings only control which diagnostics run after that explicit opt-in.
 
 ## Overlay network settings
 
@@ -174,7 +182,7 @@ Both a legacy `server.yml` containing area settings and the drop-in layout are a
 
 ### Help and contact pages
 
-The help page uses built-in, localized Countries guidance when `server.pages.help.content` is empty. Set it to a Markdown string to replace that content in every language, or provide a language-to-Markdown map. Map lookup uses the resolved request language, then `default`, then the first language key in lexicographic order. The API returns the selected Markdown source. `server.pages.help.mcp` adds project-specific Markdown after the generated MCP connection and tool documentation. Both settings belong in `yaml.d/pages.yml`.
+The help page uses built-in, localized Countries guidance when `server.pages.help.content` is empty or a language map has no exact or `default` entry. Set it to a Markdown string to replace that content in every language, or provide a language-to-Markdown map. Map lookup uses the resolved request language, then `default`, then built-in guidance; it never selects an arbitrary map entry. The API returns the selected Markdown source. `server.pages.help.mcp` adds project-specific Markdown after the generated MCP connection and tool documentation. Both settings belong in `yaml.d/pages.yml`.
 
 The contact form is enabled by default. It is reached from the security-reporting page and is not linked from the site's general navigation. `server.pages.contact.enabled: false` disables both the form and its form entry in `security.txt`. Contact page settings belong in `yaml.d/pages.yml`:
 
@@ -185,7 +193,7 @@ The contact form is enabled by default. It is reached from the security-reportin
 | `server.pages.contact.captcha_site_key` | empty | Public site key for reCAPTCHA or hCaptcha. |
 | `server.pages.contact.captcha_secret_key` | empty | Private provider key stored only in `secrets.yml`. |
 | `server.pages.contact.success_message` | `Thank you for your report.` | Confirmation shown after a report is accepted. |
-| `server.pages.help.content` | built-in help | A Markdown string shared by all languages or a language-to-Markdown map for `/server/help`; maps resolve by request language, then `default`, then the lexicographically first key. Empty or missing content uses built-in localized guidance. |
+| `server.pages.help.content` | built-in help | A Markdown string shared by all languages or a language-to-Markdown map for `/server/help`; maps resolve by request language, then `default`, then built-in localized guidance. |
 | `server.pages.help.mcp` | empty | Optional project-specific Markdown appended to `/server/help/mcp`. |
 
 The simple CAPTCHA works without JavaScript and does not contact a third party. reCAPTCHA and hCaptcha require both site and secret keys; the secret is never exposed in responses or logs. Those providers retain a simple no-JavaScript fallback, and a provider verification failure rejects the submission.
@@ -482,7 +490,7 @@ Each task accepts `enabled` and `schedule`; `retry_on_fail` and `retry_delay` ap
 
 Rate limiting is always enabled. Anonymous requests are limited per client IP, valid bearer-token requests are limited per token, and failed authentication is counted per IP. Boolean configuration accepts the truthy and falsy values defined by the project parser, including `yes/no`, `enable/disable`, `on/off`, and `1/0`.
 
-Runtime mode precedence is `--mode`, then `MODE`, then `server.mode`, then `production`. Accepted values are `production` (`prod`), `development` (`dev`, `devel`), and `debug`. The selected mode is process-local; `--mode` does not rewrite configuration. Debug endpoint enablement is separate: explicit `--debug` wins over `DEBUG`, which wins over the default enabled by `debug` mode. When enabled, `/debug/pprof/*` and `/debug/vars` are available. Logging level, request diagnostics, caching, and security-header behavior follow the selected mode and the corresponding `server.logs`, `server.cache`, and `web.*` settings.
+Runtime mode precedence is `--mode`, then `MODE`, then `server.mode`, then `production`. Accepted values are `production` (`prod`), `development` (`dev`, `devel`), and `debug`. The selected mode is process-local; `--mode` does not rewrite configuration. Debug endpoint enablement is separate: explicit `--debug` wins over non-empty `DEBUG`, which wins over the default enabled by `debug` mode. When enabled, every `/debug/*` route requires the operator bearer token. `server.debug.pprof` and `server.debug.runtime_endpoints` gate their endpoint groups; body logging, query logging, cache logging, and profiling use their corresponding nested settings. Logging level and security-header behavior follow the selected mode and their `server.logs` and `web.*` settings.
 
 ### Analytics tracking
 
