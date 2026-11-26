@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
 # - - - - - - - - - - - - - - - - - - - - - - - - -
-##@Version           :  202611240141-git
+##@Version           :  202611241918-git
 # @@Author           :  Jason Hempstead
 # @@Contact          :  git-admin@casjaysdev.pro
 # @@License          :  WTFPL
@@ -10,7 +10,7 @@
 # @@Created          :  Sunday, November 22, 2026 00:00 EST
 # @@File              :  incus.sh
 # @@Description       :  Validate countries service behavior in isolated Debian and Alpine Incus instances.
-# @@Changelog         :  Retry transient Alpine DNS failures and verify complete uninstall in random Incus instances.
+# @@Changelog         :  Use Incus-managed DNS for Alpine package setup and fail when test prerequisites cannot install.
 # @@TODO              :  None
 # @@Other             :  Requires Incus, Make, and GNU timeout.
 # @@Resource          :  AI.md PARTS 0, 23, 24, 26, 28, and 31
@@ -25,7 +25,7 @@ set -eo pipefail
 
 APPNAME="${0##*/}"
 # shellcheck disable=SC2034
-VERSION="202611231850-git"
+VERSION="202611241918-git"
 # shellcheck disable=SC2034
 RUN_USER="${USER:-unknown}"
 # shellcheck disable=SC2034
@@ -92,16 +92,6 @@ __wait_boot() {
 	fi
 }
 
-__configure_openrc_test_dns() {
-	local instance="$1" nameserver resolver_config=""
-	while IFS= read -r nameserver; do
-		[[ "${nameserver}" =~ ^[0-9A-Fa-f:.]+$ ]] || continue
-		resolver_config+="nameserver ${nameserver}"$'\n'
-	done < <(awk '$1 == "nameserver" { print $2 }' /etc/resolv.conf)
-	[[ -n "${resolver_config}" ]] || __fail "No usable host DNS nameservers are configured."
-	printf '%s' "${resolver_config}" | __incus exec "${instance}" -- sh -c 'cat > /etc/resolv.conf'
-}
-
 __install_openrc_packages() {
 	local instance="$1" attempt
 	for attempt in 1 2 3; do
@@ -120,14 +110,13 @@ __run_mode() {
 	if __incus info "${instance}" >/dev/null 2>&1; then __fail "Refusing to use existing instance ${instance}."; fi
 	INCUS_INSTANCES+=("${instance}")
 	printf '=== %s: launch %s ===\n' "${mode}" "${image}"
-	__incus launch "${image}" "${instance}"
+	__incus launch "${image}" "${instance}" -c limits.cpu=2 -c limits.memory=4GiB -c limits.cpu.priority=5
 	__wait_boot "${instance}" "${mode}"
 	if [[ "${mode}" == systemd ]]; then
 		__incus exec "${instance}" -- bash -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bash curl jq file tor i2pd iproute2 ca-certificates' >/dev/null
 		__incus exec "${instance}" -- bash -c 'systemctl disable --now tor.service tor@default.service i2pd.service >/dev/null 2>&1 || true'
 	else
-		__configure_openrc_test_dns "${instance}"
-		__install_openrc_packages "${instance}" >/dev/null
+		__install_openrc_packages "${instance}" >/dev/null || __fail "Unable to install Alpine integration-test packages."
 		__incus exec "${instance}" -- sh -c 'rc-service tor stop >/dev/null 2>&1 || true; rc-service i2pd stop >/dev/null 2>&1 || true; rc-update del tor default >/dev/null 2>&1 || true; rc-update del i2pd default >/dev/null 2>&1 || true'
 	fi
 	server_bin="${INCUS_BUILD_DIR}/${INCUS_PROJECT_NAME}"
@@ -269,6 +258,7 @@ done
 check "stats text endpoint" sh -c "curl -q -LSsf '$base/api/v1/stats.txt' | grep -q 'Total Countries: 249'"
 check "count text endpoint" sh -c "curl -q -LSsf '$base/api/v1/count.txt' | grep -q 249"
 check "GraphQL countries query" sh -c "curl -q -LSsf -H 'Content-Type: application/json' -d '{\"query\":\"{ countries { name { common } } }\"}' '$base/api/v1/server/graphql' | grep -q Japan"
+check "GraphQL countries GET query" sh -c "curl -q -LSsf '$base/api/v1/server/graphql?query=%7B%20countries%20%7B%20name%20%7B%20common%20%7D%20%7D%20%7D' | grep -q Japan"
 check "GraphQL alias" sh -c "curl -q -LSsf -H 'Content-Type: application/json' -d '{\"query\":\"{ countries { name { common } } }\"}' '$base/api/graphql' | grep -q Japan"
 check_verbose "nearest-coordinate POST" sh -c "curl -q -LSsf -H 'Accept: application/json' -H 'Content-Type: application/json' -d '{\"lat\":40.7128,\"lon\":-74.0060}' '$base/api/v1/coordinates' | grep -q Bermuda"
 check "HTML negotiation" sh -c "curl -q -LSsf -H 'Accept: text/html' '$base/' | grep -qi '<html'"
@@ -308,6 +298,7 @@ if [ "$(overlay i2p status)" = healthy ]; then
  check "I2P b32 hostname" sh -c "echo '$(overlay i2p hostname)' | grep -Eq '^[a-z2-7]{52}\\.b32\\.i2p$'"
  check "I2P running" test "$(overlay i2p running)" = true
  check "I2P health check" test "$(healthz | jq -r '.checks.i2p')" = ok
+ check "i2pd has no forbidden listener ports" sh -c '! awk '\''$4 == "0A" { split($2, local, ":"); if (local[2] == "1B9E" || local[2] == "115C" || local[2] == "115F" || local[2] == "1DE6") found = 1 } END { exit found ? 0 : 1 }'\'' /proc/net/tcp /proc/net/tcp6'
  check "I2P key persisted" sh -c "find '$DATA_ROOT/i2p/site' -type f -size +0 | grep -q ."
 else
  fail "I2P did not become healthy within ${I2P_WAIT}s"

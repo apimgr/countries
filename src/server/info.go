@@ -62,6 +62,7 @@ type infoPage struct {
 	Version             string
 	BuildDate           string
 	Sections            []infoSection
+	HelpContent         template.HTML
 	Theme               string
 	APIBasePath         string
 	Lang                string
@@ -156,6 +157,12 @@ func (s *Server) handleInfoPage(w http.ResponseWriter, r *http.Request) {
 	page.Request = r
 	page.AppName = s.appName()
 	page.Lang = s.languageForRequest(w, r)
+	if r.URL.Path == "/server/help" {
+		if content, ok := localizedPageBody(s.config.Server.Pages.Help.Content, page.Lang); ok && strings.TrimSpace(content) != "" {
+			page.HelpContent = renderSecurityPolicyMarkdown(content)
+			page.Sections = nil
+		}
+	}
 	page.LocalizedTitle = page.Title
 	if page.TitleKey != "" {
 		page.LocalizedTitle = i18n.Translate(page.Lang, page.TitleKey)
@@ -438,12 +445,40 @@ func (s *Server) handleInfoAPI(w http.ResponseWriter, r *http.Request) {
 		"title": page.Title, "description": page.Description, "sections": page.Sections,
 	}
 	if path == "/server/help" {
-		data["pages"] = s.registeredPagePayload("/server/help", lang)
+		data = map[string]interface{}{
+			"title":   page.Title,
+			"content": s.helpContentMarkdown(lang),
+			"format":  "markdown",
+			"pages":   s.registeredPagePayload("/server/help", lang),
+		}
 	}
 	s.jsonResponse(w, map[string]interface{}{
 		"ok":   true,
 		"data": data,
 	})
+}
+
+func (s *Server) helpContentMarkdown(lang string) string {
+	if content, ok := localizedPageBody(s.config.Server.Pages.Help.Content, lang); ok && strings.TrimSpace(content) != "" {
+		return content
+	}
+	page := s.localizedInfoPage(s.infoForPath("/server/help"), lang)
+	var content strings.Builder
+	for _, section := range page.Sections {
+		if len(section.Title) > 0 {
+			content.WriteString("## " + section.Title + "\n\n")
+		}
+		if strings.TrimSpace(section.Text) != "" {
+			content.WriteString(section.Text + "\n\n")
+		}
+		for _, bullet := range section.Bullets {
+			content.WriteString("- " + bullet + "\n")
+		}
+		if len(section.Bullets) > 0 {
+			content.WriteByte('\n')
+		}
+	}
+	return strings.TrimSpace(content.String())
 }
 
 func (s *Server) handleHealthPage(w http.ResponseWriter, r *http.Request) {

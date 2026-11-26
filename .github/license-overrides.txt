@@ -1,0 +1,8 @@
+# Module SPDX ID reviewer note
+github.com/alibabacloud-go/darabonba-array Apache-2.0 Reviewed by casjay; upstream LICENSE at https://github.com/alibabacloud-go/darabonba-array/blob/master/LICENSE on 2026-11-26
+github.com/alibabacloud-go/darabonba-encode-util Apache-2.0 Reviewed by casjay; upstream LICENSE at https://github.com/alibabacloud-go/darabonba-encode-util/blob/master/LICENSE on 2026-11-26
+github.com/alibabacloud-go/darabonba-map Apache-2.0 Reviewed by casjay; upstream LICENSE at https://github.com/alibabacloud-go/darabonba-map/blob/master/LICENSE on 2026-11-26
+github.com/alibabacloud-go/darabonba-signature-util Apache-2.0 Reviewed by casjay; upstream LICENSE at https://github.com/alibabacloud-go/darabonba-signature-util/blob/master/LICENSE on 2026-11-26
+github.com/alibabacloud-go/darabonba-string Apache-2.0 Reviewed by casjay; module README.md at v1.0.2 on 2026-11-26
+github.com/alibabacloud-go/endpoint-util Apache-2.0 Reviewed by casjay; module README.md at v1.1.0 on 2026-11-26
+modernc.org/mathutil BSD-3-Clause Reviewed by casjay; module LICENSE and upstream LICENSE at https://gitlab.com/cznic/mathutil/-/blob/v1.7.1/LICENSE on 2026-11-26

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -37,29 +38,13 @@ func TestReencryptPGPReports(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO security_reports (tracking_id, severity, component, body_enc, body_alg, token_hash) VALUES (?, ?, ?, ?, 'pgp', ?)`, "sec_0123456789abcdef", "high", "api", ciphertext, "test-hash"); err != nil {
 		t.Fatal(err)
 	}
-	conn, err := db.Conn(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := conn.Close(); err != nil {
-			t.Errorf("close database connection: %v", err)
-		}
-	})
-	if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
-		t.Fatal(err)
-	}
-	if err := reencryptPGPReports(context.Background(), conn, oldPair.Private, newPair.Public); err != nil {
-		if _, rollbackErr := conn.ExecContext(context.Background(), "ROLLBACK"); rollbackErr != nil {
-			t.Errorf("rollback report rotation: %v", rollbackErr)
-		}
+	if err := database.Write(context.Background(), db, func(tx *sql.Tx) error {
+		return reencryptPGPReports(context.Background(), tx, oldPair.Private, newPair.Public)
+	}); err != nil {
 		t.Fatalf("reencryptPGPReports() error = %v", err)
 	}
-	if _, err := conn.ExecContext(context.Background(), "COMMIT"); err != nil {
-		t.Fatal(err)
-	}
 	var updated []byte
-	if err := conn.QueryRowContext(context.Background(), `SELECT body_enc FROM security_reports WHERE tracking_id = ?`, "sec_0123456789abcdef").Scan(&updated); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT body_enc FROM security_reports WHERE tracking_id = ?`, "sec_0123456789abcdef").Scan(&updated); err != nil {
 		t.Fatal(err)
 	}
 	decrypted, err := securitykey.DecryptMessage(newPair.Private, updated)
@@ -109,16 +94,17 @@ func TestReencryptPGPReportsAbortsOnInvalidCiphertext(t *testing.T) {
 			t.Errorf("close database connection: %v", err)
 		}
 	})
-	if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+	tx, err := conn.BeginTx(context.Background(), nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := reencryptPGPReports(context.Background(), conn, oldPair.Private, newPair.Public); err == nil {
-		if _, rollbackErr := conn.ExecContext(context.Background(), "ROLLBACK"); rollbackErr != nil {
+	if err := reencryptPGPReports(context.Background(), tx, oldPair.Private, newPair.Public); err == nil {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
 			t.Errorf("rollback report rotation: %v", rollbackErr)
 		}
 		t.Fatal("reencryptPGPReports() accepted invalid ciphertext")
 	}
-	if _, err := conn.ExecContext(context.Background(), "ROLLBACK"); err != nil {
+	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)
 	}
 	var persisted []byte

@@ -322,7 +322,7 @@ func (m *Manager) startI2PD(ctx context.Context, binaryPath, configRoot, dataRoo
 	tunnelPath := filepath.Join(configRoot, "tunnels.conf")
 	tunnelDir := filepath.Join(configRoot, "tunnels.d")
 	pidPath := filepath.Join(dataRoot, "i2pd.pid")
-	settings := fmt.Sprintf("daemon = false\nipv4 = true\nipv6 = false\nnotransit = true\nfloodfill = false\nlog = file\nlogfile = %s\nloglevel = warn\n\n[http]\nenabled = false\n[httpproxy]\nenabled = false\n[socksproxy]\nenabled = false\n[sam]\nenabled = true\naddress = 127.0.0.1\nport = %d\n[bob]\nenabled = false\n[i2cp]\nenabled = false\n[i2pcontrol]\nenabled = false\n[upnp]\nenabled = false\n", filepath.Join(m.opts.LogsDir, "i2pd.log"), samPort)
+	settings := renderI2PDConfig(samPort, filepath.Join(m.opts.LogsDir, "i2pd.log"))
 	if err = os.WriteFile(confPath, []byte(settings), 0600); err != nil {
 		return "", err
 	}
@@ -375,6 +375,10 @@ func (m *Manager) startI2PD(ctx context.Context, binaryPath, configRoot, dataRoo
 		}
 	}
 	return "", fmt.Errorf("i2pd SAM port startup timeout")
+}
+
+func renderI2PDConfig(samPort int, logPath string) string {
+	return fmt.Sprintf("daemon = false\nipv4 = true\nipv6 = false\nnotransit = true\nfloodfill = false\nlog = file\nlogfile = %s\nloglevel = warn\n\n[http]\nenabled = false\n[httpproxy]\nenabled = false\n[socksproxy]\nenabled = false\n[sam]\nenabled = true\naddress = 127.0.0.1\nport = %d\n[bob]\nenabled = false\n[i2cp]\nenabled = false\n[i2pcontrol]\nenabled = false\n[upnp]\nenabled = false\n", logPath, samPort)
 }
 
 func controlConnClosed(conn net.Conn) <-chan struct{} {

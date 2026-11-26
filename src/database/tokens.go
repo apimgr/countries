@@ -61,23 +61,14 @@ func CreateOwnerToken(ctx context.Context, db *sql.DB, encryptionKey string) (To
 		return TokenRecord{}, "", err
 	}
 	hash := tokenHash(raw)
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return TokenRecord{}, "", err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO owners (id) VALUES (?)`, ownerID); err != nil {
-		return TokenRecord{}, "", err
-	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO api_tokens (owner_id, kind, token_hash, token_prefix, token_last4, token_enc) VALUES (?, 'primary', ?, ?, ?, ?)`, ownerID, hash, raw[:12], raw[len(raw)-4:], sealed)
-	if err != nil {
-		return TokenRecord{}, "", err
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return TokenRecord{}, "", err
-	}
-	if err := tx.Commit(); err != nil {
+	var id int64
+	if err := Write(ctx, db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO owners (id) VALUES (?)`, ownerID); err != nil { return err }
+		result, err := tx.ExecContext(ctx, `INSERT INTO api_tokens (owner_id, kind, token_hash, token_prefix, token_last4, token_enc) VALUES (?, 'primary', ?, ?, ?, ?)`, ownerID, hash, raw[:12], raw[len(raw)-4:], sealed)
+		if err != nil { return err }
+		id, err = result.LastInsertId()
+		return err
+	}); err != nil {
 		return TokenRecord{}, "", err
 	}
 	return TokenRecord{ID: id, OwnerID: ownerID, Kind: "primary", Prefix: raw[:12], Last4: raw[len(raw)-4:], CreatedAt: time.Now().UTC()}, raw, nil
@@ -89,77 +80,47 @@ func LookupOwnerToken(ctx context.Context, db *sql.DB, raw string, now time.Time
 		return TokenIdentity{}, ErrTokenNotFound
 	}
 	var identity TokenIdentity
-	var expires sql.NullInt64
-	var revoked sql.NullInt64
-	var lastUsed sql.NullInt64
-	if err := db.QueryRowContext(ctx, `SELECT id, owner_id, kind, token_prefix, expires_at, revoked_at, last_used_at FROM api_tokens WHERE token_hash = ?`, tokenHash(raw)).Scan(&identity.TokenID, &identity.OwnerID, &identity.Kind, &identity.Prefix, &expires, &revoked, &lastUsed); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return TokenIdentity{}, ErrTokenNotFound
+	err := Write(ctx, db, func(tx *sql.Tx) error {
+		var expires, revoked sql.NullInt64
+		var lastUsed sql.NullInt64
+		if err := tx.QueryRowContext(ctx, `SELECT id, owner_id, kind, token_prefix, expires_at, revoked_at, last_used_at FROM api_tokens WHERE token_hash = ?`, tokenHash(raw)).Scan(&identity.TokenID, &identity.OwnerID, &identity.Kind, &identity.Prefix, &expires, &revoked, &lastUsed); err != nil {
+			if errors.Is(err, sql.ErrNoRows) { return ErrTokenNotFound }
+			return err
 		}
-		return TokenIdentity{}, err
-	}
-	if revoked.Valid || expires.Valid && expires.Int64 <= now.Unix() {
-		return TokenIdentity{}, ErrTokenNotFound
-	}
-	if expires.Valid {
-		expiresAt := time.Unix(expires.Int64, 0).UTC()
-		identity.ExpiresAt = &expiresAt
-	}
-	identity.Active = true
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return TokenIdentity{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `UPDATE api_tokens SET last_used_at = ? WHERE id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND (last_used_at IS NULL OR last_used_at <= ?)`, now.Unix(), identity.TokenID, now.Unix(), now.Unix()-60); err != nil {
-		return TokenIdentity{}, err
-	}
-	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM api_tokens WHERE id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`, identity.TokenID, now.Unix()).Scan(&active); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return TokenIdentity{}, ErrTokenNotFound
+		if revoked.Valid || expires.Valid && expires.Int64 <= now.Unix() { return ErrTokenNotFound }
+		if expires.Valid { expiresAt := time.Unix(expires.Int64, 0).UTC(); identity.ExpiresAt = &expiresAt }
+		identity.Active = true
+		if _, err := tx.ExecContext(ctx, `UPDATE api_tokens SET last_used_at = ? WHERE id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND (last_used_at IS NULL OR last_used_at <= ?)`, now.Unix(), identity.TokenID, now.Unix(), now.Unix()-60); err != nil { return err }
+		var active int
+		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM api_tokens WHERE id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`, identity.TokenID, now.Unix()).Scan(&active); err != nil {
+			if errors.Is(err, sql.ErrNoRows) { return ErrTokenNotFound }
+			return err
 		}
-		return TokenIdentity{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE owners SET last_seen_at = ? WHERE id = ? AND last_seen_at <= ?`, now.Unix(), identity.OwnerID, now.Unix()-60); err != nil {
-		return TokenIdentity{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return TokenIdentity{}, err
-	}
+		_, err := tx.ExecContext(ctx, `UPDATE owners SET last_seen_at = ? WHERE id = ? AND last_seen_at <= ?`, now.Unix(), identity.OwnerID, now.Unix()-60)
+		return err
+	})
+	if err != nil { return TokenIdentity{}, err }
 	return identity, nil
 }
 
 // CleanupOwnerTokenState removes expired contact challenges and idle token owners.
 func CleanupOwnerTokenState(ctx context.Context, db *sql.DB, now time.Time, idlePurgeDays int) (int64, int64, error) {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	challenges, err := tx.ExecContext(ctx, `DELETE FROM captcha_challenges WHERE expires_at <= ?`, now.UTC())
-	if err != nil {
-		return 0, 0, err
-	}
-	challengeCount, err := challenges.RowsAffected()
-	if err != nil {
-		return 0, 0, err
-	}
-	var ownerCount int64
-	if idlePurgeDays > 0 {
+	var challengeCount, ownerCount int64
+	err := Write(ctx, db, func(tx *sql.Tx) error {
+		challenges, err := tx.ExecContext(ctx, `DELETE FROM captcha_challenges WHERE expires_at <= ?`, now.UTC())
+		if err != nil { return err }
+		challengeCount, err = challenges.RowsAffected()
+		if err != nil { return err }
+		if idlePurgeDays > 0 {
 		cutoff := now.AddDate(0, 0, -idlePurgeDays).Unix()
 		owners, deleteErr := tx.ExecContext(ctx, `DELETE FROM owners WHERE last_seen_at < ?`, cutoff)
-		if deleteErr != nil {
-			return 0, 0, deleteErr
+		if deleteErr != nil { return deleteErr }
+			ownerCount, err = owners.RowsAffected()
+			if err != nil { return err }
 		}
-		ownerCount, err = owners.RowsAffected()
-		if err != nil {
-			return 0, 0, err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, 0, err
-	}
+		return nil
+	})
+	if err != nil { return 0, 0, err }
 	return challengeCount, ownerCount, nil
 }
 
@@ -186,6 +147,12 @@ func ListOwnerTokens(ctx context.Context, db *sql.DB, ownerID string) (items []T
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// CountActiveOwnerTokens returns active primary and linked token counts without selecting token material.
+func CountActiveOwnerTokens(ctx context.Context, db *sql.DB, now time.Time) (primary, linked int, err error) {
+	err = db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN kind = 'primary' THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN kind = 'linked' THEN 1 ELSE 0 END),0) FROM api_tokens WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`, now.UTC().Unix()).Scan(&primary, &linked)
+	return primary, linked, err
 }
 
 // RevealOwnerToken decrypts a token only for an explicit reveal action.
@@ -249,24 +216,21 @@ func CreateLinkedOwnerToken(ctx context.Context, db *sql.DB, ownerID, name strin
 	if err != nil {
 		return TokenRecord{}, "", err
 	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return TokenRecord{}, "", err
-	}
-	defer func() { _ = tx.Rollback() }()
+	var id int64
+	err = Write(ctx, db, func(tx *sql.Tx) error {
 	var active int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_tokens WHERE owner_id = ? AND kind = 'linked' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`, ownerID, now.Unix()).Scan(&active); err != nil {
-		return TokenRecord{}, "", err
+		return err
 	}
 	if active >= maxActive {
-		return TokenRecord{}, "", ErrTokenLimit
+		return ErrTokenLimit
 	}
 	var duplicate int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_tokens WHERE owner_id = ? AND kind = 'linked' AND lower(name) = lower(?)`, ownerID, name).Scan(&duplicate); err != nil {
-		return TokenRecord{}, "", err
+		return err
 	}
 	if duplicate > 0 {
-		return TokenRecord{}, "", ErrTokenName
+		return ErrTokenName
 	}
 	var expiry any
 	if expiresAt != nil {
@@ -274,15 +238,12 @@ func CreateLinkedOwnerToken(ctx context.Context, db *sql.DB, ownerID, name strin
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO api_tokens (owner_id, kind, name, token_hash, token_prefix, token_last4, token_enc, expires_at) VALUES (?, 'linked', ?, ?, ?, ?, ?, ?)`, ownerID, name, tokenHash(raw), raw[:12], raw[len(raw)-4:], sealed, expiry)
 	if err != nil {
-		return TokenRecord{}, "", err
+		return err
 	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return TokenRecord{}, "", err
-	}
-	if err := tx.Commit(); err != nil {
-		return TokenRecord{}, "", err
-	}
+	id, err = result.LastInsertId()
+	return err
+	})
+	if err != nil { return TokenRecord{}, "", err }
 	item := TokenRecord{ID: id, OwnerID: ownerID, Kind: "linked", Name: name, Prefix: raw[:12], Last4: raw[len(raw)-4:], CreatedAt: now.UTC(), ExpiresAt: expiresAt}
 	return item, raw, nil
 }
@@ -296,11 +257,7 @@ func UpdateLinkedOwnerToken(ctx context.Context, db *sql.DB, ownerID string, tok
 	if err := ensureTokenLast4(ctx, db); err != nil {
 		return err
 	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
+	return Write(ctx, db, func(tx *sql.Tx) error {
 	var duplicate int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_tokens WHERE owner_id = ? AND kind = 'linked' AND id <> ? AND lower(name) = lower(?)`, ownerID, tokenID, name).Scan(&duplicate); err != nil {
 		return err
@@ -319,12 +276,18 @@ func UpdateLinkedOwnerToken(ctx context.Context, db *sql.DB, ownerID string, tok
 	if n, _ := result.RowsAffected(); n != 1 {
 		return ErrTokenNotFound
 	}
-	return tx.Commit()
+	return nil
+	})
 }
 
 // RevokeLinkedOwnerToken revokes one linked credential without touching its owner.
 func RevokeLinkedOwnerToken(ctx context.Context, db *sql.DB, ownerID string, tokenID int64, now time.Time) error {
-	result, err := db.ExecContext(ctx, `UPDATE api_tokens SET revoked_at = ?, revoked_reason = 'owner_revoked' WHERE owner_id = ? AND id = ? AND kind = 'linked' AND revoked_at IS NULL`, now.Unix(), ownerID, tokenID)
+	var result sql.Result
+	err := Write(ctx, db, func(tx *sql.Tx) error {
+		var err error
+		result, err = tx.ExecContext(ctx, `UPDATE api_tokens SET revoked_at = ?, revoked_reason = 'owner_revoked' WHERE owner_id = ? AND id = ? AND kind = 'linked' AND revoked_at IS NULL`, now.Unix(), ownerID, tokenID)
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -346,27 +309,26 @@ func mutateToken(ctx context.Context, db *sql.DB, ownerID string, tokenID int64,
 	if err != nil {
 		return TokenRecord{}, "", err
 	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return TokenRecord{}, "", err
-	}
-	defer func() { _ = tx.Rollback() }()
+	var resultItem TokenRecord
+	var resultRaw string
+	err = Write(ctx, db, func(tx *sql.Tx) error {
 	row := tx.QueryRowContext(ctx, `SELECT id, owner_id, kind, COALESCE(name,''), token_prefix, token_last4, created_at, rotated_at, expires_at, last_used_at, revoked_at FROM api_tokens WHERE owner_id = ? AND id = ?`, ownerID, tokenID)
 	item, err := scanTokenRecord(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return TokenRecord{}, "", ErrTokenNotFound
+			return ErrTokenNotFound
 		}
-		return TokenRecord{}, "", err
+		return err
 	}
 	item, raw, err = mutate(tx, item, raw, sealed)
 	if err != nil {
-		return TokenRecord{}, "", err
+		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return TokenRecord{}, "", err
-	}
-	return item, raw, nil
+	resultItem, resultRaw = item, raw
+	return nil
+	})
+	if err != nil { return TokenRecord{}, "", err }
+	return resultItem, resultRaw, nil
 }
 
 type rowScanner interface{ Scan(...any) error }
@@ -520,7 +482,10 @@ func ensureTokenLast4(ctx context.Context, db *sql.DB) (resultErr error) {
 	if present {
 		return nil
 	}
-	_, err = db.ExecContext(ctx, `ALTER TABLE api_tokens ADD COLUMN token_last4 TEXT NOT NULL DEFAULT ''`)
+	err = Write(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `ALTER TABLE api_tokens ADD COLUMN token_last4 TEXT NOT NULL DEFAULT ''`)
+		return err
+	})
 	if err == nil {
 		return nil
 	}

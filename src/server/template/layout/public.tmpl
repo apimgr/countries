@@ -3,7 +3,8 @@
 <html lang="{{.Lang}}" dir="{{.Dir}}" class="theme-{{.Theme}}">
 {{template "head" .}}
 <body>
-  <div id="offline-indicator" class="offline-indicator" role="status" aria-live="polite" hidden>{{t .Lang "pwa.offline_notice"}}</div>
+  {{if consentRequired .Request}}<aside class="cookie-banner" role="status"><p>{{t .Lang "consent.preference_required"}} <a href="{{path .URLPrefix "/server/preferences"}}#consent-preferences">{{t .Lang "preferences.preference_cookies"}}</a></p></aside>{{end}}
+  <div id="offline-indicator" class="offline-indicator" role="status" aria-live="polite" data-offline-cache="{{.AppName}}-offline-strings" data-offline-title="{{t .Lang "pwa.offline_title"}}" data-offline-message="{{t .Lang "pwa.offline_message"}}" data-offline-reload="{{t .Lang "pwa.offline_reload"}}" hidden>{{t .Lang "pwa.offline_notice"}}</div>
   {{trackingNoscript .Request}}
   <a class="skip-link" href="#main-content">{{t .Lang "nav.skip_main"}}</a>
   <a class="skip-link" href="#site-navigation">{{t .Lang "nav.skip_navigation"}}</a>

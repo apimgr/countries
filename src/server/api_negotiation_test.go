@@ -172,3 +172,36 @@ func TestMetricsAPIRoutesPreserveProtocolSuccessBodies(t *testing.T) {
 		})
 	}
 }
+
+func TestAPIContentNegotiationSetsSafeCacheHeaders(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		method     string
+		path       string
+		status     int
+		cache      string
+	}{
+		{name: "public country data", method: http.MethodGet, path: api.APIPath("countries/US"), status: http.StatusOK, cache: "public, max-age=60"},
+		{name: "private server page", method: http.MethodGet, path: api.APIPath("server/healthz"), status: http.StatusOK, cache: "private, no-store"},
+		{name: "public route error", method: http.MethodGet, path: api.APIPath("countries/unknown"), status: http.StatusNotFound, cache: "no-store"},
+		{name: "public route write", method: http.MethodPost, path: api.APIPath("coordinates"), status: http.StatusOK, cache: "private, no-store"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			})
+			request := httptest.NewRequest(test.method, test.path, nil)
+			request.Header.Set("Accept", "application/json")
+			response := httptest.NewRecorder()
+			apiContentNegotiation(next).ServeHTTP(response, request)
+			if got := response.Header().Get("Cache-Control"); got != test.cache {
+				t.Errorf("Cache-Control = %q, want %q", got, test.cache)
+			}
+			if strings.HasPrefix(test.cache, "public") && !strings.Contains(response.Header().Get("Vary"), "Cookie") {
+				t.Errorf("public response Vary = %q, want Cookie", response.Header().Get("Vary"))
+			}
+		})
+	}
+}

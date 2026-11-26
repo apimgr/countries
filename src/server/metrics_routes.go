@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -29,10 +30,22 @@ func RegisterMetricsRoutes(router chi.Router, cfg config.MetricsConfig, collecto
 	}))
 
 	mount := func(prefix string) {
-		router.Handle(prefix, prometheusHandler)
-		router.Handle(prefix+"/prometheus", prometheusHandler)
-		router.Handle(prefix+"/grafana", grafanaHandler)
-		router.Handle(prefix+"/loki", lokiHandler)
+		router.Method(http.MethodGet, prefix, prometheusHandler)
+		router.Method(http.MethodGet, prefix+"/{service}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch chi.URLParam(r, "service") {
+			case "prometheus":
+				prometheusHandler.ServeHTTP(w, r)
+			case "grafana":
+				grafanaHandler.ServeHTTP(w, r)
+			case "loki":
+				lokiHandler.ServeHTTP(w, r)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		router.Method(http.MethodGet, prefix+"/prometheus", prometheusHandler)
+		router.Method(http.MethodGet, prefix+"/grafana", grafanaHandler)
+		router.Method(http.MethodGet, prefix+"/loki", lokiHandler)
 	}
 	mount("/server/metrics")
 	mount(api.APIPath("server/metrics"))
@@ -68,7 +81,9 @@ func metricsBearerAuth(cfg config.MetricsConfig, token string, next http.Handler
 func handleGrafanaDashboard(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, no-store")
-	_ = json.NewEncoder(w).Encode(grafanaDashboard())
+	if err := json.NewEncoder(w).Encode(grafanaDashboard()); err != nil {
+		log.Printf("encode metrics Grafana dashboard: %v", err)
+	}
 }
 
 func grafanaDashboard() map[string]interface{} {
@@ -99,17 +114,28 @@ func grafanaDashboard() map[string]interface{} {
 		"links": []interface{}{}, "liveNow": false,
 		"panels": []interface{}{
 			panel(1, 0, 0, "HTTP Requests", `sum by (status) (rate(countries_http_requests_total[$__rate_interval]))`, `{{status}}`, "reqps"),
-			panel(2, 12, 0, "Database Query Latency", `histogram_quantile(0.95, sum by (le, operation) (rate(countries_db_query_duration_seconds_bucket[$__rate_interval])))`, `{{operation}} p95`, "s"),
-			panel(3, 0, 8, "Cache Activity", `sum by (cache) (rate(countries_cache_hits_total[$__rate_interval]))`, `{{cache}} hits/s`, "reqps"),
-			panel(4, 12, 8, "Scheduler Runs", `sum by (task, status) (rate(countries_scheduler_tasks_total[$__rate_interval]))`, `{{task}} {{status}}`, "reqps"),
-			panel(5, 0, 16, "System CPU", `countries_system_cpu_usage_percent`, "CPU", "percent"),
-			panel(6, 12, 16, "System Memory", `countries_system_memory_usage_percent`, "Memory", "percent"),
-			panel(7, 0, 24, "System Disk", `countries_system_disk_usage_percent`, `{{path}}`, "percent"),
-			panel(8, 12, 24, "Country Records", `countries_country_records`, "Countries", "short"),
-			panel(9, 0, 32, "Authentication Attempts", `sum by (status) (rate(countries_auth_attempts_total[$__rate_interval]))`, `{{status}}`, "reqps"),
-			panel(10, 12, 32, "Rate Limit Blocks", `sum by (limit) (rate(countries_ratelimit_blocked_total[$__rate_interval]))`, `{{limit}}`, "reqps"),
-			panel(11, 0, 40, "Go Runtime Goroutines", `countries_go_goroutines`, "Goroutines", "short"),
-			panel(12, 12, 40, "Application Uptime", `countries_app_uptime_seconds`, "Uptime", "s"),
+			panel(2, 12, 0, "HTTP Request Latency (p95)", `histogram_quantile(0.95, sum by (le, path) (rate(countries_http_request_duration_seconds_bucket[$__rate_interval])))`, `{{path}} p95`, "s"),
+			panel(3, 0, 8, "HTTP Active Requests", `countries_http_active_requests`, "active", "short"),
+			panel(4, 12, 8, "Database Query Latency (p95)", `histogram_quantile(0.95, sum by (le, operation) (rate(countries_db_query_duration_seconds_bucket[$__rate_interval])))`, `{{operation}} p95`, "s"),
+			panel(5, 0, 16, "Database Connections", `countries_db_connections_open`, "open", "short"),
+			panel(6, 12, 16, "Database Errors", `sum by (error_type) (rate(countries_db_errors_total[$__rate_interval]))`, `{{error_type}}`, "reqps"),
+			panel(7, 0, 24, "SQLite Busy Retries", `rate(countries_db_busy_total[$__rate_interval])`, "retries/s", "reqps"),
+			panel(8, 12, 24, "SQLite Write Wait (p95)", `histogram_quantile(0.95, rate(countries_db_write_wait_seconds_bucket[$__rate_interval]))`, "p95", "s"),
+			panel(9, 0, 32, "Cache Hits and Misses", `sum by (cache) (rate(countries_cache_hits_total[$__rate_interval])) or sum by (cache) (rate(countries_cache_misses_total[$__rate_interval]))`, `{{cache}}`, "reqps"),
+			panel(10, 12, 32, "Cache Evictions", `sum by (cache) (rate(countries_cache_evictions_total[$__rate_interval]))`, `{{cache}}`, "reqps"),
+			panel(11, 0, 40, "Cache Items", `sum by (cache) (countries_cache_size)`, `{{cache}}`, "short"),
+			panel(12, 12, 40, "Scheduler Runs", `sum by (task, status) (rate(countries_scheduler_tasks_total[$__rate_interval]))`, `{{task}} {{status}}`, "reqps"),
+			panel(13, 0, 48, "Scheduler Task Duration (p95)", `histogram_quantile(0.95, sum by (task, le) (rate(countries_scheduler_task_duration_seconds_bucket[1h])))`, `{{task}}`, "s"),
+			panel(14, 12, 48, "Scheduler Tasks Running", `sum(countries_scheduler_tasks_running)`, "running", "short"),
+			panel(15, 0, 56, "Seconds Since Last Task Run", `time() - countries_scheduler_last_run_timestamp`, `{{task}}`, "s"),
+			panel(16, 12, 56, "System CPU", `countries_system_cpu_usage_percent`, "CPU", "percent"),
+			panel(17, 0, 64, "System Memory", `countries_system_memory_usage_percent`, "Memory", "percent"),
+			panel(18, 12, 64, "System Disk", `countries_system_disk_usage_percent`, `{{path}}`, "percent"),
+			panel(19, 0, 72, "Country Records", `countries_country_records`, "Countries", "short"),
+			panel(20, 12, 72, "Authentication Attempts", `sum by (status) (rate(countries_auth_attempts_total[$__rate_interval]))`, `{{status}}`, "reqps"),
+			panel(21, 0, 80, "Rate Limit Blocks", `sum by (limit) (rate(countries_ratelimit_blocked_total[$__rate_interval]))`, `{{limit}}`, "reqps"),
+			panel(22, 12, 80, "Go Runtime Goroutines", `countries_go_goroutines`, "Goroutines", "short"),
+			panel(23, 0, 88, "Application Uptime", `countries_app_uptime_seconds`, "Uptime", "s"),
 		},
 		"refresh": "30s", "schemaVersion": 39, "tags": []string{"countries", "metrics"},
 		"templating": map[string]interface{}{"list": []interface{}{map[string]interface{}{
@@ -153,6 +179,6 @@ func handleLokiStreams(w http.ResponseWriter, _ *http.Request, cfg config.Metric
 		streams = append(streams, *streamsByLevel[level])
 	}
 	if err := json.NewEncoder(w).Encode(map[string]interface{}{"streams": streams}); err != nil {
-		return
+		log.Printf("encode metrics Loki streams: %v", err)
 	}
 }

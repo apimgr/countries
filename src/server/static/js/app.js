@@ -2,6 +2,76 @@
 // Countries API - Main JavaScript
 
 const offlineIndicator = document.getElementById('offline-indicator');
+const bootRecoveryKey = 'countries_recovered';
+window.OFFLINE_STRINGS = offlineIndicator ? {
+    lang: document.documentElement.lang || 'en',
+    title: offlineIndicator.dataset.offlineTitle || 'Offline',
+    heading: offlineIndicator.dataset.offlineTitle || 'Offline',
+    message: offlineIndicator.dataset.offlineMessage || 'You are offline.',
+    reload: offlineIndicator.dataset.offlineReload || 'Reload'
+} : null;
+if (window.OFFLINE_STRINGS && 'caches' in window) {
+    const appBase = document.querySelector('meta[name="url-prefix"]')?.content || '';
+    caches.open(offlineIndicator.dataset.offlineCache || 'Countries API-offline-strings')
+        .then(cache => cache.put(new URL(`${appBase}/offline-strings.json`, window.location.origin), new Response(JSON.stringify(window.OFFLINE_STRINGS), { headers: { 'Content-Type': 'application/json' } })))
+        .catch(() => {});
+}
+function clearBootRecoveryTimer() {
+    window.requestAnimationFrame(() => window.clearTimeout(bootRecoveryTimer));
+}
+function showBootRecoveryError(copy) {
+    const body = document.body;
+    const main = document.createElement('main');
+    const heading = document.createElement('h1');
+    const message = document.createElement('p');
+    const reload = document.createElement('a');
+    main.className = 'page-content error-page';
+    heading.textContent = copy.heading || copy.title || 'Offline';
+    message.textContent = copy.message || 'You are offline.';
+    reload.href = window.location.href;
+    reload.textContent = copy.reload || 'Reload';
+    main.append(heading, message, reload);
+    body.replaceChildren(main);
+}
+async function readOfflineStrings() {
+    const fallback = window.OFFLINE_STRINGS || { lang: 'en', title: 'Offline', heading: 'You are offline', message: 'You are offline.', reload: 'Reload' };
+    if (!offlineIndicator || !('caches' in window)) return fallback;
+    try {
+        const appBase = document.querySelector('meta[name="url-prefix"]')?.content || '';
+        const cache = await caches.open(offlineIndicator.dataset.offlineCache || 'Countries API-offline-strings');
+        const stored = await cache.match(new URL(`${appBase}/offline-strings.json`, window.location.origin));
+        return stored ? Object.assign({}, fallback, await stored.json()) : fallback;
+    } catch {
+        return fallback;
+    }
+}
+const bootRecoveryTimer = window.setTimeout(async () => {
+    let recovered;
+    try {
+        recovered = window.sessionStorage.getItem(bootRecoveryKey) === '1';
+    } catch {
+        showBootRecoveryError(await readOfflineStrings());
+        return;
+    }
+    if (recovered) {
+        showBootRecoveryError(await readOfflineStrings());
+        return;
+    }
+    try {
+        window.sessionStorage.setItem(bootRecoveryKey, '1');
+        const registrations = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistrations() : [];
+        await Promise.all(registrations.map(registration => registration.unregister()));
+        if ('caches' in window) await Promise.all((await caches.keys()).map(name => caches.delete(name)));
+        window.location.reload();
+    } catch {
+        showBootRecoveryError(await readOfflineStrings());
+    }
+}, 10000);
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', clearBootRecoveryTimer, { once: true });
+} else {
+    clearBootRecoveryTimer();
+}
 function updateOfflineIndicator() {
     if (!offlineIndicator) return;
     offlineIndicator.hidden = navigator.onLine;

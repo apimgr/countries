@@ -157,7 +157,7 @@ func TestRestoreAuthorizationAndPasswordPrompt(t *testing.T) {
 	})
 
 	cfg := config.DefaultConfig()
-	if err := authorizeRestore(cfg, filepath.Join(dir, "missing.db"), false, input, output); err != nil {
+	if err := authorizeRestore(cfg, filepath.Join(dir, "missing.db"), nil, false, input, output); err != nil {
 		t.Fatalf("authorize restore into empty installation: %v", err)
 	}
 
@@ -173,7 +173,7 @@ func TestRestoreAuthorizationAndPasswordPrompt(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := authorizeRestore(cfg, databasePath, false, input, output); err == nil || err.Error() != "restoring an existing installation requires an interactive terminal" {
+	if err := authorizeRestore(cfg, databasePath, nil, false, input, output); err == nil || err.Error() != "restoring an existing installation requires an interactive terminal" {
 		t.Fatalf("authorize restore into existing installation = %v", err)
 	}
 
@@ -188,7 +188,7 @@ func TestRestoreAuthorizationAndPasswordPrompt(t *testing.T) {
 		t.Fatalf("prompt unencrypted backup = %q, %v", password, err)
 	}
 	encryptedPath := filepath.Join(dir, "encrypted-backup")
-	if err := os.WriteFile(encryptedPath, []byte("COUNTRIES-BACKUP-V1\x00"+"payload"), 0600); err != nil {
+	if err := os.WriteFile(encryptedPath, []byte("BKUP1"+"payload"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if password, err := promptBackupPassword(encryptedPath, input, output); err == nil || password != "" {

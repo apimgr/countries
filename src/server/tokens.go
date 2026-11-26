@@ -131,12 +131,16 @@ func (s *Server) handleIssueOwnerToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) validOperatorToken(raw string) bool {
+	valid := false
 	if s.config == nil || s.config.Server.Token == "" || raw == "" {
+		if s.metrics != nil { s.metrics.RecordAuth("bearer", "failed") }
 		return false
 	}
 	actual := sha256.Sum256([]byte(raw))
 	expected := sha256.Sum256([]byte(s.config.Server.Token))
-	return subtle.ConstantTimeCompare(actual[:], expected[:]) == 1
+	valid = subtle.ConstantTimeCompare(actual[:], expected[:]) == 1
+	if s.metrics != nil { status := "failed"; if valid { status = "success" }; s.metrics.RecordAuth("bearer", status) }
+	return valid
 }
 
 func (s *Server) handleRestoreOwnerToken(w http.ResponseWriter, r *http.Request) {
@@ -461,39 +465,23 @@ type ownerSQL interface {
 }
 
 func revokePrimaryOwner(ctx context.Context, db *sql.DB, ownerID, actorIP, source string) (ownerRevocationCounts, error) {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return ownerRevocationCounts{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	counts, err := countOwnerData(ctx, tx, ownerID)
-	if err != nil {
-		return ownerRevocationCounts{}, err
-	}
-	if _, err := deleteOwnerResources(ctx, tx, ownerID); err != nil {
-		return ownerRevocationCounts{}, err
-	}
-	result, err := tx.ExecContext(ctx, `DELETE FROM owners WHERE id = ?`, ownerID)
-	if err != nil {
-		return ownerRevocationCounts{}, err
-	}
-	deleted, err := result.RowsAffected()
-	if err != nil {
-		return ownerRevocationCounts{}, err
-	}
-	if deleted != 1 {
-		return ownerRevocationCounts{}, sql.ErrNoRows
-	}
-	details, err := json.Marshal(map[string]interface{}{"owner_id": ownerID, "scope": "owner", "tokens": counts.tokens, "resources": counts.resources, "source": source})
-	if err != nil {
-		return ownerRevocationCounts{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log (level, category, action, actor_ip, target_type, target_id, details, success) VALUES ('info', 'token', 'token.revoked', ?, 'owner', ?, ?, 1)`, actorIP, ownerID, string(details)); err != nil {
-		return ownerRevocationCounts{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return ownerRevocationCounts{}, err
-	}
+	var counts ownerRevocationCounts
+	err := database.Write(ctx, db, func(tx *sql.Tx) error {
+		var err error
+		counts, err = countOwnerData(ctx, tx, ownerID)
+		if err != nil { return err }
+		if _, err := deleteOwnerResources(ctx, tx, ownerID); err != nil { return err }
+		result, err := tx.ExecContext(ctx, `DELETE FROM owners WHERE id = ?`, ownerID)
+		if err != nil { return err }
+		deleted, err := result.RowsAffected()
+		if err != nil { return err }
+		if deleted != 1 { return sql.ErrNoRows }
+		details, err := json.Marshal(map[string]interface{}{"owner_id": ownerID, "scope": "owner", "tokens": counts.tokens, "resources": counts.resources, "source": source})
+		if err != nil { return err }
+		_, err = tx.ExecContext(ctx, `INSERT INTO audit_log (level, category, action, actor_ip, target_type, target_id, details, success) VALUES ('info', 'token', 'token.revoked', ?, 'owner', ?, ?, 1)`, actorIP, ownerID, string(details))
+		return err
+	})
+	if err != nil { return ownerRevocationCounts{}, err }
 	return counts, nil
 }
 
@@ -762,7 +750,10 @@ func (s *Server) renderTokenPage(w http.ResponseWriter, r *http.Request, data ma
 }
 
 func (s *Server) tokenIdentity(r *http.Request, apiRequest bool, w http.ResponseWriter) (database.TokenIdentity, error) {
+	method := "owner_token"
+	if apiRequest { method = "api_token" }
 	if s.db == nil {
+		if s.metrics != nil { s.metrics.RecordAuth(method, "failed") }
 		return database.TokenIdentity{}, sql.ErrConnDone
 	}
 	raw := ""
@@ -773,11 +764,13 @@ func (s *Server) tokenIdentity(r *http.Request, apiRequest bool, w http.Response
 	}
 	identity, err := database.LookupOwnerToken(r.Context(), s.db, raw, time.Now())
 	if err != nil {
+		if s.metrics != nil { s.metrics.RecordAuth(method, "failed") }
 		if !apiRequest && raw != "" {
 			s.clearOwnerTokenCookie(w, r)
 		}
 		return database.TokenIdentity{}, err
 	}
+	if s.metrics != nil { s.metrics.RecordAuth(method, "success") }
 	if !apiRequest {
 		if identity.Kind != "primary" {
 			s.clearOwnerTokenCookie(w, r)
@@ -923,7 +916,10 @@ func (s *Server) auditTokenEvent(r *http.Request, action, ownerID, prefix, sourc
 		return
 	}
 	details, _ := json.Marshal(map[string]string{"owner_id": ownerID, "prefix": prefix, "source": source})
-	if _, err := s.db.ExecContext(r.Context(), `INSERT INTO audit_log (level, category, action, actor_ip, target_type, target_id, details, success) VALUES ('info', 'token', ?, ?, 'owner', ?, ?, 1)`, action, requestClientIP(r.RemoteAddr), ownerID, string(details)); err != nil {
+	if err := database.Write(r.Context(), s.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(r.Context(), `INSERT INTO audit_log (level, category, action, actor_ip, target_type, target_id, details, success) VALUES ('info', 'token', ?, ?, 'owner', ?, ?, 1)`, action, requestClientIP(r.RemoteAddr), ownerID, string(details))
+		return err
+	}); err != nil {
 		log.Printf("token audit write failed: action=%s owner=%s prefix=%s error=%v", action, ownerID, prefix, err)
 	}
 }

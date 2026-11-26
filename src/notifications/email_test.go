@@ -108,6 +108,14 @@ func TestSendRejectsHeaderNewlinesBeforeConnecting(t *testing.T) {
 	}
 }
 
+func TestSendRequiresResolvedFQDN(t *testing.T) {
+	message := Message{FromName: "Countries", FromEmail: "from@example.test", To: "to@example.test", Subject: "Subject", Text: "Body", HTML: "<p>Body</p>"}
+	sender := Sender{Config: SMTPConfig{Host: "127.0.0.1", Port: 1, TLS: "none"}}
+	if err := sender.Send(message); err == nil || !strings.Contains(err.Error(), "resolved FQDN") {
+		t.Fatalf("Send() error = %v, want resolved FQDN rejection before connecting", err)
+	}
+}
+
 func TestSenderChecksAndSendsThroughSMTP(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -171,7 +179,9 @@ func TestSenderRejectsInvalidConfigurationAndMessage(t *testing.T) {
 		{name: "missing HTML", message: Message{FromEmail: "from@example.test", To: "to@example.test", Subject: "Subject", Text: "Body"}, want: "HTML alternative"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if err := sender.Send(test.message); err == nil || !strings.Contains(err.Error(), test.want) {
+			message := test.message
+			message.FQDN = "example.test"
+			if err := sender.Send(message); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Send() error = %v, want %q", err, test.want)
 			}
 		})

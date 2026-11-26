@@ -246,9 +246,10 @@ func yamlConfigMappingIssues(mapping *yaml.Node, source string, path []string) [
 			issues = append(issues, yamlConfigIssue{Path: source, Line: value.Line, Key: strings.Join(keyPath, "."), Reason: "null is not allowed"})
 			continue
 		}
-		if value.Kind == yaml.MappingNode {
+		switch value.Kind {
+		case yaml.MappingNode:
 			issues = append(issues, yamlConfigMappingIssues(value, source, keyPath)...)
-		} else if value.Kind == yaml.SequenceNode {
+		case yaml.SequenceNode:
 			issues = append(issues, yamlConfigSequenceIssues(value, source, keyPath)...)
 		}
 	}

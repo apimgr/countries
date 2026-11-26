@@ -14,11 +14,12 @@ import (
 )
 
 const (
-	StatusPending = "pending"
-	StatusRunning = "running"
-	StatusSuccess = "success"
-	StatusFailed  = "failed"
-	StatusSkipped = "skipped"
+	StatusPending     = "pending"
+	StatusRunning     = "running"
+	StatusSuccess     = "success"
+	StatusFailed      = "failed"
+	StatusSkipped     = "skipped"
+	StatusInterrupted = "interrupted"
 )
 
 // Task is a scheduled operation. Func is process-local and is not persisted.
@@ -303,12 +304,19 @@ func (s *Scheduler) Restore(ctx context.Context) error {
 	}
 	now := time.Now()
 	s.mu.Lock()
+	var interrupted []RunRecord
 	for _, old := range stored {
 		current := s.tasks[old.ID]
 		if current == nil {
 			continue
 		}
 		current.Enabled = old.Enabled
+		current.RetryOnFail = old.RetryOnFail
+		current.RetryDelay = old.RetryDelay
+		current.MaxRetries = old.MaxRetries
+		if old.Schedule != "" {
+			current.Schedule = old.Schedule
+		}
 		current.LastRun = old.LastRun
 		current.LastStatus = old.LastStatus
 		current.LastError = old.LastError
@@ -316,6 +324,15 @@ func (s *Scheduler) Restore(ctx context.Context) error {
 		current.FailCount = old.FailCount
 		if old.Schedule == current.Schedule {
 			current.NextRun = old.NextRun
+		}
+		if old.LastStatus == StatusRunning {
+			current.LastStatus = StatusInterrupted
+			current.NextRun = now
+			started := old.LastRun
+			if started.IsZero() {
+				started = now
+			}
+			interrupted = append(interrupted, RunRecord{TaskID: old.ID, StartedAt: started, FinishedAt: now, Status: StatusInterrupted, Duration: now.Sub(started)})
 		}
 		if current.NextRun.IsZero() || old.Schedule != current.Schedule {
 			current.NextRun, err = NextTime(current.Schedule, now, s.location)
@@ -335,6 +352,13 @@ func (s *Scheduler) Restore(ctx context.Context) error {
 		if err := s.persist(task); err != nil {
 			return fmt.Errorf("persist scheduler task %q after restore: %w", task.ID, err)
 		}
+	}
+	for _, record := range interrupted {
+		storeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		if err := s.options.Store.RecordRun(storeCtx, record); err != nil {
+			s.log("WARN", "scheduler could not persist recovered interrupted run for %q: %v", record.TaskID, err)
+		}
+		cancel()
 	}
 	return nil
 }
@@ -466,9 +490,13 @@ func (s *Scheduler) launch(task *Task, now time.Time) {
 	current.running = true
 	current.startedAt = now
 	current.LastStatus = StatusRunning
+	current.LastRun = now
 	runTask := *current
 	s.runs.Add(1)
 	s.mu.Unlock()
+	if err := s.persist(runTask); err != nil {
+		s.log("WARN", "scheduler could not persist running task %q: %v", runTask.ID, err)
+	}
 	go func() {
 		defer s.runs.Done()
 		defer func() { <-s.semaphore }()
@@ -477,7 +505,10 @@ func (s *Scheduler) launch(task *Task, now time.Time) {
 }
 
 func (s *Scheduler) execute(task Task) {
-	started := time.Now()
+	started := task.startedAt
+	if started.IsZero() {
+		started = time.Now()
+	}
 	runCtx := s.runCtx
 	if runCtx == nil {
 		runCtx = context.Background()
@@ -490,16 +521,9 @@ func (s *Scheduler) execute(task Task) {
 		status = StatusFailed
 		message = err.Error()
 	}
-	if s.options.Store != nil {
-		storeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if storeErr := s.options.Store.RecordRun(storeCtx, RunRecord{TaskID: task.ID, StartedAt: started, FinishedAt: finished, Status: status, Error: message, Duration: finished.Sub(started)}); storeErr != nil {
-			s.log("WARN", "scheduler could not persist run history for %q: %v", task.ID, storeErr)
-		}
-		cancel()
-	}
 	s.mu.Lock()
 	current := s.tasks[task.ID]
-	if current != nil {
+	if current != nil && current.running && current.startedAt.Equal(started) {
 		current.running = false
 		current.startedAt = time.Time{}
 		current.LastRun = finished
@@ -526,6 +550,13 @@ func (s *Scheduler) execute(task Task) {
 		}
 		updated := *current
 		s.mu.Unlock()
+		if s.options.Store != nil {
+			storeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if storeErr := s.options.Store.RecordRun(storeCtx, RunRecord{TaskID: task.ID, StartedAt: started, FinishedAt: finished, Status: status, Error: message, Duration: finished.Sub(started)}); storeErr != nil {
+				s.log("WARN", "scheduler could not persist run history for %q: %v", task.ID, storeErr)
+			}
+			cancel()
+		}
 		if err != nil {
 			if task.RetryOnFail && updated.retries > 0 {
 				s.log("WARN", "scheduler task %q failed; retry %d/%d scheduled: %v", task.ID, updated.retries, task.MaxRetries, err)
@@ -576,7 +607,6 @@ func (s *Scheduler) RunNow(name string) error {
 		s.mu.RUnlock()
 		return fmt.Errorf("scheduler task %q is already running", name)
 	}
-	copy := *task
 	s.mu.RUnlock()
 	select {
 	case s.semaphore <- struct{}{}:
@@ -592,12 +622,16 @@ func (s *Scheduler) RunNow(name string) error {
 	task.running = true
 	task.startedAt = time.Now()
 	task.LastStatus = StatusRunning
-	copy = *task
+	task.LastRun = task.startedAt
+	copy := *task
 	s.runs.Add(1)
 	s.mu.Unlock()
+	if err := s.persist(copy); err != nil {
+		s.log("WARN", "scheduler could not persist running task %q: %v", copy.ID, err)
+	}
 	defer s.runs.Done()
 	defer func() { <-s.semaphore }()
-	started := time.Now()
+	started := copy.startedAt
 	runCtx := s.runCtx
 	if runCtx == nil {
 		runCtx = context.Background()
@@ -613,16 +647,9 @@ func (s *Scheduler) RunNow(name string) error {
 }
 
 func (s *Scheduler) finishManual(task Task, started, finished time.Time, status, message string) {
-	if s.options.Store != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := s.options.Store.RecordRun(ctx, RunRecord{TaskID: task.ID, StartedAt: started, FinishedAt: finished, Status: status, Error: message, Duration: finished.Sub(started)}); err != nil {
-			s.log("WARN", "scheduler could not persist run history for %q: %v", task.ID, err)
-		}
-		cancel()
-	}
 	s.mu.Lock()
 	current := s.tasks[task.ID]
-	if current == nil {
+	if current == nil || !current.running || !current.startedAt.Equal(task.startedAt) {
 		s.mu.Unlock()
 		return
 	}
@@ -654,6 +681,13 @@ func (s *Scheduler) finishManual(task Task, started, finished time.Time, status,
 	}
 	updated := *current
 	s.mu.Unlock()
+	if s.options.Store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := s.options.Store.RecordRun(ctx, RunRecord{TaskID: task.ID, StartedAt: started, FinishedAt: finished, Status: status, Error: message, Duration: finished.Sub(started)}); err != nil {
+			s.log("WARN", "scheduler could not persist run history for %q: %v", task.ID, err)
+		}
+		cancel()
+	}
 	if status == StatusSuccess {
 		s.log("DEBUG", "scheduler task %q completed", task.ID)
 	} else {
@@ -784,10 +818,7 @@ func (s *Scheduler) markInterrupted() {
 		}
 		task.startedAt = started
 		task.running = false
-		task.LastRun = now
-		task.LastStatus = StatusFailed
-		task.LastError = "interrupted during shutdown"
-		task.FailCount++
+		task.LastStatus = StatusInterrupted
 		task.NextRun = now
 		interrupted = append(interrupted, *task)
 	}
@@ -795,7 +826,7 @@ func (s *Scheduler) markInterrupted() {
 	for _, task := range interrupted {
 		if s.options.Store != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := s.options.Store.RecordRun(ctx, RunRecord{TaskID: task.ID, StartedAt: task.startedAt, FinishedAt: now, Status: StatusFailed, Error: task.LastError, Duration: now.Sub(task.startedAt)}); err != nil {
+			if err := s.options.Store.RecordRun(ctx, RunRecord{TaskID: task.ID, StartedAt: task.startedAt, FinishedAt: now, Status: StatusInterrupted, Duration: now.Sub(task.startedAt)}); err != nil {
 				s.log("WARN", "scheduler could not persist interrupted task %q: %v", task.ID, err)
 			}
 			cancel()

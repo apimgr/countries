@@ -1,3 +1,6 @@
+# gitignore created on 11/23/26 at 12:26
+ignoredirmessage
+
 # Build and release artifacts
 /binaries/
 /releases/

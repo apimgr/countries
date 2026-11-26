@@ -235,7 +235,13 @@ func createGroup(name string, id int) error {
 	var command *exec.Cmd
 	switch runtime.GOOS {
 	case "linux":
-		command = exec.Command("groupadd", "--system", "--gid", strconv.Itoa(id), name)
+		if _, err := exec.LookPath("groupadd"); err == nil {
+			command = exec.Command("groupadd", "--system", "--gid", strconv.Itoa(id), name)
+		} else if _, fallbackErr := exec.LookPath("addgroup"); fallbackErr == nil {
+			command = exec.Command("addgroup", "-S", "-g", strconv.Itoa(id), name)
+		} else {
+			return fmt.Errorf("create service group: neither groupadd nor BusyBox addgroup is available: %w", err)
+		}
 	case "darwin":
 		for _, args := range [][]string{
 			{".", "-create", "/Groups/" + name},
@@ -266,7 +272,13 @@ func createUser(name string, id int, homeDir string) error {
 		if _, err := os.Stat(shell); err != nil {
 			shell = "/usr/sbin/nologin"
 		}
-		command = exec.Command("useradd", "--system", "--uid", strconv.Itoa(id), "--gid", strconv.Itoa(id), "--home-dir", homeDir, "--no-create-home", "--shell", shell, "--comment", name+" service account", name)
+		if _, err := exec.LookPath("useradd"); err == nil {
+			command = exec.Command("useradd", "--system", "--uid", strconv.Itoa(id), "--gid", strconv.Itoa(id), "--home-dir", homeDir, "--no-create-home", "--shell", shell, "--comment", name+" service account", name)
+		} else if _, fallbackErr := exec.LookPath("adduser"); fallbackErr == nil {
+			command = exec.Command("adduser", "-S", "-D", "-H", "-u", strconv.Itoa(id), "-G", name, "-h", homeDir, "-s", shell, "-g", name+" service account", name)
+		} else {
+			return fmt.Errorf("create service account: neither useradd nor BusyBox adduser is available: %w", err)
+		}
 	case "darwin":
 		for _, args := range [][]string{
 			{".", "-create", "/Users/" + name},

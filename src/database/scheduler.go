@@ -64,8 +64,10 @@ func (s *SchedulerStore) SaveTask(ctx context.Context, task scheduler.Task) erro
 	if !task.NextRun.IsZero() {
 		nextRun = task.NextRun.Unix()
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO scheduler_tasks (id, name, enabled, schedule, last_run, next_run, last_status, last_error, run_count, fail_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, enabled=excluded.enabled, schedule=excluded.schedule, last_run=excluded.last_run, next_run=excluded.next_run, last_status=excluded.last_status, last_error=excluded.last_error, run_count=excluded.run_count, fail_count=excluded.fail_count`, task.ID, task.Name, boolToInt(task.Enabled), task.Schedule, lastRun, nextRun, nullString(task.LastStatus), nullString(task.LastError), task.RunCount, task.FailCount)
-	return err
+	return Write(ctx, s.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO scheduler_tasks (id, name, enabled, schedule, last_run, next_run, last_status, last_error, run_count, fail_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, enabled=excluded.enabled, schedule=excluded.schedule, last_run=excluded.last_run, next_run=excluded.next_run, last_status=excluded.last_status, last_error=excluded.last_error, run_count=excluded.run_count, fail_count=excluded.fail_count`, task.ID, task.Name, boolToInt(task.Enabled), task.Schedule, lastRun, nextRun, nullString(task.LastStatus), nullString(task.LastError), task.RunCount, task.FailCount)
+		return err
+	})
 }
 
 func (s *SchedulerStore) RecordRun(ctx context.Context, record scheduler.RunRecord) error {
@@ -77,18 +79,13 @@ func (s *SchedulerStore) RecordRun(ctx context.Context, record scheduler.RunReco
 	if record.Error != "" {
 		message = record.Error
 	}
-	transaction, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
+	return Write(ctx, s.db, func(transaction *sql.Tx) error {
+		if _, err := transaction.ExecContext(ctx, `INSERT INTO scheduler_history (task_id, started_at, finished_at, status, error, duration_ms) VALUES (?, ?, ?, ?, ?, ?)`, record.TaskID, record.StartedAt.Unix(), finishedAt, record.Status, message, record.Duration.Milliseconds()); err != nil {
+			return err
+		}
+		_, err := transaction.ExecContext(ctx, `DELETE FROM scheduler_history WHERE task_id = ? AND id NOT IN (SELECT id FROM scheduler_history WHERE task_id = ? ORDER BY started_at DESC, id DESC LIMIT 100)`, record.TaskID, record.TaskID)
 		return err
-	}
-	defer func() { _ = transaction.Rollback() }()
-	if _, err := transaction.ExecContext(ctx, `INSERT INTO scheduler_history (task_id, started_at, finished_at, status, error, duration_ms) VALUES (?, ?, ?, ?, ?, ?)`, record.TaskID, record.StartedAt.Unix(), finishedAt, record.Status, message, record.Duration.Milliseconds()); err != nil {
-		return err
-	}
-	if _, err := transaction.ExecContext(ctx, `DELETE FROM scheduler_history WHERE task_id = ? AND id NOT IN (SELECT id FROM scheduler_history WHERE task_id = ? ORDER BY started_at DESC, id DESC LIMIT 100)`, record.TaskID, record.TaskID); err != nil {
-		return err
-	}
-	return transaction.Commit()
+	})
 }
 
 func boolToInt(value bool) int {

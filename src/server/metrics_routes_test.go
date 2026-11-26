@@ -28,11 +28,13 @@ func TestMetricsRoutesRequireIndependentBearerTokens(t *testing.T) {
 	for _, test := range []struct {
 		path  string
 		token string
+		method string
 		want  int
 	}{
 		{path: "/server/metrics", want: http.StatusUnauthorized},
 		{path: "/server/metrics", token: "graf-secret", want: http.StatusUnauthorized},
 		{path: "/server/metrics", token: "prom-secret", want: http.StatusOK},
+		{path: "/server/metrics", token: "prom-secret", method: http.MethodPost, want: http.StatusMethodNotAllowed},
 		{path: "/server/metrics/prometheus", token: "prom-secret", want: http.StatusOK},
 		{path: "/api/v1/server/metrics", token: "prom-secret", want: http.StatusOK},
 		{path: "/api/metrics/prometheus", token: "prom-secret", want: http.StatusOK},
@@ -42,7 +44,11 @@ func TestMetricsRoutesRequireIndependentBearerTokens(t *testing.T) {
 		{path: "/server/metrics?token=prom-secret", want: http.StatusUnauthorized},
 	} {
 		t.Run(test.path+"/"+test.token, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+			method := test.method
+			if method == "" {
+				method = http.MethodGet
+			}
+			request := httptest.NewRequest(method, test.path, nil)
 			if test.token != "" {
 				request.Header.Set("Authorization", "Bearer "+test.token)
 			}
@@ -88,7 +94,7 @@ func TestMetricsGrafanaDashboardIsImportableAndCoversCategories(t *testing.T) {
 	for _, panel := range dashboard.Panels {
 		panelTitles[panel.Title] = true
 	}
-	for _, title := range []string{"HTTP Requests", "Database Query Latency", "Cache Activity", "Scheduler Runs", "System Memory", "Country Records"} {
+	for _, title := range []string{"HTTP Requests", "HTTP Request Latency (p95)", "Database Query Latency (p95)", "Database Errors", "SQLite Busy Retries", "SQLite Write Wait (p95)", "Cache Hits and Misses", "Cache Evictions", "Cache Items", "Scheduler Runs", "Scheduler Task Duration (p95)", "Scheduler Tasks Running", "Seconds Since Last Task Run", "System CPU", "System Memory", "System Disk", "Country Records", "Authentication Attempts", "Rate Limit Blocks", "Go Runtime Goroutines", "Application Uptime"} {
 		if !panelTitles[title] {
 			t.Errorf("dashboard missing panel %q", title)
 		}

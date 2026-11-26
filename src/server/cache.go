@@ -4,8 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
+
+	appmode "github.com/apimgr/countries/src/mode"
 )
 
 const buildCookieName = "countries_build"
@@ -64,7 +67,11 @@ func (s *Server) setAssetCacheHeaders(w http.ResponseWriter, r *http.Request) bo
 	} else {
 		w.Header().Set("Cache-Control", "no-cache")
 	}
-	return r.Header.Get("If-None-Match") == etag
+	hit := r.Header.Get("If-None-Match") == etag
+	if appmode.DebugEnabled() && s.config.Server.Debug.LogCache {
+		slog.Debug("cache", "operation", "asset", "key", r.URL.Path, "hit", hit)
+	}
+	return hit
 }
 
 func (s *Server) setDynamicAssetCacheHeaders(w http.ResponseWriter) {

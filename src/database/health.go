@@ -72,10 +72,14 @@ func NewHealthStore(ctx context.Context, db *sql.DB) (*HealthStore, error) {
 		return nil, err
 	}
 	if err := store.RegisterCheck("database", true, func(ctx context.Context) string {
-		pingCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-		defer cancel()
-		if db.PingContext(pingCtx) != nil {
-			return "error"
+		for range 2 {
+			probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			var result int
+			err := db.QueryRowContext(probeCtx, "SELECT 1").Scan(&result)
+			cancel()
+			if err != nil || result != 1 {
+				return "error"
+			}
 		}
 		return "ok"
 	}); err != nil {
@@ -200,22 +204,14 @@ func (s *HealthStore) FlushStats(ctx context.Context) error {
 	if total == 0 {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err = tx.ExecContext(ctx, `UPDATE health_request_stats SET requests_total = requests_total + ? WHERE id = 1`, total); err != nil {
-		return err
-	}
-	for hour, count := range hours {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO health_request_hours (hour, requests) VALUES (?, ?) ON CONFLICT(hour) DO UPDATE SET requests = requests + excluded.requests`, hour, count); err != nil {
-			return err
+	err := Write(ctx, s.db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE health_request_stats SET requests_total = requests_total + ? WHERE id = 1`, total); err != nil { return err }
+		for hour, count := range hours {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO health_request_hours (hour, requests) VALUES (?, ?) ON CONFLICT(hour) DO UPDATE SET requests = requests + excluded.requests`, hour, count); err != nil { return err }
 		}
-	}
-	if err = tx.Commit(); err != nil {
-		return err
-	}
+		return nil
+	})
+	if err != nil { return err }
 	s.mu.Lock()
 	s.pendingTotal -= total
 	for hour, count := range hours {

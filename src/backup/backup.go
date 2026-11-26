@@ -8,29 +8,36 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/apimgr/countries/src/database"
 	"github.com/apimgr/countries/src/paths"
 	"golang.org/x/crypto/argon2"
+	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
 )
 
 const (
 	manifestName     = "manifest.json"
-	encryptedMagic   = "COUNTRIES-BACKUP-V1\x00"
+	encryptedMagic   = "BKUP1"
 	defaultFileCap   = int64(512 << 20)
 	defaultArchive   = int64(1 << 30)
 	defaultExpanded  = int64(4 << 30)
@@ -78,6 +85,7 @@ type Options struct {
 	ConfigDir          string
 	DataDir            string
 	DatabasePath       string
+	DatabaseDriver     string
 	SourceDatabasePath string
 	BackupDir          string
 	AppVersion         string
@@ -116,6 +124,7 @@ type RestoreOptions struct {
 	ConfigDir           string
 	DataDir             string
 	DatabasePath        string
+	RemoteDatabase      *sql.DB
 	TLSFileDestinations map[string]string
 	Limits              Limits
 }
@@ -214,7 +223,11 @@ func Create(ctx context.Context, destination string, options Options) (Result, e
 		return Result{}, err
 	}
 	if options.Password != "" {
-		payload, err = encrypt(payload, options.Password)
+		baseName := ""
+		if options.Type == "incremental" {
+			baseName = options.BaseBackup
+		}
+		payload, err = encrypt(payload, options.Password, baseName)
 		if err != nil {
 			return Result{}, err
 		}
@@ -251,10 +264,28 @@ func Create(ctx context.Context, destination string, options Options) (Result, e
 	if err != nil {
 		return Result{}, fmt.Errorf("verify newly created backup: %w", err)
 	}
-	if err := os.Rename(candidatePath, destination); err != nil {
+	if options.Type == "full" {
+		if err := installFullWithoutOverwrite(candidatePath, destination); err != nil {
+			return Result{}, fmt.Errorf("install verified backup: %w", err)
+		}
+	} else if err := os.Rename(candidatePath, destination); err != nil {
 		return Result{}, fmt.Errorf("install verified backup: %w", err)
 	}
 	return Result{Path: destination, Size: int64(len(payload)), SHA256: verified.SHA256, Manifest: verified.Manifest}, nil
+}
+
+func installFullWithoutOverwrite(candidate, destination string) error {
+	// The verified candidate is created beside the destination, so a hard link
+	// installs it atomically without replacing an existing full backup on any
+	// supported local filesystem, including Windows.
+	if err := os.Link(candidate, destination); err != nil {
+		return err
+	}
+	if err := os.Remove(candidate); err != nil {
+		_ = os.Remove(destination)
+		return fmt.Errorf("remove installed backup candidate: %w", err)
+	}
+	return nil
 }
 
 // CaptureSnapshot takes a SQLite online snapshot and copies the configured
@@ -268,6 +299,7 @@ func CaptureSnapshot(ctx context.Context, options Options) (*Snapshot, error) {
 }
 
 func captureSnapshotFiles(ctx context.Context, options Options) (map[string]fileData, error) {
+	remoteDatabase := strings.EqualFold(strings.TrimSpace(options.DatabaseDriver), "libsql") || strings.EqualFold(strings.TrimSpace(options.DatabaseDriver), "turso")
 	if options.DatabasePath == "" {
 		options.DatabasePath = filepath.Join(options.DataDir, "db", "server.db")
 	}
@@ -279,24 +311,41 @@ func captureSnapshotFiles(ctx context.Context, options Options) (map[string]file
 		originalDatabasePath = filepath.Join(options.DataDir, "db", "server.db")
 	}
 	options.SourceDatabasePath = originalDatabasePath
-	snapshotDir, err := paths.CreateTempDir("countries")
-	if err != nil {
-		return nil, fmt.Errorf("create database snapshot workspace: %w", err)
+	if remoteDatabase {
+		log.Printf("INFO: remote database backup is handled by the provider (driver=%s)", options.DatabaseDriver)
+		options.DatabasePath = ""
+		options.SourceDatabasePath = ""
+	} else {
+		snapshotDir, err := paths.CreateTempDir("countries")
+		if err != nil {
+			return nil, fmt.Errorf("create database snapshot workspace: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(snapshotDir) }()
+		if err := os.Chmod(snapshotDir, 0700); err != nil {
+			return nil, fmt.Errorf("secure database snapshot workspace: %w", err)
+		}
+		databaseSnapshot := filepath.Join(snapshotDir, "server.db")
+		if err := snapshotSQLite(ctx, originalDatabasePath, databaseSnapshot); err != nil {
+			return nil, fmt.Errorf("snapshot main database: %w", err)
+		}
+		options.DatabasePath = databaseSnapshot
 	}
-	defer func() { _ = os.RemoveAll(snapshotDir) }()
-	if err := os.Chmod(snapshotDir, 0700); err != nil {
-		return nil, fmt.Errorf("secure database snapshot workspace: %w", err)
-	}
-	databaseSnapshot := filepath.Join(snapshotDir, "server.db")
-	if err := snapshotSQLite(ctx, originalDatabasePath, databaseSnapshot); err != nil {
-		return nil, fmt.Errorf("snapshot main database: %w", err)
-	}
-	options.DatabasePath = databaseSnapshot
 	inputs, err := backupInputs(options)
 	if err != nil {
 		return nil, err
 	}
-	return collectFiles(ctx, inputs, options.Limits)
+	files, err := collectFiles(ctx, inputs, options.Limits)
+	if err != nil {
+		return nil, err
+	}
+	if secretFile, exists := files["config/secrets.yml"]; exists {
+		secretFile.content, err = scrubOperatorToken(secretFile.content)
+		if err != nil {
+			return nil, fmt.Errorf("sanitize archived secrets: %w", err)
+		}
+		files["config/secrets.yml"] = secretFile
+	}
+	return files, nil
 }
 
 func cloneFiles(files map[string]fileData) map[string]fileData {
@@ -305,6 +354,55 @@ func cloneFiles(files map[string]fileData) map[string]fileData {
 		clone[name] = file
 	}
 	return clone
+}
+
+func scrubOperatorToken(contents []byte) ([]byte, error) {
+	values := make(map[string]any)
+	if err := yaml.Unmarshal(contents, &values); err != nil {
+		return nil, err
+	}
+	server, ok := values["server"].(map[string]any)
+	if !ok {
+		return contents, nil
+	}
+	if _, exists := server["token"]; !exists {
+		return contents, nil
+	}
+	server["token"] = ""
+	return yaml.Marshal(values)
+}
+
+func verifyArchiveExtraction(ctx context.Context, entries map[string][]byte, limits Limits) error {
+	tempDir, err := paths.CreateTempDir("countries")
+	if err != nil {
+		return fmt.Errorf("create backup verification extraction directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+	if err := os.Chmod(tempDir, 0700); err != nil {
+		return fmt.Errorf("secure backup verification extraction directory: %w", err)
+	}
+	for name, content := range entries {
+		if name == manifestName {
+			continue
+		}
+		if err := contextErr(ctx); err != nil {
+			return err
+		}
+		if !safeArchivePath(name) || !supportedArchiveRoot(name) {
+			return fmt.Errorf("unsafe path during backup verification: %q", name)
+		}
+		if int64(len(content)) > limits.MaxFileSize {
+			return fmt.Errorf("backup verification file %q exceeds size limit", name)
+		}
+		destination := filepath.Join(tempDir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+			return fmt.Errorf("extract backup verification file %q: %w", name, err)
+		}
+		if err := os.WriteFile(destination, content, 0600); err != nil {
+			return fmt.Errorf("extract backup verification file %q: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // Verify authenticates, decompresses, checks the manifest and checksums, and
@@ -355,6 +453,19 @@ func Verify(ctx context.Context, path, password string, limits Limits) (Result, 
 	if manifest.Encrypted != encrypted {
 		return Result{}, errors.New("backup encryption metadata does not match file format")
 	}
+	if encrypted {
+		header, err := parseEncryptedBackupHeader(payload)
+		if err != nil {
+			return Result{}, err
+		}
+		baseName := ""
+		if manifest.Type == "incremental" {
+			baseName = manifest.BaseBackup
+		}
+		if header.baseBackup != baseName {
+			return Result{}, errors.New("backup header base reference does not match manifest")
+		}
+	}
 	if encrypted && manifest.EncryptionMethod != "AES-256-GCM" {
 		return Result{}, errors.New("backup manifest has an unsupported encryption method")
 	}
@@ -368,6 +479,9 @@ func Verify(ctx context.Context, path, password string, limits Limits) (Result, 
 		return Result{}, err
 	}
 	if err := verifyContentsList(manifest); err != nil {
+		return Result{}, err
+	}
+	if err := verifyArchiveExtraction(ctx, entries, limits); err != nil {
 		return Result{}, err
 	}
 	if dbBytes, ok := entries["data/server.db"]; ok {
@@ -420,12 +534,18 @@ func Restore(ctx context.Context, path, password string, options RestoreOptions)
 	if err != nil {
 		return Manifest{}, err
 	}
+	limits := normalizedLimits(options.Limits)
+	combinedArchiveSize := int64(len(payload))
 	if verified.Manifest.Type == "incremental" {
 		basePath := filepath.Join(filepath.Dir(path), verified.Manifest.BaseBackup)
 		basePayload, err := os.ReadFile(basePath)
 		if err != nil {
 			return Manifest{}, fmt.Errorf("ERR_BASE_MISSING: read incremental base: %w", err)
 		}
+		if int64(len(basePayload)) > limits.MaxArchiveSize-combinedArchiveSize {
+			return Manifest{}, errors.New("combined backup archives exceed restore archive size limit")
+		}
+		combinedArchiveSize += int64(len(basePayload))
 		baseVerified, err := Verify(ctx, basePath, password, options.Limits)
 		if err != nil {
 			return Manifest{}, fmt.Errorf("ERR_BASE_CORRUPT: verify incremental base: %w", err)
@@ -454,7 +574,6 @@ func Restore(ctx context.Context, path, password string, options RestoreOptions)
 		}
 		entries = baseEntries
 	}
-	limits := normalizedLimits(options.Limits)
 	if len(entries)-1 > limits.MaxFiles {
 		return Manifest{}, errors.New("combined backup exceeds maximum file count")
 	}
@@ -467,6 +586,9 @@ func Restore(ctx context.Context, path, password string, options RestoreOptions)
 		if int64(len(content)) > limits.MaxFileSize || expanded > limits.MaxExpandedSize {
 			return Manifest{}, errors.New("combined backup exceeds restore size limits")
 		}
+	}
+	if limits.MaxRatio > 0 && combinedArchiveSize > 0 && expanded > combinedArchiveSize*limits.MaxRatio {
+		return Manifest{}, errors.New("combined backup exceeds restore compression ratio limit")
 	}
 	tempDir, err := paths.CreateTempDir("countries")
 	if err != nil {
@@ -498,7 +620,20 @@ func Restore(ctx context.Context, path, password string, options RestoreOptions)
 			return Manifest{}, fmt.Errorf("stage restore file %s: %w", name, err)
 		}
 	}
-	if err := installStaged(ctx, staged, options.ConfigDir, options.DataDir, options.DatabasePath, options.TLSFileDestinations, verified.Manifest.Deleted); err != nil {
+	var afterInstall func() error
+	if options.RemoteDatabase != nil {
+		afterInstall = func() error {
+			databasePath := options.DatabasePath
+			if databasePath == "" {
+				databasePath = filepath.Join(options.DataDir, "db", "server.db")
+			}
+			if _, err := database.SeedRemoteIfEmpty(ctx, options.RemoteDatabase, databasePath); err != nil {
+				return fmt.Errorf("seed empty remote database from restored server.db: %w", err)
+			}
+			return nil
+		}
+	}
+	if err := installStaged(ctx, staged, options.ConfigDir, options.DataDir, options.DatabasePath, options.TLSFileDestinations, verified.Manifest.Deleted, afterInstall); err != nil {
 		return Manifest{}, err
 	}
 	return verified.Manifest, nil
@@ -527,6 +662,9 @@ func backupInputs(options Options) ([]inputRoot, error) {
 		inputs = append(inputs, inputRoot{source: dataRoot, archive: "data", optional: true})
 	}
 	databasePath := options.DatabasePath
+	if databasePath == "" {
+		return inputs, nil
+	}
 	if !filepath.IsAbs(databasePath) {
 		databasePath = filepath.Join(dataRoot, databasePath)
 	}
@@ -781,12 +919,31 @@ func marshalArchive(files map[string]fileData, manifest Manifest) ([]byte, error
 	return raw.Bytes(), nil
 }
 
-func encrypt(plaintext []byte, password string) ([]byte, error) {
+const backupArgonMemory = uint32(64 * 1024)
+const backupArgonIterations = uint32(3)
+const backupArgonParallelism = uint32(4)
+const backupHeaderFixedSize = 55
+
+type encryptedBackupHeader struct {
+	bytes       []byte
+	salt        []byte
+	memory      uint32
+	iterations  uint32
+	parallelism uint32
+	nonce       []byte
+	keyID       string
+	baseBackup  string
+}
+
+func encrypt(plaintext []byte, password, baseBackup string) ([]byte, error) {
+	if len(baseBackup) > 255 || strings.ContainsAny(baseBackup, "/\\\x00") || !utf8.ValidString(baseBackup) {
+		return nil, errors.New("backup base filename is invalid")
+	}
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, fmt.Errorf("generate backup salt: %w", err)
 	}
-	key := argon2.IDKey([]byte(password), salt, 3, 64*1024, 4, 32)
+	key := argon2.IDKey([]byte(password), salt, backupArgonIterations, backupArgonMemory, uint8(backupArgonParallelism), 32)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -799,12 +956,22 @@ func encrypt(plaintext []byte, password string) ([]byte, error) {
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, fmt.Errorf("generate backup nonce: %w", err)
 	}
-	output := make([]byte, 0, len(encryptedMagic)+len(salt)+len(nonce)+len(plaintext)+aead.Overhead())
-	output = append(output, encryptedMagic...)
-	output = append(output, salt...)
-	output = append(output, nonce...)
-	output = aead.Seal(output, nonce, plaintext, []byte(encryptedMagic))
-	return output, nil
+	header := make([]byte, 0, backupHeaderFixedSize+len(baseBackup))
+	header = append(header, encryptedMagic...)
+	header = append(header, salt...)
+	var encoded [4]byte
+	for _, value := range []uint32{backupArgonMemory, backupArgonIterations, backupArgonParallelism} {
+		binary.BigEndian.PutUint32(encoded[:], value)
+		header = append(header, encoded[:]...)
+	}
+	header = append(header, nonce...)
+	header = append(header, backupKeyID(key)...)
+	var baseLen [2]byte
+	binary.BigEndian.PutUint16(baseLen[:], uint16(len(baseBackup)))
+	header = append(header, baseLen[:]...)
+	header = append(header, baseBackup...)
+	aad := append([]byte(nil), header...)
+	return aead.Seal(header, nonce, plaintext, aad), nil
 }
 
 func maybeDecrypt(payload []byte, password string) ([]byte, bool, error) {
@@ -814,14 +981,17 @@ func maybeDecrypt(payload []byte, password string) ([]byte, bool, error) {
 	if password == "" {
 		return nil, true, errors.New("encrypted backup requires a password")
 	}
-	minimum := len(encryptedMagic) + 16 + 12 + 16
-	if len(payload) < minimum {
-		return nil, true, errors.New("encrypted backup is truncated")
+	header, err := parseEncryptedBackupHeader(payload)
+	if err != nil {
+		return nil, true, err
 	}
-	position := len(encryptedMagic)
-	salt := payload[position : position+16]
-	position += 16
-	key := argon2.IDKey([]byte(password), salt, 3, 64*1024, 4, 32)
+	if len(payload) < len(header.bytes)+16 {
+		return nil, true, errors.New("encrypted backup ciphertext is truncated")
+	}
+	key := argon2.IDKey([]byte(password), header.salt, header.iterations, header.memory, uint8(header.parallelism), 32)
+	if subtle.ConstantTimeCompare([]byte(header.keyID), []byte(backupKeyID(key))) != 1 {
+		return nil, true, errors.New("invalid backup password or corrupted encrypted archive")
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, true, err
@@ -830,13 +1000,101 @@ func maybeDecrypt(payload []byte, password string) ([]byte, bool, error) {
 	if err != nil {
 		return nil, true, err
 	}
-	nonce := payload[position : position+aead.NonceSize()]
-	position += aead.NonceSize()
-	plaintext, err := aead.Open(nil, nonce, payload[position:], []byte(encryptedMagic))
+	plaintext, err := aead.Open(nil, header.nonce, payload[len(header.bytes):], header.bytes)
 	if err != nil {
 		return nil, true, errors.New("invalid backup password or corrupted encrypted archive")
 	}
 	return plaintext, true, nil
+}
+
+func backupKeyID(key []byte) string {
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte("key-id"))
+	return hex.EncodeToString(mac.Sum(nil))[:8]
+}
+
+func parseEncryptedBackupHeader(payload []byte) (encryptedBackupHeader, error) {
+	if len(payload) < backupHeaderFixedSize || !bytes.HasPrefix(payload, []byte(encryptedMagic)) {
+		return encryptedBackupHeader{}, errors.New("encrypted backup header is truncated or invalid")
+	}
+	position := len(encryptedMagic)
+	header := encryptedBackupHeader{salt: append([]byte(nil), payload[position:position+16]...)}
+	position += 16
+	header.memory = binary.BigEndian.Uint32(payload[position : position+4])
+	position += 4
+	header.iterations = binary.BigEndian.Uint32(payload[position : position+4])
+	position += 4
+	header.parallelism = binary.BigEndian.Uint32(payload[position : position+4])
+	position += 4
+	if header.memory < 8*1024 || header.memory > 256*1024 || header.iterations < 1 || header.iterations > 10 || header.parallelism < 1 || header.parallelism > 8 {
+		return encryptedBackupHeader{}, errors.New("encrypted backup Argon2id parameters are outside safe bounds")
+	}
+	header.nonce = append([]byte(nil), payload[position:position+12]...)
+	position += 12
+	header.keyID = string(payload[position : position+8])
+	position += 8
+	if _, err := hex.DecodeString(header.keyID); err != nil || strings.ToLower(header.keyID) != header.keyID {
+		return encryptedBackupHeader{}, errors.New("encrypted backup key_id is invalid")
+	}
+	baseLen := int(binary.BigEndian.Uint16(payload[position : position+2]))
+	position += 2
+	if baseLen > 255 || position+baseLen > len(payload) {
+		return encryptedBackupHeader{}, errors.New("encrypted backup base filename is invalid")
+	}
+	header.baseBackup = string(payload[position : position+baseLen])
+	position += baseLen
+	if !utf8.ValidString(header.baseBackup) || strings.ContainsAny(header.baseBackup, "/\\\x00") || (header.baseBackup != "" && header.baseBackup != filepath.Base(header.baseBackup)) {
+		return encryptedBackupHeader{}, errors.New("encrypted backup base filename is unsafe")
+	}
+	if len(payload) < position {
+		return encryptedBackupHeader{}, errors.New("encrypted backup header is truncated")
+	}
+	header.bytes = append([]byte(nil), payload[:position]...)
+	return header, nil
+}
+
+func readEncryptedBackupHeader(path string) (encryptedBackupHeader, bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return encryptedBackupHeader{}, false, err
+	}
+	defer func() { _ = file.Close() }()
+	fixed := make([]byte, backupHeaderFixedSize)
+	if _, err := io.ReadFull(file, fixed); err != nil {
+		if len(fixed) > 0 && !bytes.HasPrefix(fixed, []byte(encryptedMagic)) {
+			return encryptedBackupHeader{}, false, nil
+		}
+		return encryptedBackupHeader{}, true, errors.New("encrypted backup header is truncated")
+	}
+	if !bytes.HasPrefix(fixed, []byte(encryptedMagic)) {
+		return encryptedBackupHeader{}, false, nil
+	}
+	baseLen := int(binary.BigEndian.Uint16(fixed[53:55]))
+	if baseLen > 255 {
+		return encryptedBackupHeader{}, true, errors.New("encrypted backup base filename is invalid")
+	}
+	full := append([]byte(nil), fixed...)
+	if baseLen > 0 {
+		base := make([]byte, baseLen)
+		if _, err := io.ReadFull(file, base); err != nil {
+			return encryptedBackupHeader{}, true, errors.New("encrypted backup header is truncated")
+		}
+		full = append(full, base...)
+	}
+	header, err := parseEncryptedBackupHeader(full)
+	return header, true, err
+}
+
+func backupPasswordMatches(path, password string) (bool, error) {
+	header, encrypted, err := readEncryptedBackupHeader(path)
+	if err != nil {
+		return false, err
+	}
+	if !encrypted {
+		return password == "", nil
+	}
+	key := argon2.IDKey([]byte(password), header.salt, header.iterations, header.memory, uint8(header.parallelism), 32)
+	return subtle.ConstantTimeCompare([]byte(header.keyID), []byte(backupKeyID(key))) == 1, nil
 }
 
 func readArchive(ctx context.Context, archiveBytes []byte, compressedSize int64, limits Limits) (map[string][]byte, error) {
@@ -983,7 +1241,7 @@ type restoreOriginal struct {
 	exists  bool
 }
 
-func installStaged(ctx context.Context, staged, configDir, dataDir, databasePath string, tlsDestinations map[string]string, deleted []string) error {
+func installStaged(ctx context.Context, staged, configDir, dataDir, databasePath string, tlsDestinations map[string]string, deleted []string, afterInstall func() error) error {
 	targets := make(map[string]struct{})
 	for _, root := range []string{"config", "data", "connection-tls"} {
 		base := filepath.Join(staged, root)
@@ -1048,7 +1306,11 @@ func installStaged(ctx context.Context, staged, configDir, dataDir, databasePath
 		}
 		originals[target] = restoreOriginal{content: content, mode: info.Mode().Perm(), exists: true}
 	}
-	if err := installStagedUnchecked(ctx, staged, configDir, dataDir, databasePath, tlsDestinations, deleted); err != nil {
+	installErr := installStagedUnchecked(ctx, staged, configDir, dataDir, databasePath, tlsDestinations, deleted)
+	if installErr == nil && afterInstall != nil {
+		installErr = afterInstall()
+	}
+	if installErr != nil {
 		var rollbackErrors []string
 		for target, original := range originals {
 			if original.exists {
@@ -1064,9 +1326,9 @@ func installStaged(ctx context.Context, staged, configDir, dataDir, databasePath
 			}
 		}
 		if len(rollbackErrors) > 0 {
-			return fmt.Errorf("restore failed: %w; rollback errors: %s", err, strings.Join(rollbackErrors, "; "))
+			return fmt.Errorf("restore failed: %w; rollback errors: %s", installErr, strings.Join(rollbackErrors, "; "))
 		}
-		return err
+		return installErr
 	}
 	return nil
 }

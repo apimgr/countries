@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"expvar"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -20,6 +21,8 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"net/http/pprof"
 	"net/mail"
 	"os"
@@ -34,11 +37,16 @@ import (
 
 	"github.com/apimgr/countries/src/common/api"
 	"github.com/apimgr/countries/src/common/i18n"
+	"github.com/apimgr/countries/src/common/network"
+	commontheme "github.com/apimgr/countries/src/common/theme"
 	"github.com/apimgr/countries/src/config"
 	"github.com/apimgr/countries/src/countries"
 	"github.com/apimgr/countries/src/database"
 	graphqlapi "github.com/apimgr/countries/src/graphql"
 	appmode "github.com/apimgr/countries/src/mode"
+	"github.com/apimgr/countries/src/notifications"
+	"github.com/apimgr/countries/src/paths"
+	"github.com/redis/go-redis/v9"
 	backgroundscheduler "github.com/apimgr/countries/src/scheduler"
 	"github.com/apimgr/countries/src/securitydata"
 	servermetrics "github.com/apimgr/countries/src/server/metrics"
@@ -67,42 +75,55 @@ func EmailTemplateFS() fs.FS {
 }
 
 type Server struct {
-	router               *chi.Mux
-	apiHandlers          *chi.Mux
-	db                   *sql.DB
-	contactKey           []byte
-	contactPreviousKey   []byte
-	contactPreviousUntil time.Time
-	countriesService     *countries.Service
-	config               *config.Config
-	configMu             sync.RWMutex
-	templates            map[string]*template.Template
-	version              string
-	buildDate            string
-	commit               string
-	startedAt            time.Time
-	healthStats          *healthCounters
-	healthStore          *database.HealthStore
-	healthDataDir        string
-	diskHealthStatus     func() string
-	scheduler            *backgroundscheduler.Scheduler
-	schedulerRunning     atomic.Bool
-	shuttingDown         atomic.Bool
-	maintenance          atomic.Bool
-	pendingRestart       atomic.Bool
-	healthStateMu        sync.RWMutex
-	restartReasons       []string
-	trustedProxies       []*net.IPNet
-	allowlist            []*net.IPNet
-	graphqlHandler       http.Handler
-	rateLimiter          *rateLimiter
-	geoIPManager         countryLookup
-	securityData         *securitydata.Manager
-	metrics              *servermetrics.Metrics
-	overlayMu            sync.RWMutex
-	torHealth            HealthOverlayInfo
-	i2pHealth            HealthI2PInfo
-	torHTTPClient        *http.Client
+	router                 *chi.Mux
+	apiHandlers            *chi.Mux
+	db                     *sql.DB
+	contactKey             []byte
+	contactPreviousKey     []byte
+	contactPreviousUntil   time.Time
+	countriesService       *countries.Service
+	config                 *config.Config
+	configMu               sync.RWMutex
+	dataDir                string
+	templates              map[string]*template.Template
+	version                string
+	buildDate              string
+	commit                 string
+	startedAt              time.Time
+	healthStats            *healthCounters
+	healthStore            *database.HealthStore
+	healthDataDir          string
+	diskHealthStatus       func() string
+	scheduler              *backgroundscheduler.Scheduler
+	schedulerRunning       atomic.Bool
+	shuttingDown           atomic.Bool
+	maintenance            atomic.Bool
+	cacheClient            redis.UniversalClient
+	cacheDegraded          atomic.Bool
+	cacheWarningOnce       sync.Once
+	maintenanceMu          sync.RWMutex
+	maintenanceReason      string
+	maintenanceSince       time.Time
+	maintenanceLastAttempt time.Time
+	maintenanceAttempts    int
+	maintenanceExhausted   bool
+	pendingRestart         atomic.Bool
+	healthStateMu          sync.RWMutex
+	restartReasons         []string
+	trustedProxies         []*net.IPNet
+	learnedCORSOriginsMu    sync.RWMutex
+	learnedCORSOrigins      map[string]struct{}
+	allowlist              []*net.IPNet
+	graphqlHandler         http.Handler
+	rateLimiter            *rateLimiter
+	geoIPManager           countryLookup
+	securityData           *securitydata.Manager
+	notificationManager    *notifications.Manager
+	metrics                *servermetrics.Metrics
+	overlayMu              sync.RWMutex
+	torHealth              HealthOverlayInfo
+	i2pHealth              HealthI2PInfo
+	torHTTPClient          *http.Client
 }
 
 func New(countriesService *countries.Service, cfg *config.Config, address, port, version, buildDate, commit string, databases ...*sql.DB) *Server {
@@ -119,12 +140,14 @@ func New(countriesService *countries.Service, cfg *config.Config, address, port,
 		contactPreviousUntil: previousContactUntil,
 		countriesService:     countriesService,
 		config:               cfg,
+		dataDir:              paths.GetDataDir("countries"),
 		version:              version,
 		buildDate:            buildDate,
 		commit:               commit,
 		startedAt:            time.Now().UTC(),
 		healthStats:          newHealthCounters(),
 		trustedProxies:       buildTrustedProxies(address, cfg.Server.TrustedProxies.Additional),
+		learnedCORSOrigins:   make(map[string]struct{}),
 		rateLimiter:          newRateLimiter(cfg.Server.RateLimit, db),
 	}
 	if db != nil {
@@ -134,8 +157,7 @@ func New(countriesService *countries.Service, cfg *config.Config, address, port,
 		} else {
 			s.healthStore = healthStore
 			_ = healthStore.RegisterCheck("cache", false, func(context.Context) string {
-				// This application has no server-side cache backend to fail.
-				return "ok"
+				return s.cacheHealthStatus()
 			})
 			_ = healthStore.RegisterCheck("disk", true, func(context.Context) string {
 				if s.diskHealthStatus != nil {
@@ -164,15 +186,16 @@ func New(countriesService *countries.Service, cfg *config.Config, address, port,
 				})
 			}
 			if cfg.Server.GeoIP.Enabled {
-				_ = healthStore.RegisterCheck("geoip_country", false, func(context.Context) string {
-					if s.geoIPManager == nil {
-						return "error"
-					}
-					if manager, ok := s.geoIPManager.(interface{ MissingDatabases() []string }); ok && len(manager.MissingDatabases()) > 0 {
-						return "error"
-					}
-					return "ok"
-				})
+				assets := []struct{ name, check string }{{"asn", "geoip_asn"}, {"country", "geoip_country"}, {"city_ipv4", "geoip_city_ipv4"}, {"city_ipv6", "geoip_city_ipv6"}}
+				for _, asset := range assets {
+					name := asset.name
+					_ = healthStore.RegisterCheck(asset.check, false, func(context.Context) string {
+						manager, ok := s.geoIPManager.(interface { HasDatabase(string) bool; IsStale(time.Time, time.Duration) bool })
+						if !ok || !manager.HasDatabase(name) { return "error" }
+						if manager.IsStale(time.Now().UTC(), 21*24*time.Hour) { return "degraded" }
+						return "ok"
+					})
+				}
 			}
 			s.healthStore.RefreshChecks(context.Background())
 		}
@@ -213,6 +236,9 @@ func New(countriesService *countries.Service, cfg *config.Config, address, port,
 		"markdownToHTML":   markdownToHTML,
 		"trackingScript":   s.trackingScript,
 		"trackingNoscript": s.trackingNoscript,
+		"consentRequired": func(r *http.Request) bool {
+			return r != nil && r.URL.Query().Get("consent_required") == "1"
+		},
 		"operatorHTML":     func(r *http.Request, name string) template.HTML { return s.operatorHTML(r, name) },
 		"healthCheckClass": healthCheckClass,
 		"path": func(prefix, path string) string {
@@ -238,6 +264,49 @@ func New(countriesService *countries.Service, cfg *config.Config, address, port,
 	}
 
 	s.setupRoutes()
+	if graphqlHandler != nil {
+		graphqlHandler.SetAPIReader(func(ctx context.Context, request *http.Request, path string) (json.RawMessage, error) {
+			if s.apiHandlers == nil {
+				return nil, errors.New("API router is unavailable")
+			}
+			parsedURL, err := url.ParseRequestURI(path)
+			if err != nil || (parsedURL.Path != "/api/autodiscover" && !strings.HasPrefix(parsedURL.Path, api.APIBasePath()+"/")) {
+				return nil, errors.New("API read path is invalid")
+			}
+			readRequest := request.Clone(ctx)
+			urlCopy := *request.URL
+			urlCopy.Path = parsedURL.Path
+			urlCopy.RawPath = parsedURL.RawPath
+			urlCopy.RawQuery = parsedURL.RawQuery
+			readRequest.URL = &urlCopy
+			readRequest.Method = http.MethodGet
+			readRequest.RequestURI = urlCopy.RequestURI()
+			readRequest.Header = request.Header.Clone()
+			readRequest.Header.Set("Accept", "application/json")
+			response := httptest.NewRecorder()
+			if parsedURL.Path == "/api/autodiscover" {
+				s.handleAutodiscover(response, readRequest)
+			} else {
+				s.apiHandlers.ServeHTTP(response, readRequest)
+			}
+			if response.Code < http.StatusOK || response.Code >= http.StatusMultipleChoices {
+				return nil, fmt.Errorf("API read returned HTTP %d", response.Code)
+			}
+			var envelope struct {
+				Data json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+				return nil, fmt.Errorf("decode API read response: %w", err)
+			}
+			if len(envelope.Data) == 0 {
+				return json.RawMessage(response.Body.Bytes()), nil
+			}
+			if string(envelope.Data) == "null" {
+				return nil, errors.New("API read response has no data")
+			}
+			return envelope.Data, nil
+		})
+	}
 	return s
 }
 
@@ -399,6 +468,10 @@ func (s *Server) renderTemplateResponse(w http.ResponseWriter, r *http.Request, 
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	s.setHTMLResponseHeaders(w, r, status)
+	if status >= 200 && status < 300 && r.Method == http.MethodGet && len(r.Cookies()) == 0 &&
+		!strings.Contains(strings.ToLower(rendered.String()), "<form") {
+		w.Header().Set("X-Offline-Cache", "public")
+	}
 	w.WriteHeader(status)
 	if _, err := w.Write(rendered.Bytes()); err != nil {
 		log.Printf("Write rendered template %q: %v", name, err)
@@ -521,15 +594,19 @@ func renderFallbackError(w http.ResponseWriter, r *http.Request, status int, ser
 	message := i18n.Translate(lang, messageKey)
 	home := i18n.Translate(lang, "error.home")
 	dir := i18n.Direction(lang)
-	cssURL := strings.TrimSuffix(prefix, "/") + "/static/css/main.css"
-	if stamp != "" {
-		cssURL += "?v=" + stamp
+	cssLinks := strings.Builder{}
+	for _, name := range []string{"common.css", "components.css", "public.css"} {
+		cssURL := strings.TrimSuffix(prefix, "/") + "/static/css/" + name
+		if stamp != "" {
+			cssURL += "?v=" + stamp
+		}
+		fmt.Fprintf(&cssLinks, `<link rel="stylesheet" href="%s">`, template.HTMLEscapeString(cssURL))
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	_, _ = fmt.Fprintf(w, "<!doctype html><html lang=\"%s\" dir=\"%s\" class=\"theme-%s\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>%d %s</title><link rel=\"stylesheet\" href=\"%s\"></head><body><a class=\"skip-link\" href=\"#main-content\">%s</a><header class=\"site-header\"><nav aria-label=\"%s\"><a href=\"%s/\">%s</a></nav></header><main id=\"main-content\" class=\"page-content error-page\"><h1>%s</h1><p>%s</p><a class=\"btn btn-primary\" href=\"%s/\">%s</a></main></body></html>",
+	_, _ = fmt.Fprintf(w, "<!doctype html><html lang=\"%s\" dir=\"%s\" class=\"theme-%s\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>%d %s</title>%s</head><body><a class=\"skip-link\" href=\"#main-content\">%s</a><header class=\"site-header\"><nav aria-label=\"%s\"><a href=\"%s/\">%s</a></nav></header><main id=\"main-content\" class=\"page-content error-page\"><h1>%s</h1><p>%s</p><a class=\"btn btn-primary\" href=\"%s/\">%s</a></main></body></html>",
 		template.HTMLEscapeString(lang), template.HTMLEscapeString(dir), template.HTMLEscapeString(theme), status,
-		template.HTMLEscapeString(title), template.HTMLEscapeString(cssURL), template.HTMLEscapeString(i18n.Translate(lang, "nav.skip_main")),
+		template.HTMLEscapeString(title), cssLinks.String(), template.HTMLEscapeString(i18n.Translate(lang, "nav.skip_main")),
 		template.HTMLEscapeString(i18n.Translate(lang, "nav.main_navigation")), template.HTMLEscapeString(strings.TrimSuffix(prefix, "/")),
 		template.HTMLEscapeString(i18n.Translate(lang, "nav.home")), template.HTMLEscapeString(title),
 		template.HTMLEscapeString(message), template.HTMLEscapeString(strings.TrimSuffix(prefix, "/")), template.HTMLEscapeString(home))
@@ -537,8 +614,17 @@ func renderFallbackError(w http.ResponseWriter, r *http.Request, status int, ser
 
 func (s *Server) setupRoutes() {
 	r := s.router
+	r.Use(URLNormalizeMiddleware)
+	r.Use(requestIDMiddleware)
+	r.Use(s.PathSecurityMiddleware)
+	r.Use(s.securityHeadersMiddleware)
+	r.Use(s.serverTimingMiddleware)
+	r.Use(s.privacySignalMiddleware)
+	r.Use(s.secFetchValidationMiddleware)
 	r.Use(s.configReloadMiddleware)
 	r.Use(s.recoverMiddleware)
+	r.Use(s.maintenanceWriteMiddleware)
+	r.Use(s.languagePreferenceConsentMiddleware)
 	r.Use(apiContentNegotiation)
 	r.Use(s.publicNotificationsMiddleware)
 	r.Use(s.healthStatsMiddleware)
@@ -546,23 +632,20 @@ func (s *Server) setupRoutes() {
 		r.Use(s.metrics.Middleware)
 	}
 	// Middleware
-	r.Use(requestIDMiddleware)
 	r.Use(s.trustedProxyMiddleware)
 	r.Use(s.debugMiddleware)
 	r.Use(requestLogMiddleware)
-	r.Use(s.securityHeadersMiddleware)
 	r.Use(s.corsMiddleware)
 	r.Use(s.allowlistMiddleware)
 	r.Use(s.blocklistMiddleware)
 	r.Use(s.rateLimiter.middleware)
+	r.Use(s.frontendContentNegotiationMiddleware)
 	r.Use(s.geoIPMiddleware)
 	if s.metrics != nil {
 		RegisterMetricsRoutes(r, s.config.Server.Metrics, s.metrics)
 	}
 	if appmode.DebugEnabled() {
 		s.registerDebugRoutes(r, "/debug")
-		s.registerDebugRoutes(r, api.APIBasePath()+"/debug")
-		s.registerDebugRoutes(r, "/api/debug")
 	}
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, r, "Page not found", http.StatusNotFound)
@@ -618,9 +701,30 @@ func (s *Server) setupRoutes() {
 		log.Printf("Warning: could not expose static assets: %v", err)
 	} else {
 		fileServer := http.StripPrefix("/static/", http.FileServer(http.FS(staticFiles)))
+		themeAssets := map[string]func() string{
+			"css/common.css":           commontheme.CSSVariables,
+			"css/swagger-ui-theme.css": swagger.CSSVariables,
+			"css/graphiql-theme.css":   graphqlapi.CSSVariables,
+		}
 		r.Handle("/static/*", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if s.setAssetCacheHeaders(w, r) {
 				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			for asset, variables := range themeAssets {
+				if !strings.HasSuffix(r.URL.Path, "/static/"+asset) {
+					continue
+				}
+				css, readErr := fs.ReadFile(staticFiles, asset)
+				if readErr != nil {
+					http.Error(w, "Static asset unavailable", http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "text/css; charset=utf-8")
+				if r.Method != http.MethodHead {
+					_, _ = io.WriteString(w, variables())
+					_, _ = w.Write(css)
+				}
 				return
 			}
 			fileServer.ServeHTTP(w, r)
@@ -653,9 +757,10 @@ func (s *Server) setupRoutes() {
 	r.Get("/api/healthz", s.handleHealthAPI)
 	r.Get("/api/healthz.txt", s.handleHealthAPI)
 	r.Get("/api/swagger", s.handleOpenAPISpec)
+	r.Get("/api/graphql", s.graphqlEndpoint())
 	r.Post("/api/graphql", s.graphqlEndpoint())
-	r.Handle("/api/mcp", http.HandlerFunc(s.handleMCP))
-	r.Handle("/mcp", http.HandlerFunc(s.handleMCP))
+	r.Post("/api/mcp", s.handleMCP)
+	r.Post("/mcp", s.handleMCP)
 	r.Get("/api/autodiscover", s.handleAutodiscover)
 	r.Get("/cli/binaries/{binary}", s.handleCLIBinary)
 }
@@ -680,25 +785,104 @@ func (s *Server) ApplyReloadedConfig(cfg *config.Config) {
 	s.allowlist = s.buildAllowlist()
 }
 
+// SetCacheClient installs the optional shared Valkey/Redis client. A client
+// returned with an initial ping error remains available for later recovery.
+func (s *Server) SetCacheClient(client redis.UniversalClient, initialErr ...error) {
+	s.cacheClient = client
+	if s.rateLimiter != nil {
+		s.rateLimiter.cache = client
+		s.rateLimiter.cachePrefix = s.config.Server.Cache.Prefix
+		s.rateLimiter.cacheFailure = s.markCacheFailure
+		s.rateLimiter.cacheRecovery = func() { s.cacheDegraded.Store(false) }
+	}
+	if len(initialErr) > 0 && initialErr[0] != nil {
+		s.markCacheFailure()
+	}
+}
+
+// CloseCache releases the optional shared cache connection during shutdown.
+func (s *Server) CloseCache() error {
+	var closeErr error
+	if s.rateLimiter != nil {
+		closeErr = s.rateLimiter.Close()
+	}
+	if s.cacheClient != nil {
+		closeErr = errors.Join(closeErr, s.cacheClient.Close())
+	}
+	return closeErr
+}
+
+func (s *Server) markCacheFailure() {
+	s.cacheDegraded.Store(true)
+	s.cacheWarningOnce.Do(func() {
+		log.Printf("Warning: external rate-limit cache unavailable; using database-seeded in-memory fallback")
+	})
+}
+
+func (s *Server) cacheHealthStatus() string {
+	if s.cacheClient == nil {
+		if s.config != nil && (s.config.Server.Cache.Type == "redis" || s.config.Server.Cache.Type == "valkey") && s.cacheDegraded.Load() {
+			return "degraded"
+		}
+		return "ok"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	err := s.cacheClient.Ping(ctx).Err()
+	cancel()
+	if err != nil {
+		s.markCacheFailure()
+		return "degraded"
+	}
+	s.cacheDegraded.Store(false)
+	return "ok"
+}
+
 func (s *Server) registerDebugRoutes(router chi.Router, prefix string) {
 	debugRouter := chi.NewRouter()
-	debugRouter.Use(s.requireDebugOperator)
-	debugRouter.Handle("/pprof/", http.HandlerFunc(pprof.Index))
-	debugRouter.Handle("/pprof/cmdline", http.HandlerFunc(pprof.Cmdline))
-	debugRouter.Handle("/pprof/profile", http.HandlerFunc(pprof.Profile))
-	debugRouter.Handle("/pprof/symbol", http.HandlerFunc(pprof.Symbol))
-	debugRouter.Handle("/pprof/trace", http.HandlerFunc(pprof.Trace))
-	for _, profile := range []string{"allocs", "block", "goroutine", "heap", "mutex", "threadcreate"} {
-		debugRouter.Handle("/pprof/"+profile, pprof.Handler(profile))
+	debugProtected := debugRouter.With(s.requireDebugOperator)
+	if s.config.Server.Debug.Pprof {
+		debugProtected.Handle("/pprof", http.HandlerFunc(pprof.Index))
+		debugProtected.Handle("/pprof/", http.HandlerFunc(pprof.Index))
+		debugProtected.HandleFunc("/pprof/cmdline", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = io.WriteString(w, filepath.Base(os.Args[0]))
+		})
+		debugProtected.Handle("/pprof/profile", http.HandlerFunc(pprof.Profile))
+		debugProtected.Handle("/pprof/symbol", http.HandlerFunc(pprof.Symbol))
+		debugProtected.Handle("/pprof/trace", http.HandlerFunc(pprof.Trace))
+		for _, profile := range []string{"allocs", "block", "goroutine", "heap", "mutex", "threadcreate"} {
+			debugProtected.Handle("/pprof/"+profile, pprof.Handler(profile))
+		}
 	}
-	debugRouter.Handle("/vars", expvar.Handler())
-	debugRouter.Get("/config", s.handleDebugConfig)
-	debugRouter.Get("/routes", s.handleDebugRoutes)
-	debugRouter.Get("/cache", s.handleDebugCache)
-	debugRouter.Get("/db", s.handleDebugDB)
-	debugRouter.Get("/scheduler", s.handleDebugScheduler)
-	debugRouter.Get("/memory", s.handleDebugMemory)
-	debugRouter.Get("/goroutines", s.handleDebugGoroutines)
+	if s.config.Server.Debug.RuntimeEndpoints {
+		debugProtected.HandleFunc("/vars", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			values := make(map[string]json.RawMessage)
+			expvar.Do(func(value expvar.KeyValue) {
+				if value.Key == "cmdline" {
+					binary, _ := json.Marshal([]string{filepath.Base(os.Args[0])})
+					values[value.Key] = binary
+					return
+				}
+				if encoded, err := json.Marshal(value.Value); err == nil {
+					values[value.Key] = encoded
+				}
+			})
+			_ = json.NewEncoder(w).Encode(values)
+		})
+	}
+	debugProtected.Get("/config", s.handleDebugConfig)
+	debugProtected.Get("/routes", s.handleDebugRoutes)
+	debugProtected.Get("/cache", s.handleDebugCache)
+	debugProtected.Get("/db", s.handleDebugDB)
+	debugProtected.Get("/scheduler", s.handleDebugScheduler)
+	if s.config.Server.Debug.RuntimeEndpoints {
+		debugProtected.Get("/memory", s.handleDebugMemory)
+		debugProtected.Get("/goroutines", s.handleDebugGoroutines)
+	}
+	debugProtected.Get("/error500", func(w http.ResponseWriter, r *http.Request) {
+		s.errorResponse(w, r, "Internal server error", http.StatusInternalServerError)
+	})
 	router.Mount(prefix, debugRouter)
 }
 
@@ -763,8 +947,9 @@ func (s *Server) registerAPIRoutes(r chi.Router) {
 	r.Get("/server/contact", s.handleContactAPI)
 	r.Post("/server/contact", s.handleContactAPISubmit)
 	r.Get("/server/dpo", s.handleDPOAPI)
+	r.Get("/server/graphql", s.graphqlEndpoint())
 	r.Post("/server/graphql", s.graphqlEndpoint())
-	r.Handle("/server/mcp", http.HandlerFunc(s.handleMCP))
+	r.Post("/server/mcp", s.handleMCP)
 	r.Get("/server/swagger", s.handleOpenAPISpec)
 	r.Post("/server/reports/{report}", s.handleSecurityReport)
 	r.Get("/countries", s.handleGetCountries)
@@ -780,53 +965,59 @@ func (s *Server) registerAPIRoutes(r chi.Router) {
 }
 
 func (s *Server) handleAutodiscover(w http.ResponseWriter, r *http.Request) {
-	versions := make(map[string]map[string]string)
-	for _, directory := range s.cliBinaryDirectories() {
-		entries, err := os.ReadDir(directory)
-		if err != nil {
+	publicOrigins := []string{s.reportOrigin(r)}
+	originSeen := map[string]struct{}{strings.ToLower(publicOrigins[0]): {}}
+	scheme := "http"
+	if strings.HasPrefix(publicOrigins[0], "https://") {
+		scheme = "https"
+	}
+	for _, configured := range strings.Split(os.Getenv("DOMAIN"), ",") {
+		host, _, ok := splitURLHost(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(configured, "https://"), "http://")))
+		if !ok || host == "" || strings.HasSuffix(strings.ToLower(host), ".onion") || strings.HasSuffix(strings.ToLower(host), ".b32.i2p") {
 			continue
 		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if entry.Type()&os.ModeSymlink != 0 || !entry.Type().IsRegular() || !strings.HasPrefix(name, "countries-cli-") {
-				continue
+		origin := scheme + "://" + strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(configured, "https://"), "http://"))
+		if !strings.Contains(origin, "://:") {
+			if _, _, valid := splitURLHost(strings.TrimPrefix(origin, scheme+"://")); valid {
+				key := strings.ToLower(origin)
+				if _, exists := originSeen[key]; !exists {
+					originSeen[key] = struct{}{}
+					publicOrigins = append(publicOrigins, origin)
+				}
 			}
-			platform := strings.TrimPrefix(name, "countries-cli-")
-			osName, arch, ok := strings.Cut(platform, "-")
-			if !ok || osName == "" || arch == "" || strings.Contains(arch, "/") || strings.Contains(arch, "\\") {
-				continue
-			}
-			key := osName + "-" + arch
-			if _, exists := versions[key]; exists {
-				continue
-			}
-			file, err := os.Open(filepath.Join(directory, name))
-			if err != nil {
-				continue
-			}
-			hash := sha256.New()
-			_, copyErr := io.Copy(hash, file)
-			closeErr := file.Close()
-			if copyErr != nil || closeErr != nil {
-				continue
-			}
-			versions[key] = map[string]string{"version": s.version, "sha256": hex.EncodeToString(hash.Sum(nil))}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	versions := make(map[string]map[string]string)
+	for platform, binary := range s.availableCLIBinaries() {
+		versions[platform] = map[string]string{"version": binary.version, "sha256": binary.sha256}
+	}
+	data := map[string]interface{}{
 		"ok": true,
 		"data": map[string]interface{}{
-			"server":          map[string]string{"name": "countries", "version": s.version, "build_date": s.buildDate},
-			"api_base_path":   api.APIBasePath(),
+			"name":            "countries",
+			"version":         s.version,
+			"api":             map[string]string{"current_version": strings.TrimPrefix(api.APIBasePath(), "/api/")},
+			"urls":            publicOrigins,
 			"cli_versions":    versions,
 			"cli_min_version": s.config.Server.Update.CLIMinVersion,
 		},
-	})
+	}
+	s.overlayMu.RLock()
+	torInfo, i2pInfo := s.torHealth, s.i2pHealth
+	s.overlayMu.RUnlock()
+	result := data["data"].(map[string]interface{})
+	if s.config.Server.Tor.Expose && torInfo.Enabled && torInfo.Hostname != "" {
+		result["onion"] = torInfo.Hostname
+	}
+	if s.config.Server.I2P.Expose && i2pInfo.Enabled && i2pInfo.Hostname != "" {
+		result["i2p"] = i2pInfo.Hostname
+	}
+	writeJSON(w, http.StatusOK, data)
 }
 
 func (s *Server) handleCLIBinary(w http.ResponseWriter, r *http.Request) {
 	binary := chi.URLParam(r, "binary")
-	if filepath.Base(binary) != binary || !strings.HasPrefix(binary, "countries-cli-") || strings.ContainsAny(binary, "/\\") {
+	if !isStaticCLIBinaryName(binary) {
 		s.errorResponse(w, r, "CLI binary not found", http.StatusNotFound)
 		return
 	}
@@ -843,9 +1034,15 @@ func (s *Server) handleCLIBinary(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	platform, _ := cliPlatformKey(binary)
+	available, found := s.availableCLIBinaries()[platform]
+	if !found {
+		s.errorResponse(w, r, "CLI binary not found", http.StatusNotFound)
+		return
+	}
 	var file *os.File
 	for _, directory := range s.cliBinaryDirectories() {
-		candidate := filepath.Join(directory, binary)
+		candidate := filepath.Join(directory, available.name)
 		linkInfo, err := os.Lstat(candidate)
 		if err != nil || !linkInfo.Mode().IsRegular() {
 			continue
@@ -874,38 +1071,153 @@ func (s *Server) handleCLIBinary(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, r, "CLI binary not found", http.StatusNotFound)
 		return
 	}
-	platform := strings.TrimPrefix(binary, "countries-cli-")
 	s.writeCLIAuditEvent(r, "cli.update_started", map[string]string{
-		"os_arch": platform, "version": s.version, "client_ip": requestClientIP(r.RemoteAddr),
+		"os_arch": platform, "version": available.version, "client_ip": requestClientIP(r.RemoteAddr),
 	}, true)
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+binary+`"`)
-	http.ServeContent(w, r, binary, info.ModTime(), file)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+available.name+`"`)
+	http.ServeContent(w, r, available.name, info.ModTime(), file)
+}
+
+type cliBinary struct {
+	name    string
+	version string
+	sha256  string
+}
+
+func (s *Server) availableCLIBinaries() map[string]cliBinary {
+	available := make(map[string]cliBinary)
+	for _, directory := range s.cliBinaryDirectories() {
+		versionBytes, err := os.ReadFile(filepath.Join(directory, "version.txt"))
+		if err != nil || strings.TrimSpace(string(versionBytes)) == "" {
+			continue
+		}
+		version := strings.TrimSpace(string(versionBytes))
+		manifestBytes, err := os.ReadFile(filepath.Join(directory, "sha256.txt"))
+		if err != nil {
+			continue
+		}
+		manifest := parseCLIChecksumManifest(string(manifestBytes))
+		entries, err := os.ReadDir(directory)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			platform, valid := cliPlatformKey(name)
+			if !valid || entry.Type()&os.ModeSymlink != 0 || !entry.Type().IsRegular() {
+				continue
+			}
+			expected, recorded := manifest[name]
+			if !recorded {
+				log.Printf("WARN: CLI binary checksum is missing from sha256.txt: %s", name)
+				continue
+			}
+			filename := filepath.Join(directory, name)
+			linkInfo, err := os.Lstat(filename)
+			if err != nil || !linkInfo.Mode().IsRegular() {
+				continue
+			}
+			file, err := os.Open(filename)
+			if err != nil {
+				continue
+			}
+			openedInfo, statErr := file.Stat()
+			if statErr != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(linkInfo, openedInfo) {
+				_ = file.Close()
+				continue
+			}
+			hash := sha256.New()
+			_, copyErr := io.Copy(hash, file)
+			closeErr := file.Close()
+			if copyErr != nil || closeErr != nil {
+				continue
+			}
+			actual := hex.EncodeToString(hash.Sum(nil))
+			if actual != expected {
+				log.Printf("WARN: CLI binary checksum mismatch: %s", name)
+				continue
+			}
+			if _, exists := available[platform]; !exists {
+				available[platform] = cliBinary{name: name, version: version, sha256: actual}
+			}
+		}
+	}
+	return available
+}
+
+func parseCLIChecksumManifest(contents string) map[string]string {
+	manifest := make(map[string]string)
+	for _, line := range strings.Split(contents, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		checksum := strings.TrimPrefix(fields[0], "\\")
+		filename := strings.TrimLeft(fields[len(fields)-1], "*")
+		if filepath.Base(filename) != filename || len(checksum) != sha256.Size*2 {
+			continue
+		}
+		if _, err := hex.DecodeString(checksum); err == nil {
+			manifest[filename] = strings.ToLower(checksum)
+		}
+	}
+	return manifest
+}
+
+func cliPlatformKey(name string) (string, bool) {
+	if filepath.Base(name) != name || strings.ContainsAny(name, "/\\") || !strings.HasPrefix(name, "countries-cli-") {
+		return "", false
+	}
+	platform := strings.TrimPrefix(name, "countries-cli-")
+	if strings.HasPrefix(platform, "gui-") {
+		return "", false
+	}
+	platform = strings.TrimSuffix(platform, ".exe")
+	osName, arch, ok := strings.Cut(platform, "-")
+	if !ok || arch == "" || strings.Contains(arch, "-") {
+		return "", false
+	}
+	switch osName {
+	case "linux", "darwin", "windows", "freebsd":
+	default:
+		return "", false
+	}
+	switch arch {
+	case "amd64", "arm64":
+	default:
+		return "", false
+	}
+	if osName == "windows" && !strings.HasSuffix(name, ".exe") {
+		return osName + "-" + arch, true
+	}
+	if osName != "windows" && strings.HasSuffix(name, ".exe") {
+		return "", false
+	}
+	return osName + "-" + arch, true
+}
+
+func isStaticCLIBinaryName(name string) bool {
+	_, valid := cliPlatformKey(name)
+	return valid
 }
 
 func (s *Server) cliBinaryDirectories() []string {
-	directories := make([]string, 0, 3)
-	seen := make(map[string]struct{}, 3)
-	add := func(directory string) {
-		if directory == "" {
-			return
-		}
-		clean := filepath.Clean(directory)
-		if _, exists := seen[clean]; exists {
-			return
-		}
-		seen[clean] = struct{}{}
-		directories = append(directories, clean)
+	s.configMu.RLock()
+	directory := s.config.CLI.BinaryDownload.Dir
+	s.configMu.RUnlock()
+	if strings.TrimSpace(directory) == "" {
+		directory = "{data_dir}/cli"
 	}
-	if workingDirectory, err := os.Getwd(); err == nil {
-		add(filepath.Join(workingDirectory, "binaries"))
+	directory = strings.ReplaceAll(directory, "{data_dir}", s.dataDir)
+	return []string{filepath.Clean(directory)}
+}
+
+// SetDataDir sets the runtime data directory used for provisioned CLI binaries.
+func (s *Server) SetDataDir(directory string) {
+	if directory != "" {
+		s.dataDir = directory
 	}
-	if executable, err := os.Executable(); err == nil {
-		directory := filepath.Dir(executable)
-		add(directory)
-		add(filepath.Join(directory, "binaries"))
-	}
-	return directories
 }
 
 func (s *Server) writeCLIAuditEvent(r *http.Request, action string, details map[string]string, success bool) {
@@ -916,7 +1228,10 @@ func (s *Server) writeCLIAuditEvent(r *http.Request, action string, details map[
 	if err != nil {
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), `INSERT INTO audit_log (level, category, action, actor_ip, target_type, target_id, details, success) VALUES ('info', 'cli', ?, ?, 'binary', '', ?, ?)`, action, requestClientIP(r.RemoteAddr), string(encoded), success); err != nil {
+	if err := database.Write(r.Context(), s.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(r.Context(), `INSERT INTO audit_log (level, category, action, actor_ip, target_type, target_id, details, success) VALUES ('info', 'cli', ?, ?, 'binary', '', ?, ?)`, action, requestClientIP(r.RemoteAddr), string(encoded), success)
+		return err
+	}); err != nil {
 		log.Printf("cli audit write failed: action=%s error=%v", action, err)
 	}
 }
@@ -958,7 +1273,75 @@ func (s *Server) SetScheduler(scheduler *backgroundscheduler.Scheduler) {
 
 // SetMaintenanceMode marks health as unavailable while planned maintenance is active.
 func (s *Server) SetMaintenanceMode(active bool) {
+	s.maintenanceMu.Lock()
+	if active {
+		if !s.maintenance.Load() {
+			s.maintenanceSince = time.Now().UTC()
+		}
+		if s.maintenanceReason == "" {
+			s.maintenanceReason = "database_connection"
+		}
+	} else {
+		s.maintenanceReason = ""
+		s.maintenanceSince = time.Time{}
+		s.maintenanceLastAttempt = time.Time{}
+		s.maintenanceAttempts = 0
+		s.maintenanceExhausted = false
+	}
 	s.maintenance.Store(active)
+	s.maintenanceMu.Unlock()
+}
+
+func (s *Server) IsMaintenanceMode() bool {
+	return s.maintenance.Load()
+}
+
+func (s *Server) SetSelfHealingState(reason string, since time.Time, attempts int, exhausted bool) {
+	s.maintenanceMu.Lock()
+	if reason == "" {
+		reason = "database_connection"
+	}
+	if since.IsZero() {
+		since = time.Now().UTC()
+	}
+	s.maintenanceReason = reason
+	s.maintenanceSince = since.UTC()
+	s.maintenanceLastAttempt = time.Now().UTC()
+	s.maintenanceAttempts = attempts
+	s.maintenanceExhausted = exhausted
+	s.maintenance.Store(true)
+	s.maintenanceMu.Unlock()
+}
+
+func (s *Server) maintenanceWriteMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.maintenance.Load() || r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		s.maintenanceMu.RLock()
+		reason := s.maintenanceReason
+		since := s.maintenanceSince
+		s.maintenanceMu.RUnlock()
+		if reason == "" {
+			reason = "database_connection"
+		}
+		retryAfter := 30
+		if interval, err := time.ParseDuration(s.config.Server.Maintenance.SelfHealing.RetryInterval); err == nil && interval > 0 {
+			retryAfter = max(1, int(interval.Seconds()))
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		w.Header().Set("X-Maintenance-Mode", "true")
+		w.Header().Set("X-Maintenance-Reason", reason)
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"ok": false, "error": "MAINTENANCE", "message": "Server is in read-only maintenance mode",
+				"details": map[string]any{"reason": reason, "self_healing": true, "since": since.Format(time.RFC3339)},
+			})
+			return
+		}
+		s.errorResponse(w, r, "Server is in read-only maintenance mode", http.StatusServiceUnavailable)
+	})
 }
 
 // SetPendingRestart exposes config changes that require a process restart.
@@ -1008,6 +1391,11 @@ func (s *Server) SetMetricsDataDir(directory string) {
 	}
 }
 
+// SetNotificationManager wires the configured notification channels into report delivery.
+func (s *Server) SetNotificationManager(manager *notifications.Manager) {
+	s.notificationManager = manager
+}
+
 // RecordScheduledTaskStart exposes a task start to the configured metrics collector.
 func (s *Server) RecordScheduledTaskStart(task string) {
 	if s.metrics != nil {
@@ -1024,17 +1412,102 @@ func (s *Server) RecordScheduledTaskEnd(task string, duration time.Duration, err
 
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", s.config.WebSecurity.CORS)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, X-Requested-With, Authorization, X-CSRF-Token, X-XSRF-Token, MCP-Protocol-Version, Mcp-Method, Mcp-Name, X-Request-ID, X-Correlation-ID, X-Trace-ID")
-
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
+		origins, wildcard, disabled := s.resolveCORSOrigins(r)
+		origin := normalizeCORSOrigin(r.Header.Get("Origin"))
+		matched := !disabled && origin != "" && (wildcard || containsOrigin(origins, origin))
+		if matched {
+			if wildcard {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			} else {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Add("Vary", "Origin")
+			}
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, X-Requested-With, Authorization, X-CSRF-Token, X-XSRF-Token, MCP-Protocol-Version, Mcp-Method, Mcp-Name")
+			if !wildcard && s.config.Server.CORS.AllowCredentials {
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
+		}
+		preflight := r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != ""
+		if preflight {
+			if matched && s.config.Server.CORS.MaxAge > 0 {
+				w.Header().Set("Access-Control-Max-Age", strconv.Itoa(s.config.Server.CORS.MaxAge))
+			}
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) resolveCORSOrigins(r *http.Request) (map[string]struct{}, bool, bool) {
+	configured := s.config.Server.CORS.AllowedOrigins
+	if len(configured) == 1 && strings.TrimSpace(configured[0]) == "" {
+		return nil, false, true
+	}
+	origins := make(map[string]struct{}, len(configured)+len(network.GetAllDomains())+4)
+	wildcard := false
+	add := func(value string) {
+		if strings.TrimSpace(value) == "*" {
+			wildcard = true
+			return
+		}
+		if normalized := normalizeCORSOrigin(value); normalized != "" {
+			origins[normalized] = struct{}{}
+		}
+	}
+	for _, value := range configured {
+		add(value)
+	}
+	for _, domain := range network.GetAllDomains() {
+		add("https://" + strings.TrimSpace(domain))
+	}
+	if s.isTrustedPeer(r) {
+		forwardedHost := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0])
+		if forwardedHost != "" {
+			learned := normalizeCORSOrigin("https://" + forwardedHost)
+			if learned != "" {
+				s.learnedCORSOriginsMu.Lock()
+				s.learnedCORSOrigins[learned] = struct{}{}
+				s.learnedCORSOriginsMu.Unlock()
+			}
+		}
+	}
+	s.learnedCORSOriginsMu.RLock()
+	for origin := range s.learnedCORSOrigins {
+		origins[origin] = struct{}{}
+	}
+	s.learnedCORSOriginsMu.RUnlock()
+	if !wildcard && len(origins) == 0 {
+		wildcard = true
+	}
+	return origins, wildcard, false
+}
+
+func normalizeCORSOrigin(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "null" || value == "*" {
+		return ""
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" && parsed.Path != "/" {
+		return ""
+	}
+	return strings.ToLower(parsed.Scheme + "://" + parsed.Host)
+}
+
+func containsOrigin(origins map[string]struct{}, origin string) bool {
+	_, ok := origins[origin]
+	return ok
+}
+
+func (s *Server) corsOriginAllowed(r *http.Request) bool {
+	origin := normalizeCORSOrigin(r.Header.Get("Origin"))
+	if origin == "" {
+		return false
+	}
+	origins, wildcard, disabled := s.resolveCORSOrigins(r)
+	return !disabled && (wildcard || containsOrigin(origins, origin))
 }
 
 func (s *Server) Run(ctx context.Context, addr string) error {
@@ -1053,6 +1526,10 @@ func (s *Server) RunListenersWithPrebound(ctx context.Context, httpAddr, httpsAd
 		updateDatabaseMetrics := func() {
 			stats := s.db.Stats()
 			s.metrics.SetDatabaseConnections(stats.OpenConnections, stats.InUse)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			primary, linked, err := database.CountActiveOwnerTokens(ctx, s.db, time.Now().UTC())
+			cancel()
+			if err == nil { s.metrics.SetActiveOwnerTokens(primary, linked) }
 		}
 		updateDatabaseMetrics()
 		go func() {
@@ -1254,7 +1731,9 @@ func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	w.Header().Set("Content-Type", "application/manifest+json")
-	if err := json.NewEncoder(w).Encode(manifest); err != nil {
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(manifest); err != nil {
 		log.Printf("write web manifest: %v", err)
 	}
 }
@@ -1264,18 +1743,17 @@ func (s *Server) handleServiceWorker(w http.ResponseWriter, r *http.Request) {
 	prefix := s.requestURLPrefix(r)
 	stamp := s.assetStamp()
 	base := strings.TrimSuffix(prefix, "/")
-	offlineCopy := make(map[string]map[string]string, len(i18n.Languages()))
-	for _, lang := range i18n.Languages() {
-		offlineCopy[lang] = map[string]string{"title": i18n.Translate(lang, "pwa.offline_title"), "message": i18n.Translate(lang, "pwa.offline_message")}
-	}
-	offlineCopyJSON, _ := json.Marshal(offlineCopy)
+	offlineStringsCache, _ := json.Marshal(s.appName() + "-offline-strings")
 	sw := `const CACHE_VERSION = '` + stamp + `';
 const CACHE_PREFIX = 'Countries API-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
+const STRINGS_CACHE = ` + string(offlineStringsCache) + `;
 const APP_BASE = '` + base + `';
 const NAV_TIMEOUT_MS = 8000;
 const PRECACHE_ASSETS = [
-  APP_BASE + '/static/css/main.css?v=' + CACHE_VERSION,
+  APP_BASE + '/static/css/common.css?v=' + CACHE_VERSION,
+  APP_BASE + '/static/css/components.css?v=' + CACHE_VERSION,
+  APP_BASE + '/static/css/public.css?v=' + CACHE_VERSION,
   APP_BASE + '/static/js/app.js?v=' + CACHE_VERSION,
   APP_BASE + '/static/icons/icon-192.png?v=' + CACHE_VERSION,
   APP_BASE + '/static/icons/icon-512.png?v=' + CACHE_VERSION,
@@ -1290,7 +1768,7 @@ self.addEventListener('install', event => {
 
 self.addEventListener('activate', event => {
   event.waitUntil(caches.keys()
-    .then(keys => Promise.all(keys.filter(key => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME).map(key => caches.delete(key))))
+    .then(keys => Promise.all(keys.filter(key => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME && key !== STRINGS_CACHE).map(key => caches.delete(key))))
     .then(() => self.clients.claim()));
 });
 
@@ -1305,17 +1783,23 @@ function withTimeout(promise, ms) {
   });
 }
 
-function offlineFallbackResponse() {
-  const copy = ` + string(offlineCopyJSON) + `;
-  const requestedLanguage = (self.navigator.language || 'en').split('-')[0].toLowerCase();
-  const lang = Object.prototype.hasOwnProperty.call(copy, requestedLanguage) ? requestedLanguage : 'en';
-  const title = copy[lang].title;
-  const message = copy[lang].message;
+async function offlineFallbackResponse() {
+  let copy = { lang: 'en', title: 'Offline', heading: 'You are offline', message: 'You are offline.' };
+  try {
+    const cache = await caches.open(STRINGS_CACHE);
+    const stored = await cache.match(new URL(APP_BASE + '/offline-strings.json', self.location.origin));
+    if (stored) copy = Object.assign(copy, await stored.json());
+  } catch (_) {}
+  const lang = copy.lang || 'en';
+  const title = copy.title || 'Offline';
+  const heading = copy.heading || 'You are offline';
+  const message = copy.message || 'You are offline.';
   const escapeHTML = value => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const safeTitle = escapeHTML(title);
+  const safeHeading = escapeHTML(heading);
   const safeMessage = escapeHTML(message);
   const direction = lang === 'ar' ? 'rtl' : 'ltr';
-  return new Response('<!doctype html><html lang="' + lang + '" dir="' + direction + '"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + safeTitle + '</title></head><body><main><h1>' + safeTitle + '</h1><p>' + safeMessage + '</p></main></body></html>', {
+  return new Response('<!doctype html><html lang="' + lang + '" dir="' + direction + '"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + safeTitle + '</title></head><body><main><h1>' + safeHeading + '</h1><p>' + safeMessage + '</p></main></body></html>', {
     status: 503, statusText: 'Service Unavailable', headers: { 'Content-Type': 'text/html; charset=utf-8' }
   });
 }
@@ -1332,8 +1816,10 @@ self.addEventListener('fetch', event => {
   if (request.mode === 'navigate') {
     event.respondWith(withTimeout(fetch(request), NAV_TIMEOUT_MS)
       .then(response => {
-        if (response.redirected) throw new Error('navigation redirected');
-        if (!response.ok || (response.headers.get('Cache-Control') || '').includes('no-store')) return response;
+        if (response.redirected) return response;
+        if (!response.ok || response.headers.get('X-Offline-Cache') !== 'public') {
+          return caches.open(CACHE_NAME).then(cache => cache.delete(request)).then(() => response);
+        }
         return caches.open(CACHE_NAME).then(cache => cache.put(request, response.clone())).then(() => response);
       })
       .catch(async () => (await caches.match(request)) || offlineFallbackResponse())
@@ -1350,13 +1836,14 @@ self.addEventListener('fetch', event => {
   }
 
   event.respondWith(fetch(request).then(response => {
-    if (response.redirected) throw new Error('request redirected');
     return response;
   }).catch(async () => (await caches.match(request)) || new Response('', { status: 504, statusText: 'Gateway Timeout' }))
     .catch(() => new Response('', { status: 504, statusText: 'Gateway Timeout' })));
 });`
 	w.Header().Set("Content-Type", "application/javascript")
-	_, _ = w.Write([]byte(sw))
+	if _, err := w.Write([]byte(sw + "\n")); err != nil {
+		log.Printf("write service worker: %v", err)
+	}
 }
 
 func (s *Server) handleRobots(w http.ResponseWriter, r *http.Request) {
@@ -1427,7 +1914,11 @@ func (s *Server) handleSecurity(w http.ResponseWriter, r *http.Request) {
 	if s.config.Server.Pages.Contact.Enabled {
 		security += "Contact: " + s.BuildURL(r, "/server/contact") + "?security_id=" + securityIDFor(s.contactKey, time.Now().Unix()/172800) + "\n"
 	}
-	if address := strings.TrimSpace(s.config.Server.Contact.Security.Email); address != "" {
+	address := strings.TrimSpace(s.config.Server.Contact.Security.Email)
+	if torRequest(r) || strings.HasSuffix(strings.ToLower(r.Host), ".onion") {
+		address = strings.TrimSpace(s.config.Server.Tor.ContactEmail)
+	}
+	if address != "" {
 		if parsed, err := mail.ParseAddress(address); err == nil && parsed.Address == address {
 			security += "Contact: mailto:" + address + "\n"
 		}

@@ -152,12 +152,8 @@ func GetLogsDir(appName string) string {
 		if privilege.IsElevated() {
 			return filepath.Join("/var/log", orgName, appName)
 		}
-		// Linux/Unix - use XDG
-		if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
-			return filepath.Join(xdg, orgName, appName, "logs")
-		}
 		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".local", "state", orgName, appName, "logs")
+		return filepath.Join(home, ".local", "log", orgName, appName)
 	}
 }
 
@@ -206,6 +202,12 @@ func GetDatabaseDir(dataDir string) string {
 	}
 	if isContainer() {
 		return "/data/db/sqlite"
+	}
+	if os.Getenv("DATA_DIR") == "" && privilege.IsElevated() {
+		switch runtime.GOOS {
+		case "darwin", "windows":
+			return filepath.Join(filepath.Dir(dataDir), "db")
+		}
 	}
 	return filepath.Join(dataDir, "db")
 }

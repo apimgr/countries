@@ -118,14 +118,14 @@ func trackingOrigin(raw string) string {
 }
 
 func (s *Server) trackingAllowed(r *http.Request) bool {
-	if !s.config.Server.Privacy.Cookies.Analytics.Enabled || isOverlayRequest(s, r) {
+	if requestPrivacySignal(r) != "" || !s.config.Server.Privacy.Cookies.Analytics.Enabled || isOverlayRequest(s, r) {
 		return false
 	}
 	cookie, err := r.Cookie("cookie_consent")
 	if err != nil {
 		return false
 	}
-	value, err := url.QueryUnescape(cookie.Value)
+	value, err := url.PathUnescape(cookie.Value)
 	if err != nil {
 		return false
 	}
@@ -133,6 +133,13 @@ func (s *Server) trackingAllowed(r *http.Request) bool {
 		Analytics bool `json:"analytics"`
 	}
 	return json.Unmarshal([]byte(value), &consent) == nil && consent.Analytics
+}
+
+type privacySignalContextKey struct{}
+
+func requestPrivacySignal(r *http.Request) string {
+	signal, _ := r.Context().Value(privacySignalContextKey{}).(string)
+	return signal
 }
 
 func (s *Server) trackingEnabled() bool {

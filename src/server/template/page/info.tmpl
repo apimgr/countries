@@ -32,10 +32,6 @@
         <dt>{{.HealthPage.TimestampLabel}}</dt><dd><time datetime="{{.HealthPage.Response.Timestamp.Format "2006-01-02T15:04:05Z07:00"}}">{{.HealthPage.TimestampText}}</time></dd>
       </dl>
     </section>
-    <section class="section-card" aria-labelledby="health-cluster">
-      <h2 id="health-cluster">{{.HealthPage.ClusterLabel}}</h2>
-      <p>{{.HealthPage.ClusterText}}</p>
-    </section>
     <section class="section-card" aria-labelledby="health-features">
       <h2 id="health-features">{{.HealthPage.FeaturesLabel}}</h2>
       <ul class="feature-list">
@@ -114,8 +110,10 @@
       <h3>{{t .Lang "help.mcp.verify_connection"}}</h3><div class="code-block"><pre><code>curl -q -LSsf -X POST "{{.MCP.URL}}" \
   -H "Authorization: Bearer $MCP_TOKEN" \
   -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"{{index .MCP.ProtocolVersions 0}}","capabilities":{},"clientInfo":{"name":"countries-cli","version":"{{.Version}}"}}}'</code></pre></div>
+  -H "MCP-Protocol-Version: {{index .MCP.ProtocolVersions 0}}" \
+  -H "Mcp-Method: tools/list" \
+  -H "Accept: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{},"_meta":{"io.modelcontextprotocol/protocolVersion":"{{index .MCP.ProtocolVersions 0}}"}}'</code></pre></div>
     </section>
     <section class="section-card" id="tools" aria-labelledby="mcp-tools"><h2 id="mcp-tools">{{t .Lang "help.mcp.tools_title"}}</h2>
       {{if .MCP.Tools}}<div class="table-wrapper"><table class="data-table"><caption>{{t .Lang "help.mcp.tools_caption"}}</caption><thead><tr><th scope="col">{{t .Lang "help.mcp.tool_name"}}</th><th scope="col">{{t .Lang "help.mcp.tool_description"}}</th></tr></thead><tbody>{{range .MCP.Tools}}<tr><td><code>{{.Name}}</code></td><td>{{markdownToHTML .Description}}</td></tr>{{end}}</tbody></table></div>{{else}}<p class="empty-state">{{t .Lang "help.mcp.no_tools"}}</p>{{end}}
@@ -206,14 +204,15 @@
       {{if .Text}}<p>{{.Text}}</p>{{end}}
       {{if .Bullets}}<ul>{{range .Bullets}}<li>{{.}}</li>{{end}}</ul>{{end}}
       {{end}}
-      {{if and (eq $.Path "/server/about") (eq .ID "about-attribution")}}<p><a href="https://db-ip.com/">IP Geolocation by DB-IP</a></p>{{end}}
       {{if and (eq $.Path "/server/about") (eq .ID "about-project")}}<p><a href="https://github.com/apimgr/countries">{{t $.Lang "about.repository"}}</a></p>{{end}}
     </section>
     {{end}}
     {{end}}
+    {{if and (eq .Path "/server/help") .HelpContent}}<section class="section-card" aria-labelledby="help-configured-content"><h2 id="help-configured-content">{{t .Lang "help.configured_content"}}</h2>{{.HelpContent}}</section>{{end}}
     {{if eq .Path "/server/help"}}<section class="section-card" aria-labelledby="more-help"><h2 id="more-help">{{t .Lang "help.more"}}</h2><ul class="hub-list">{{range .HelpPages}}<li class="hub-item"><a class="hub-link" href="{{path $.URLPrefix .Path}}"><span class="hub-title">{{t $.Lang .TitleKey}}</span><span class="hub-desc">{{t $.Lang .DescriptionKey}}</span></a></li>{{end}}</ul></section>{{end}}
     {{if eq .Path "/server/about"}}{{with operatorHTML .Request "about"}}<section class="section-card" aria-labelledby="about-operator-content"><h2 id="about-operator-content">{{t $.Lang "about.additional_information"}}</h2>{{.}}</section>{{end}}{{end}}
     {{if and (eq .Path "/server/terms") $termsContent}}<section class="section-card" aria-labelledby="terms-operator-content"><h2 id="terms-operator-content">{{t .Lang "terms.operator_content"}}</h2>{{$termsContent}}</section>{{end}}
+    {{if eq .Path "/server/about"}}<section class="section-card" aria-labelledby="about-attribution"><h2 id="about-attribution">{{t .Lang "about.additional_information"}}</h2><p><a href="https://db-ip.com/">IP Geolocation by DB-IP</a></p></section>{{end}}
     {{if and .Version (eq .Path "/server/about")}}<section class="section-card" aria-labelledby="about-version"><h2 id="about-version">{{t .Lang "about.version"}}</h2><p>{{.Version}}{{if .BuildDate}} · {{t .Lang "about.built"}} {{.BuildDate}}{{end}}</p></section>{{end}}
   </main>
 {{end}}

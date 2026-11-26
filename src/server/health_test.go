@@ -19,7 +19,7 @@ func TestHealthJSONFieldOrderAndRequiredKeys(t *testing.T) {
 	response := HealthResponse{
 		Project: HealthProjectInfo{Name: "Countries"}, Status: "healthy", Version: "1.2.3", GoVersion: "go1.test",
 		Build: HealthBuildInfo{Commit: "abc1234", Date: "2026-11-22T12:00:00Z"}, Uptime: "45s", Mode: "production",
-		Timestamp: time.Date(2026, time.November, 22, 12, 0, 0, 0, time.UTC), Cluster: HealthClusterInfo{},
+		Timestamp: time.Date(2026, time.November, 22, 12, 0, 0, 0, time.UTC), DBType: "sqlite", DBLocality: "local",
 		Features: HealthFeatures{Tor: HealthOverlayInfo{Status: "disabled"}, I2P: HealthI2PInfo{Status: "disabled", State: "disabled", Provider: "none"}},
 		Checks:   HealthChecks{Database: "ok", Cache: "ok", Disk: "ok", Scheduler: "ok", Datasets: []HealthCheck{{Key: "data_countries", Status: "ok"}}},
 		Stats:    HealthStats{RequestsTotal: 1, Requests24h: 1, ActiveConns: 1, Project: []HealthStatValue{{Key: "searches_total", Value: 2}}},
@@ -29,7 +29,7 @@ func TestHealthJSONFieldOrderAndRequiredKeys(t *testing.T) {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
 	text := string(body)
-	keys := []string{`"project"`, `"status"`, `"version"`, `"go_version"`, `"build"`, `"uptime"`, `"mode"`, `"timestamp"`, `"cluster"`, `"features"`, `"checks"`, `"stats"`}
+	keys := []string{`"project"`, `"status"`, `"version"`, `"go_version"`, `"build"`, `"uptime"`, `"mode"`, `"timestamp"`, `"features"`, `"checks"`, `"stats"`, `"db_type"`, `"db_locality"`}
 	previous := -1
 	for _, key := range keys {
 		index := strings.Index(text, key)
@@ -61,13 +61,13 @@ func TestHealthTextFormatsKeepMachineAndFrontendLayoutsSeparate(t *testing.T) {
 	response := HealthResponse{
 		Project: HealthProjectInfo{Name: "Countries", Tagline: "Reference data"}, Status: "healthy", Version: "1.2.3", GoVersion: "go1.test",
 		Build: HealthBuildInfo{Commit: "abc1234", Date: "2026-11-22T12:00:00Z"}, Uptime: "1d 1h", Mode: "production",
-		Timestamp: time.Date(2026, time.November, 22, 12, 0, 0, 0, time.UTC),
+		Timestamp: time.Date(2026, time.November, 22, 12, 0, 0, 0, time.UTC), DBType: "sqlite", DBLocality: "local",
 		Features:  HealthFeatures{Tor: HealthOverlayInfo{Status: "disabled"}, I2P: HealthI2PInfo{Status: "disabled", State: "disabled", Provider: "none"}},
 		Checks:    HealthChecks{Database: "ok", Cache: "ok", Disk: "ok", Scheduler: "ok"},
 		Stats:     HealthStats{RequestsTotal: 1234, Requests24h: 10, ActiveConns: 1},
 	}
 	apiText := response.apiText()
-	apiFields := []string{"project.name:", "status:", "version:", "go_version:", "build.commit:", "build.date:", "uptime:", "mode:", "timestamp:", "cluster.enabled:", "features.tor:", "features.i2p:", "features.geoip:", "checks.database:", "checks.cache:", "checks.disk:", "checks.scheduler:", "stats.requests_total:", "stats.requests_24h:", "stats.active_connections:"}
+	apiFields := []string{"project.name:", "status:", "version:", "go_version:", "build.commit:", "build.date:", "uptime:", "mode:", "timestamp:", "features.tor:", "features.i2p:", "features.geoip:", "checks.database:", "checks.cache:", "checks.disk:", "checks.scheduler:", "stats.requests_total:", "stats.requests_24h:", "stats.active_connections:", "db_type:", "db_locality:"}
 	previous := -1
 	for _, field := range apiFields {
 		index := strings.Index(apiText, field)

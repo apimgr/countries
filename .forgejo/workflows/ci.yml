@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
   schedule:
     # Weekly security run (Monday 06:00 UTC) — only security jobs run on schedule
     - cron: '0 6 * * 1'
@@ -37,7 +37,7 @@ jobs:
           path: /tmp/countries-go-cache
           key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
       - run: go vet ./...
-      - run: staticcheck ./...
+      - run: GOTOOLCHAIN=go1.26.4 staticcheck -checks=all ./...
 
   secret-scan:
     runs-on: ubuntu-26.04
@@ -162,26 +162,7 @@ jobs:
         run: |
           set -eu
           for image in local/scan-target:ci local/scan-target:devel; do
-            for command in bash curl tor i2pd tini; do
-              docker run --rm --entrypoint sh "$image" -c "command -v ${command} >/dev/null"
-            done
-            container="countries-image-check-$(date +%s)-$$"
-            trap 'docker rm --force "$container" >/dev/null 2>&1 || true' EXIT
-            docker run --detach --name "$container" "$image"
-            deadline=$(( $(date +%s) + 180 ))
-            while [ "$(date +%s)" -lt "$deadline" ]; do
-              if docker exec "$container" curl --fail --silent --header 'Accept: text/plain' http://127.0.0.1/server/healthz | grep -Fq 'features.tor: healthy'; then
-                docker rm --force "$container" >/dev/null
-                container=""
-                break
-              fi
-              sleep 5
-            done
-            if [ -n "$container" ]; then
-              docker logs "$container"
-              echo "Tor did not become healthy in $image within 180 seconds" >&2
-              exit 1
-            fi
+            bash .github/scripts/verify-container-image.sh "$image"
           done
       - name: Scan image (Trivy)
         if: hashFiles('docker/Dockerfile') != ''

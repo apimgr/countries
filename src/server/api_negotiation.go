@@ -35,7 +35,17 @@ func apiContentNegotiation(next http.Handler) http.Handler {
 			wantsText = isHTTPTool(r)
 		}
 		if !wantsText {
-			next.ServeHTTP(w, request)
+			recorder := httptest.NewRecorder()
+			next.ServeHTTP(recorder, request)
+			response := recorder.Result()
+			body, err := io.ReadAll(response.Body)
+			closeErr := response.Body.Close()
+			if err != nil || closeErr != nil {
+				http.Error(w, "ERROR: INTERNAL_ERROR: Unable to read response\n", http.StatusInternalServerError)
+				return
+			}
+			setAPIResponseCacheHeaders(response.Header, request, response.StatusCode)
+			copyAPIResponse(w, response, body)
 			return
 		}
 
@@ -52,6 +62,7 @@ func apiContentNegotiation(next http.Handler) http.Handler {
 			http.Error(w, "ERROR: INTERNAL_ERROR: Unable to read response\n", http.StatusInternalServerError)
 			return
 		}
+		setAPIResponseCacheHeaders(response.Header, request, response.StatusCode)
 		if response.StatusCode < http.StatusBadRequest && isMetricsAPIPath(request.URL.Path) {
 			copyAPIResponse(w, response, body)
 			return
@@ -71,6 +82,37 @@ func apiContentNegotiation(next http.Handler) http.Handler {
 		w.WriteHeader(response.StatusCode)
 		_, _ = w.Write(textBody)
 	})
+}
+
+func setAPIResponseCacheHeaders(header http.Header, r *http.Request, status int) {
+	if status >= http.StatusBadRequest {
+		header.Set("Cache-Control", "no-store")
+		return
+	}
+	if status >= http.StatusOK && status < http.StatusMultipleChoices &&
+		(r.Method == http.MethodGet || r.Method == http.MethodHead) && isPublicCountryDataAPIPath(r.URL.Path) &&
+		header.Get("Set-Cookie") == "" {
+		header.Set("Cache-Control", "public, max-age=60")
+		header.Set("Vary", "Accept-Language, Cookie")
+		return
+	}
+	header.Set("Cache-Control", "private, no-store")
+}
+
+func isPublicCountryDataAPIPath(path string) bool {
+	base := strings.TrimPrefix(path, api.APIBasePath())
+	if base == path {
+		return false
+	}
+	if strings.HasPrefix(base, "/countries/") {
+		return true
+	}
+	for _, route := range []string{"/countries", "/coordinates", "/nearby", "/stats", "/stats.txt", "/count", "/count.txt"} {
+		if base == route {
+			return true
+		}
+	}
+	return false
 }
 
 func isMCPRequestPath(path string) bool {

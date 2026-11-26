@@ -48,6 +48,9 @@ func (s Sender) Send(message Message) (resultErr error) {
 	if hasNewline(message.FromName) || hasNewline(message.FromEmail) || hasNewline(message.To) || hasNewline(message.ReplyTo) || hasNewline(message.Subject) || hasNewline(message.FQDN) {
 		return fmt.Errorf("email headers cannot contain CR or LF")
 	}
+	if strings.TrimSpace(message.FQDN) == "" {
+		return fmt.Errorf("a resolved FQDN is required for email")
+	}
 	from, err := mail.ParseAddress(message.FromEmail)
 	if err != nil || from.Address != message.FromEmail {
 		return fmt.Errorf("invalid sender address")
@@ -177,6 +180,9 @@ func formatMessage(message Message, envelopeFrom string) ([]byte, error) {
 	if hasNewline(message.FQDN) {
 		return nil, fmt.Errorf("email headers cannot contain CR or LF")
 	}
+	if strings.TrimSpace(message.FQDN) == "" {
+		return nil, fmt.Errorf("a resolved FQDN is required for email")
+	}
 	from, err := mail.ParseAddress((&mail.Address{Name: message.FromName, Address: envelopeFrom}).String())
 	if err != nil {
 		return nil, err
@@ -185,9 +191,6 @@ func formatMessage(message Message, envelopeFrom string) ([]byte, error) {
 		if parsed, err := mail.ParseAddress(message.ReplyTo); err != nil || parsed.Address != message.ReplyTo {
 			return nil, fmt.Errorf("invalid reply-to address")
 		}
-	}
-	if message.FQDN == "" {
-		message.FQDN = "localhost"
 	}
 	messageIDDomain, err := mail.ParseAddress("notification@" + message.FQDN)
 	if err != nil || messageIDDomain.Address != "notification@"+message.FQDN {
@@ -281,14 +284,28 @@ func RenderTemplate(template string, values map[string]string) (string, string, 
 		return "", "", fmt.Errorf("email template requires Subject and --- separator")
 	}
 	header := strings.TrimSuffix(template[:separator], "\r")
-	if !strings.HasPrefix(header, "Subject: ") {
+	headerSeparator := strings.IndexByte(header, ':')
+	if headerSeparator < 0 {
 		return "", "", fmt.Errorf("email template must begin with a Subject header")
 	}
-	subject := header[len("Subject: "):]
+	label := strings.TrimSpace(header[:headerSeparator])
+	subject := strings.TrimSpace(header[headerSeparator+1:])
+	if !isLocalizedSubjectLabel(label) || subject == "" {
+		return "", "", fmt.Errorf("email template must begin with a Subject header")
+	}
 	body := template[separator+5:]
 	for name, value := range values {
 		subject = strings.ReplaceAll(subject, "{"+name+"}", value)
 		body = strings.ReplaceAll(body, "{"+name+"}", value)
 	}
 	return subject, strings.TrimSpace(body), nil
+}
+
+func isLocalizedSubjectLabel(label string) bool {
+	switch label {
+	case "Subject", "Betreff", "Objet", "Asunto", "Oggetto", "主题", "件名", "الموضوع":
+		return true
+	default:
+		return false
+	}
 }

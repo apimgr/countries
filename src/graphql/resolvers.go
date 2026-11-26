@@ -2,6 +2,9 @@ package graphql
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -11,6 +14,49 @@ import (
 type queryResolver struct {
 	service *countries.Service
 	version string
+	reader  APIReader
+}
+
+type JSONScalar []byte
+
+func (JSONScalar) ImplementsGraphQLType(name string) bool { return name == "JSON" }
+
+func (value *JSONScalar) UnmarshalGraphQL(input interface{}) error {
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return err
+	}
+	*value = JSONScalar(encoded)
+	return nil
+}
+
+func (value JSONScalar) MarshalJSON() ([]byte, error) {
+	if !json.Valid(value) {
+		return nil, fmt.Errorf("invalid JSON scalar value")
+	}
+	return append([]byte(nil), value...), nil
+}
+
+func (q *queryResolver) Read(ctx context.Context, args struct{ Path string }) (JSONScalar, error) {
+	if q.reader == nil {
+		return nil, fmt.Errorf("GraphQL API reads are unavailable")
+	}
+	request := requestFromContext(ctx)
+	if request == nil {
+		return nil, fmt.Errorf("GraphQL request context is unavailable")
+	}
+	path, err := validateReadPath(args.Path)
+	if err != nil {
+		return nil, fmt.Errorf("path is not an allowlisted read-only API route")
+	}
+	result, err := q.reader(ctx, request, path)
+	if err != nil {
+		return nil, errors.New("API read failed")
+	}
+	if len(result) == 0 || !json.Valid(result) {
+		return nil, fmt.Errorf("API route did not return JSON")
+	}
+	return JSONScalar(append([]byte(nil), result...)), nil
 }
 
 type countryResolver struct {

@@ -10,6 +10,7 @@ import (
 //go:generate go run ./cmd/schema-gen
 
 type querySchema struct {
+	Read      struct{} `graphql:"read(path: String!): JSON!"`
 	Countries struct{} `graphql:"countries: [Country!]!"`
 	Country   struct{} `graphql:"country(code: String!): Country"`
 	Search    struct{} `graphql:"search(query: String, code: String, region: String, currency: String, language: String): [Country!]!"`
@@ -17,6 +18,8 @@ type querySchema struct {
 	Nearby    struct{} `graphql:"nearby(lat: Float!, lon: Float!, radiusKm: Float!): [CountryDistance!]!"`
 	Stats     struct{} `graphql:"stats: Stats!"`
 }
+
+var schemaScalars = []string{"JSON"}
 
 type countrySchema struct {
 	Name           struct{} `graphql:"name: CountryName!"`
@@ -83,6 +86,9 @@ var schemaTypes = []schemaType{
 // SchemaSDL returns the SDL generated from the graphql struct-tag annotations.
 func SchemaSDL() string {
 	var output strings.Builder
+	for _, scalar := range schemaScalars {
+		fmt.Fprintf(&output, "scalar %s\n\n", scalar)
+	}
 	for _, schema := range schemaTypes {
 		fmt.Fprintf(&output, "type %s {\n", schema.name)
 		for index := 0; index < schema.typeOf.NumField(); index++ {

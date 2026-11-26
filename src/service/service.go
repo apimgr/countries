@@ -3,13 +3,16 @@ package service
 
 import (
 	"bufio"
+	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/apimgr/countries/src/config"
 	"github.com/apimgr/countries/src/paths"
 	"github.com/apimgr/countries/src/privilege"
 	"io"
 	"os"
 	"os/exec"
+	osuser "os/user"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -153,6 +156,19 @@ func s6ScanDirIn(procDir string, readDir func(string) ([]os.DirEntry, error), re
 // Install installs the service for the detected service manager
 func Install() error {
 	serviceType := detectServiceManager()
+	if !privilege.IsElevated() {
+		switch runtime.GOOS {
+		case "linux":
+			if serviceType != ServiceSystemd {
+				return errors.New("unprivileged service installation requires a systemd user manager")
+			}
+			return installUserSystemd()
+		case "darwin":
+			return installUserLaunchAgent()
+		default:
+			return errors.New("unprivileged service installation is unsupported on this platform")
+		}
+	}
 
 	switch serviceType {
 	case ServiceSystemd:
@@ -174,6 +190,161 @@ func Install() error {
 	default:
 		return fmt.Errorf("unsupported service manager")
 	}
+}
+
+func isUserServiceMode() bool {
+	return !privilege.IsElevated() && (runtime.GOOS == "linux" || runtime.GOOS == "darwin")
+}
+
+func installUserSystemd() error {
+	unitDir, err := userSystemdUnitDirectory()
+	if err != nil {
+		return err
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve current executable: %w", err)
+	}
+	executable, err = filepath.EvalSymlinks(executable)
+	if err != nil {
+		return fmt.Errorf("resolve current executable path: %w", err)
+	}
+	if err := os.MkdirAll(unitDir, 0700); err != nil {
+		return fmt.Errorf("create user systemd unit directory: %w", err)
+	}
+	unitPath := filepath.Join(unitDir, appName+".service")
+	unit := fmt.Sprintf(`[Unit]
+Description=Countries API service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%s
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+`, executable)
+	if err := os.WriteFile(unitPath, []byte(unit), 0600); err != nil {
+		return fmt.Errorf("write user systemd unit: %w", err)
+	}
+	if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
+		return fmt.Errorf("reload user systemd manager: %w", err)
+	}
+	if err := exec.Command("systemctl", "--user", "enable", "--now", appName+".service").Run(); err != nil {
+		return fmt.Errorf("enable and start user service: %w", err)
+	}
+	return nil
+}
+
+func userSystemdUnitDirectory() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user home directory: %w", err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return "", errors.New("user home directory is empty")
+	}
+	return filepath.Join(home, ".config", "systemd", "user"), nil
+}
+
+func userLaunchAgentIdentity() (string, string, error) {
+	identity, err := osuser.Current()
+	if err != nil {
+		return "", "", fmt.Errorf("resolve current user: %w", err)
+	}
+	uid, err := strconv.Atoi(identity.Uid)
+	if err != nil || uid < 0 {
+		return "", "", errors.New("current user has an invalid UID")
+	}
+	return fmt.Sprintf("gui/%d", uid), "com." + orgName + "." + appName, nil
+}
+
+func userLaunchAgentPath() (string, string, string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", "", "", fmt.Errorf("resolve user home directory: %w", err)
+	}
+	domain, label, err := userLaunchAgentIdentity()
+	if err != nil {
+		return "", "", "", err
+	}
+	return domain, label, filepath.Join(home, "Library", "LaunchAgents", label+".plist"), nil
+}
+
+func uninstallUserLaunchAgent() error {
+	domain, label, path, err := userLaunchAgentPath()
+	if err != nil {
+		return err
+	}
+	if err := exec.Command("launchctl", "bootout", domain, path).Run(); err != nil {
+		return fmt.Errorf("stop user LaunchAgent: %w", err)
+	}
+	if err := exec.Command("launchctl", "disable", domain+"/"+label).Run(); err != nil {
+		return fmt.Errorf("disable user LaunchAgent: %w", err)
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove user LaunchAgent: %w", err)
+	}
+	return nil
+}
+
+func installUserLaunchAgent() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve user home directory: %w", err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return errors.New("user home directory is empty")
+	}
+	identity, err := osuser.Current()
+	if err != nil {
+		return fmt.Errorf("resolve current user: %w", err)
+	}
+	uid, err := strconv.Atoi(identity.Uid)
+	if err != nil || uid < 0 {
+		return errors.New("current user has an invalid UID")
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve current executable: %w", err)
+	}
+	executable, err = filepath.EvalSymlinks(executable)
+	if err != nil {
+		return fmt.Errorf("resolve current executable path: %w", err)
+	}
+	agentDir := filepath.Join(home, "Library", "LaunchAgents")
+	if err := os.MkdirAll(agentDir, 0700); err != nil {
+		return fmt.Errorf("create user LaunchAgents directory: %w", err)
+	}
+	label := "com." + orgName + "." + appName
+	plistPath := filepath.Join(agentDir, label+".plist")
+	var escapedExecutable strings.Builder
+	if err := xml.EscapeText(&escapedExecutable, []byte(executable)); err != nil {
+		return fmt.Errorf("encode executable path for launchd: %w", err)
+	}
+	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>%s</string>
+<key>ProgramArguments</key><array><string>%s</string></array>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><true/>
+</dict></plist>
+`, label, escapedExecutable.String())
+	if err := os.WriteFile(plistPath, []byte(plist), 0600); err != nil {
+		return fmt.Errorf("write user LaunchAgent: %w", err)
+	}
+	domain := fmt.Sprintf("gui/%d", uid)
+	if err := exec.Command("launchctl", "bootstrap", domain, plistPath).Run(); err != nil {
+		return fmt.Errorf("bootstrap user LaunchAgent: %w", err)
+	}
+	if err := exec.Command("launchctl", "enable", domain+"/"+label).Run(); err != nil {
+		return fmt.Errorf("enable user LaunchAgent: %w", err)
+	}
+	return exec.Command("launchctl", "kickstart", "-k", domain+"/"+label).Run()
 }
 
 // RecordServiceAccount stores root-owned ownership metadata for later uninstall.
@@ -233,6 +404,22 @@ func UninstallWithPaths(dirs UninstallPaths) error {
 	}
 	serviceType := detectServiceManager()
 	var err error
+	if isUserServiceMode() {
+		switch runtime.GOOS {
+		case "linux":
+			err = uninstallUserSystemd()
+		case "darwin":
+			err = uninstallUserLaunchAgent()
+		}
+		if err != nil {
+			return err
+		}
+		if err := removeServiceData(dirs); err != nil {
+			return err
+		}
+		fmt.Println("Service uninstalled. Delete binary manually if no longer needed.")
+		return nil
+	}
 
 	switch serviceType {
 	case ServiceSystemd:
@@ -264,8 +451,24 @@ func UninstallWithPaths(dirs UninstallPaths) error {
 	return nil
 }
 
+func uninstallUserSystemd() error {
+	if err := exec.Command("systemctl", "--user", "disable", "--now", appName+".service").Run(); err != nil {
+		return fmt.Errorf("disable user service: %w", err)
+	}
+	unitDir, err := userSystemdUnitDirectory()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(unitDir, appName+".service")); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove user systemd unit: %w", err)
+	}
+	return exec.Command("systemctl", "--user", "daemon-reload").Run()
+}
+
 func confirmUninstall(input io.Reader, output io.Writer) error {
-	fmt.Fprintln(output, "This will delete ALL data, configs, and the system user. Continue? [y/N]")
+	if _, err := fmt.Fprintln(output, "This will delete ALL data, configs, and the system user. Continue? [y/N]"); err != nil {
+		return err
+	}
 	answer, err := bufio.NewReader(input).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return err
@@ -342,8 +545,8 @@ func readCreatedIdentity(path string) (*privilege.Identity, error) {
 	}
 	uid, uidErr := strconv.Atoi(values[1])
 	gid, gidErr := strconv.Atoi(values[2])
-	userCreated, userErr := strconv.ParseBool(values[3])
-	groupCreated, groupErr := strconv.ParseBool(values[4])
+	userCreated, userErr := config.ParseBool(values[3], false)
+	groupCreated, groupErr := config.ParseBool(values[4], false)
 	if uidErr != nil || gidErr != nil || userErr != nil || groupErr != nil || (!userCreated && !groupCreated) || uid < 200 || uid != gid {
 		return nil, errors.New("invalid service account marker; refusing uninstall")
 	}
@@ -799,12 +1002,40 @@ func installWindows() error {
 	// Create service using sc.exe
 	displayName := "Countries API"
 	cmd := exec.Command("sc.exe", "create", appName,
-		"binPath=", binaryPath,
+		"binPath=", windowsServiceBinaryPath(binaryPath),
 		"DisplayName=", displayName,
+		"obj=", `NT SERVICE\`+appName,
+		"password=", "",
 		"start=", "auto")
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to create Windows service: %w", err)
+	}
+	rollback := func(cause error) error {
+		if removeErr := exec.Command("sc.exe", "delete", appName).Run(); removeErr != nil {
+			return errors.Join(cause, fmt.Errorf("remove partially installed Windows service: %w", removeErr))
+		}
+		return cause
+	}
+	configDir, dataDir, logsDir := paths.GetDefaultDirs(appName)
+	serviceDirs := []string{configDir, filepath.Join(configDir, "yaml.d"), filepath.Join(configDir, "ssl"), filepath.Join(configDir, "template"), dataDir, filepath.Join(dataDir, "db"), paths.GetCacheDir(appName), logsDir, paths.GetBackupDir(appName)}
+	for _, dir := range serviceDirs {
+		if strings.TrimSpace(dir) == "" {
+			return rollback(errors.New("windows service runtime directory is empty"))
+		}
+		if err := os.MkdirAll(dir, 0750); err != nil {
+			return rollback(fmt.Errorf("create Windows service directory %s: %w", dir, err))
+		}
+		grant := `NT SERVICE\` + appName + ":(OI)(CI)F"
+		if err := exec.Command("icacls.exe", dir, "/grant", grant, "/T").Run(); err != nil {
+			return rollback(fmt.Errorf("grant Windows service account access to %s: %w", dir, err))
+		}
+	}
+	if err := exec.Command("sc.exe", "description", appName, "Countries API service").Run(); err != nil {
+		return rollback(fmt.Errorf("set Windows service description: %w", err))
+	}
+	if err := exec.Command("sc.exe", "start", appName).Run(); err != nil {
+		return rollback(fmt.Errorf("start Windows service: %w", err))
 	}
 
 	fmt.Printf("✅ Windows service '%s' installed\n", appName)
@@ -815,10 +1046,15 @@ func installWindows() error {
 	return nil
 }
 
+func windowsServiceBinaryPath(binaryPath string) string {
+	return `"` + binaryPath + `"`
+}
+
 // uninstallWindows removes Windows service
 func uninstallWindows() error {
-	// Stop service
-	_ = exec.Command("sc.exe", "stop", appName).Run()
+	if err := stopWindowsServiceIfRunning(); err != nil {
+		return fmt.Errorf("stop Windows service before uninstall: %w", err)
+	}
 
 	// Delete service
 	if err := exec.Command("sc.exe", "delete", appName).Run(); err != nil {
@@ -827,6 +1063,35 @@ func uninstallWindows() error {
 
 	fmt.Printf("✅ Windows service '%s' uninstalled\n", appName)
 	return nil
+}
+
+func stopWindowsServiceIfRunning() error {
+	output, err := exec.Command("sc.exe", "query", appName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("query Windows service state: %w", err)
+	}
+	fields := strings.Fields(string(output))
+	for i := 0; i+2 < len(fields); i++ {
+		if fields[i] != "STATE" || fields[i+1] != ":" {
+			continue
+		}
+		state, parseErr := strconv.Atoi(fields[i+2])
+		if parseErr != nil {
+			return fmt.Errorf("parse Windows service state: %w", parseErr)
+		}
+		switch state {
+		case 1:
+			return nil
+		case 4:
+			if err := exec.Command("sc.exe", "stop", appName).Run(); err != nil {
+				return fmt.Errorf("stop running Windows service: %w", err)
+			}
+			return nil
+		default:
+			return fmt.Errorf("windows service is in transition state %d", state)
+		}
+	}
+	return errors.New("windows service query did not include a state")
 }
 
 // installBSDRC creates BSD rc.d script
@@ -931,6 +1196,16 @@ func copyExecutableToInstallPath(destination string) error {
 // Start starts the service
 func Start() error {
 	serviceType := detectServiceManager()
+	if isUserServiceMode() {
+		if runtime.GOOS == "linux" {
+			return exec.Command("systemctl", "--user", "start", appName+".service").Run()
+		}
+		domain, label, _, err := userLaunchAgentPath()
+		if err != nil {
+			return err
+		}
+		return exec.Command("launchctl", "kickstart", domain+"/"+label).Run()
+	}
 
 	switch serviceType {
 	case ServiceSystemd:
@@ -958,6 +1233,16 @@ func Start() error {
 // Stop stops the service
 func Stop() error {
 	serviceType := detectServiceManager()
+	if isUserServiceMode() {
+		if runtime.GOOS == "linux" {
+			return exec.Command("systemctl", "--user", "stop", appName+".service").Run()
+		}
+		domain, _, path, err := userLaunchAgentPath()
+		if err != nil {
+			return err
+		}
+		return exec.Command("launchctl", "bootout", domain, path).Run()
+	}
 
 	switch serviceType {
 	case ServiceSystemd:
@@ -985,6 +1270,16 @@ func Stop() error {
 // Restart restarts the service
 func Restart() error {
 	serviceType := detectServiceManager()
+	if isUserServiceMode() {
+		if runtime.GOOS == "linux" {
+			return exec.Command("systemctl", "--user", "restart", appName+".service").Run()
+		}
+		domain, label, _, err := userLaunchAgentPath()
+		if err != nil {
+			return err
+		}
+		return exec.Command("launchctl", "kickstart", "-k", domain+"/"+label).Run()
+	}
 
 	switch serviceType {
 	case ServiceSystemd:
@@ -1003,7 +1298,9 @@ func Restart() error {
 		}
 		return Start()
 	case ServiceWindows:
-		_ = exec.Command("sc.exe", "stop", appName).Run()
+		if err := stopWindowsServiceIfRunning(); err != nil {
+			return fmt.Errorf("stop Windows service before restart: %w", err)
+		}
 		return exec.Command("sc.exe", "start", appName).Run()
 	case ServiceBSDRC:
 		return exec.Command("service", appName, "restart").Run()
@@ -1015,6 +1312,9 @@ func Restart() error {
 // Reload sends reload signal to the service
 func Reload() error {
 	serviceType := detectServiceManager()
+	if isUserServiceMode() {
+		return Restart()
+	}
 
 	switch serviceType {
 	case ServiceSystemd:
@@ -1031,6 +1331,16 @@ func Reload() error {
 
 // Status reports service state through the detected platform manager.
 func Status() error {
+	if isUserServiceMode() {
+		if runtime.GOOS == "linux" {
+			return runServiceCommand("systemctl", "--user", "status", appName+".service")
+		}
+		domain, label, _, err := userLaunchAgentPath()
+		if err != nil {
+			return err
+		}
+		return runServiceCommand("launchctl", "print", domain+"/"+label)
+	}
 	switch detectServiceManager() {
 	case ServiceSystemd:
 		return runServiceCommand("systemctl", "status", appName)
@@ -1055,6 +1365,19 @@ func Status() error {
 
 // Disable prevents the service manager from starting the application automatically.
 func Disable() error {
+	if isUserServiceMode() {
+		if runtime.GOOS == "linux" {
+			return runServiceCommand("systemctl", "--user", "disable", "--now", appName+".service")
+		}
+		domain, label, path, err := userLaunchAgentPath()
+		if err != nil {
+			return err
+		}
+		if err := runServiceCommand("launchctl", "bootout", domain, path); err != nil {
+			return err
+		}
+		return runServiceCommand("launchctl", "disable", domain+"/"+label)
+	}
 	switch detectServiceManager() {
 	case ServiceSystemd:
 		if err := runServiceCommand("systemctl", "stop", appName); err != nil {

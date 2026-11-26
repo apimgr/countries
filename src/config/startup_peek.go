@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -23,7 +24,14 @@ type StartupSettings struct {
 func PeekStartupSettings(serverConfigPath string) StartupSettings {
 	settings := StartupSettings{PIDFile: true}
 	sources := make([]yamlConfigSource, 0)
-	appendStartupYAMLConfigSource(&sources, serverConfigPath, serverConfigPath)
+	startupConfigPath := serverConfigPath
+	if _, err := os.Stat(startupConfigPath); os.IsNotExist(err) && filepath.Ext(startupConfigPath) == ".yml" {
+		legacyPath := strings.TrimSuffix(startupConfigPath, ".yml") + ".yaml"
+		if _, legacyErr := os.Stat(legacyPath); legacyErr == nil {
+			startupConfigPath = legacyPath
+		}
+	}
+	appendStartupYAMLConfigSource(&sources, startupConfigPath, startupConfigPath)
 
 	dropInDirectory := filepath.Join(filepath.Dir(serverConfigPath), "yaml.d")
 	if info, err := os.Lstat(dropInDirectory); err == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
@@ -79,7 +87,14 @@ func PrepareStartupConfig(serverConfigPath string) error {
 	if err := ensurePrivateYAMLDirectory(dropInDirectory); err != nil {
 		return err
 	}
-	paths := []string{serverConfigPath}
+	startupConfigPath := serverConfigPath
+	if _, err := os.Stat(startupConfigPath); os.IsNotExist(err) && filepath.Ext(startupConfigPath) == ".yml" {
+		legacyPath := strings.TrimSuffix(startupConfigPath, ".yml") + ".yaml"
+		if _, legacyErr := os.Stat(legacyPath); legacyErr == nil {
+			startupConfigPath = legacyPath
+		}
+	}
+	paths := []string{startupConfigPath}
 	entries, err := os.ReadDir(dropInDirectory)
 	if err != nil {
 		return err

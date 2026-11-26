@@ -41,14 +41,15 @@ import (
 )
 
 var (
-	baseURL       string
-	artifactDir   string
-	serverLog     *os.File
-	serverCommand *exec.Cmd
-	allocatorCtx  context.Context
-	allocatorStop context.CancelFunc
-	browserRoot   context.Context
-	browserStop   context.CancelFunc
+	baseURL          string
+	artifactDir      string
+	serverLog        *os.File
+	serverCommand    *exec.Cmd
+	allocatorCtx     context.Context
+	allocatorStop    context.CancelFunc
+	browserRoot      context.Context
+	browserStop      context.CancelFunc
+	e2eOperatorToken string
 )
 
 func TestMain(m *testing.M) {
@@ -87,6 +88,22 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	tokenEntropy := make([]byte, 32)
+	if _, err := rand.Read(tokenEntropy); err != nil {
+		fmt.Fprintln(os.Stderr, "generate E2E operator token:", err)
+		os.Exit(2)
+	}
+	tokenCharacters := make([]byte, len(tokenEntropy))
+	for index, value := range tokenEntropy {
+		tokenCharacters[index] = alphabet[int(value)%len(alphabet)]
+	}
+	e2eOperatorToken = "adm_" + string(tokenCharacters)
+	secretsConfig := "server:\n  token: " + e2eOperatorToken + "\n"
+	if err := os.WriteFile(filepath.Join(artifactDir, "config", "secrets.yml"), []byte(secretsConfig), 0600); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	baseURL = configuredBaseURL
 	if baseURL == "" {
 		baseURL = "http://127.0.0.1:" + port
@@ -99,10 +116,10 @@ func TestMain(m *testing.M) {
 		os.Exit(2)
 	}
 	serverCommand = exec.Command(binary, "--address=0.0.0.0", "--port="+port,
-		"--config="+filepath.Join(artifactDir, "config"), "--data="+filepath.Join(artifactDir, "data"), "--log="+filepath.Join(artifactDir, "logs"), "--color=no")
+		"--config="+filepath.Join(artifactDir, "config"), "--data="+filepath.Join(artifactDir, "data"), "--log="+filepath.Join(artifactDir, "logs"), "--color=no", "--debug")
 	serverCommand.Env = make([]string, 0, len(os.Environ())+5)
 	for _, value := range os.Environ() {
-		if strings.HasPrefix(value, "CONFIG_DIR=") || strings.HasPrefix(value, "DATA_DIR=") || strings.HasPrefix(value, "CACHE_DIR=") || strings.HasPrefix(value, "LOG_DIR=") || strings.HasPrefix(value, "LOGS_DIR=") || strings.HasPrefix(value, "BACKUP_DIR=") || strings.HasPrefix(value, "SSL_CERT_FILE=") {
+		if strings.HasPrefix(value, "CONFIG_DIR=") || strings.HasPrefix(value, "DATA_DIR=") || strings.HasPrefix(value, "DATABASE_DIR=") || strings.HasPrefix(value, "CACHE_DIR=") || strings.HasPrefix(value, "LOG_DIR=") || strings.HasPrefix(value, "LOGS_DIR=") || strings.HasPrefix(value, "BACKUP_DIR=") || strings.HasPrefix(value, "SSL_CERT_FILE=") {
 			continue
 		}
 		serverCommand.Env = append(serverCommand.Env, value)
@@ -110,6 +127,7 @@ func TestMain(m *testing.M) {
 	serverCommand.Env = append(serverCommand.Env,
 		"CONFIG_DIR="+filepath.Join(artifactDir, "config"),
 		"DATA_DIR="+filepath.Join(artifactDir, "data"),
+		"DATABASE_DIR="+filepath.Join(artifactDir, "data", "db"),
 		"CACHE_DIR="+filepath.Join(artifactDir, "cache"),
 		"LOG_DIR="+filepath.Join(artifactDir, "logs"),
 		"BACKUP_DIR="+filepath.Join(artifactDir, "backup"),
@@ -249,40 +267,203 @@ func getHTML(client *http.Client, path string) (*http.Response, error) {
 
 func TestTier1InternalLinksAndAssets(t *testing.T) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	attribute := regexp.MustCompile(`(?:href|src)="([^"]+)"`)
+	serverOrigin, err := url.Parse(baseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attribute := regexp.MustCompile(`(?i)(?:href|src)=["']([^"']+)["']`)
+	queue := []string{"/"}
 	visited := make(map[string]bool)
-	for _, page := range pages {
-		response, err := getHTML(client, page.path)
+	for len(queue) > 0 {
+		path := queue[0]
+		queue = queue[1:]
+		if visited[path] {
+			continue
+		}
+		visited[path] = true
+		response, err := getHTML(client, path)
 		if err != nil {
-			t.Fatalf("GET %s: %v", page.path, err)
+			t.Fatalf("GET %s: %v", path, err)
 		}
 		body, readErr := io.ReadAll(response.Body)
 		_ = response.Body.Close()
 		if readErr != nil {
-			t.Fatalf("read %s: %v", page.path, readErr)
+			t.Fatalf("read %s: %v", path, readErr)
 		}
 		if response.StatusCode != http.StatusOK {
-			t.Fatalf("GET %s returned %d", page.path, response.StatusCode)
+			t.Fatalf("GET %s returned %d", path, response.StatusCode)
 		}
 		for _, match := range attribute.FindAllStringSubmatch(string(body), -1) {
 			resource := strings.TrimSpace(match[1])
-			if !strings.HasPrefix(resource, "/") || strings.HasPrefix(resource, "//") {
+			parsed, parseErr := url.Parse(resource)
+			if parseErr != nil || resource == "" {
 				continue
 			}
+			pageURL, baseErr := url.Parse(path)
+			if baseErr != nil {
+				t.Fatalf("parse crawl base %q: %v", path, baseErr)
+			}
+			currentPage := serverOrigin.ResolveReference(pageURL)
+			resolved := currentPage.ResolveReference(parsed)
+			if !strings.EqualFold(resolved.Scheme, serverOrigin.Scheme) || !strings.EqualFold(resolved.Host, serverOrigin.Host) {
+				continue
+			}
+			resolved.Fragment = ""
+			if resolved.Path == "" {
+				resolved.Path = "/"
+			}
+			resource = resolved.RequestURI()
 			if visited[resource] {
 				continue
 			}
-			visited[resource] = true
 			linkedResponse, err := client.Get(baseURL + resource)
 			if err != nil {
-				t.Errorf("GET linked resource %s from %s: %v", resource, page.path, err)
+				t.Errorf("GET linked resource %s from %s: %v", resource, path, err)
 				continue
 			}
+			linkedBody, linkedReadErr := io.ReadAll(linkedResponse.Body)
+			contentType := linkedResponse.Header.Get("Content-Type")
 			_ = linkedResponse.Body.Close()
+			if linkedReadErr != nil {
+				t.Errorf("read linked resource %s from %s: %v", resource, path, linkedReadErr)
+				continue
+			}
 			if linkedResponse.StatusCode >= http.StatusBadRequest {
-				t.Errorf("linked resource %s from %s returned %d", resource, page.path, linkedResponse.StatusCode)
+				t.Errorf("linked resource %s from %s returned %d", resource, path, linkedResponse.StatusCode)
+				continue
+			}
+			if strings.HasPrefix(contentType, "text/html") {
+				queue = append(queue, resource)
+			} else if linkedResponse.StatusCode != http.StatusOK {
+				t.Errorf("asset %s from %s returned %d, want 200", resource, path, linkedResponse.StatusCode)
+			} else if len(linkedBody) == 0 {
+				t.Errorf("asset %s from %s is empty", resource, path)
 			}
 		}
+	}
+}
+
+func TestTier2AllPagesWithoutJavaScript(t *testing.T) {
+	ctx := browserContext(t)
+	if _, err := chromedp.Run(ctx, disableScripts()); err != nil {
+		t.Fatal(err)
+	}
+	for _, page := range pages {
+		page := page
+		t.Run(page.path, func(t *testing.T) {
+			if err := chromedp.Do(ctx, chromedp.Navigate(baseURL+page.path), chromedp.WaitVisible("main#main-content")); err != nil {
+				t.Fatalf("navigate without JavaScript: %v", err)
+			}
+			text, err := chromedp.Run(ctx, chromedp.Text("main#main-content"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(text, page.content) {
+				t.Errorf("SSR content %q is missing without JavaScript", page.content)
+			}
+		})
+	}
+	assertBrowser404Page(t, ctx)
+	assertBrowser500Page(t, ctx)
+}
+
+func TestTier3AllPagesWithJavaScript(t *testing.T) {
+	ctx := browserContext(t)
+	var browserErrors []string
+	var browserErrorsMu sync.Mutex
+	requestURLs := make(map[network.RequestID]string)
+	requestTypes := make(map[network.RequestID]network.ResourceType)
+	if err := chromedp.Do(ctx,
+		protocolAction(log.Enable, cdp.Empty{}),
+		protocolAction(network.Enable, network.EnableParams{}),
+		protocolAction(runtime.Enable, cdp.Empty{}),
+	); err != nil {
+		t.Fatal(err)
+	}
+	listenTargetEvent(ctx, runtime.ExceptionThrown, func(entry runtime.EventExceptionThrown) {
+		appendBrowserError(&browserErrorsMu, &browserErrors, entry.ExceptionDetails.Text)
+	})
+	listenTargetEvent(ctx, log.EntryAdded, func(entry log.EventEntryAdded) {
+		if entry.Entry != nil && entry.Entry.Level == log.EntryLevelError {
+			appendBrowserError(&browserErrorsMu, &browserErrors, entry.Entry.Text)
+		}
+	})
+	listenTargetEvent(ctx, network.RequestWillBeSent, func(entry network.EventRequestWillBeSent) {
+		browserErrorsMu.Lock()
+		requestURLs[entry.RequestID] = entry.Request.URL
+		requestTypes[entry.RequestID] = entry.Type
+		browserErrorsMu.Unlock()
+	})
+	listenTargetEvent(ctx, network.LoadingFailed, func(entry network.EventLoadingFailed) {
+		browserErrorsMu.Lock()
+		requestURL := requestURLs[entry.RequestID]
+		requestType := requestTypes[entry.RequestID]
+		browserErrorsMu.Unlock()
+		if isFrontendAssetOrRequest(requestURL, requestType) {
+			appendBrowserError(&browserErrorsMu, &browserErrors, entry.ErrorText)
+		}
+	})
+	listenTargetEvent(ctx, network.ResponseReceived, func(entry network.EventResponseReceived) {
+		if entry.Response != nil && entry.Response.Status >= 400 && isFrontendAssetOrRequest(entry.Response.URL, entry.Type) {
+			appendBrowserError(&browserErrorsMu, &browserErrors, fmt.Sprintf("%s returned HTTP %d", entry.Response.URL, entry.Response.Status))
+		}
+	})
+	for _, page := range pages {
+		page := page
+		t.Run(page.path, func(t *testing.T) {
+			if err := chromedp.Do(ctx, chromedp.Navigate(baseURL+page.path), chromedp.WaitVisible("main#main-content")); err != nil {
+				t.Fatalf("navigate with JavaScript: %v", err)
+			}
+			text, err := chromedp.Run(ctx, chromedp.Text("main#main-content"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(text, page.content) {
+				t.Errorf("SSR content %q is missing with JavaScript", page.content)
+			}
+		})
+	}
+	assertBrowser404Page(t, ctx)
+	assertBrowser500Page(t, ctx)
+	browserErrorsMu.Lock()
+	defer browserErrorsMu.Unlock()
+	if len(browserErrors) > 0 {
+		t.Fatalf("browser console or request errors while visiting pages: %s", strings.Join(browserErrors, "; "))
+	}
+}
+
+func assertBrowser500Page(t *testing.T, ctx context.Context) {
+	t.Helper()
+	if err := chromedp.Do(ctx,
+		network.SetExtraHTTPHeaders(network.Headers{"Authorization": "Bearer " + e2eOperatorToken}),
+		chromedp.Navigate(baseURL+"/debug/error500"),
+		chromedp.WaitVisible("main#main-content"),
+	); err != nil {
+		t.Fatalf("render themed 500 page in browser: %v", err)
+	}
+	body, err := chromedp.Run(ctx, chromedp.OuterHTML("html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "The request could not be completed") || !strings.Contains(body, ">500<") {
+		t.Errorf("browser 500 page is not themed: %s", body)
+	}
+	if strings.Contains(strings.ToLower(body), "stack trace") || strings.Contains(body, "goroutine ") {
+		t.Errorf("browser 500 page leaked a stack trace: %s", body)
+	}
+}
+
+func assertBrowser404Page(t *testing.T, ctx context.Context) {
+	t.Helper()
+	if err := chromedp.Do(ctx, chromedp.Navigate(baseURL+"/not-a-real-page"), chromedp.WaitVisible("main#main-content")); err != nil {
+		t.Fatalf("render themed 404 page in browser: %v", err)
+	}
+	body, err := chromedp.Run(ctx, chromedp.OuterHTML("html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "Request error") || !strings.Contains(body, "The requested page was not found.") || !strings.Contains(body, ">404<") {
+		t.Errorf("browser 404 page is not themed: %s", body)
 	}
 }
 
@@ -323,9 +504,61 @@ func TestTier1SSRPages(t *testing.T) {
 	}
 }
 
+func TestTier1SSRAccessibility(t *testing.T) {
+	ctx := browserContext(t)
+	if _, err := chromedp.Run(ctx, disableScripts()); err != nil {
+		t.Fatal(err)
+	}
+	for _, page := range pages {
+		page := page
+		t.Run(page.path, func(t *testing.T) {
+			if err := chromedp.Do(ctx, chromedp.Navigate(baseURL+page.path), chromedp.WaitVisible("main#main-content")); err != nil {
+				t.Fatal(err)
+			}
+			issues, err := chromedp.Run(ctx, chromedp.Evaluate[[]string](`(() => {
+				const issues = [];
+				const ids = Array.from(document.querySelectorAll('[id]')).map(element => element.id);
+				if (new Set(ids).size !== ids.length) issues.push('duplicate id');
+				if (!document.documentElement.lang) issues.push('missing document language');
+				if (document.querySelectorAll('h1').length !== 1) issues.push('page must have exactly one h1');
+				if (!document.querySelector('a.skip-link[href="#main-content"]')) issues.push('missing skip-to-content link');
+				if (!document.querySelector('a.skip-link[href="#site-navigation"]')) issues.push('missing skip-to-navigation link');
+				if (!document.querySelector('header') || !document.querySelector('nav#site-navigation') || !document.querySelector('main#main-content') || !document.querySelector('footer')) issues.push('missing page landmark');
+				for (const image of document.querySelectorAll('img')) if (!image.hasAttribute('alt')) issues.push('image missing alt text: ' + (image.src || 'unknown'));
+				for (const control of document.querySelectorAll('input:not([type="hidden"]), select, textarea')) {
+					if (!control.labels?.length && !control.getAttribute('aria-label') && !control.getAttribute('aria-labelledby')) issues.push('form control has no associated label: ' + (control.id || control.name || control.tagName));
+				}
+				for (const button of document.querySelectorAll('button, [role="button"]')) {
+					if (!button.innerText.trim() && !button.getAttribute('aria-label') && !button.getAttribute('aria-labelledby')) issues.push('button has no accessible name');
+				}
+				for (const link of document.querySelectorAll('a[href]')) {
+					if (!link.innerText.trim() && !link.getAttribute('aria-label') && !link.getAttribute('aria-labelledby') && !link.querySelector('img[alt]')) issues.push('link has no accessible name: ' + link.href);
+				}
+				return issues;
+			})()`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(issues) > 0 {
+				t.Fatalf("accessibility issues: %s", strings.Join(issues, "; "))
+			}
+		})
+	}
+	if err := chromedp.Do(ctx, chromedp.Navigate(baseURL+"/"), chromedp.WaitVisible("main#main-content"), chromedp.KeyEvent(kb.Tab)); err != nil {
+		t.Fatalf("keyboard navigation to the skip link failed: %v", err)
+	}
+	focused, err := chromedp.Run(ctx, chromedp.Evaluate[bool](`document.activeElement.matches('a.skip-link[href="#main-content"]') && getComputedStyle(document.activeElement).transform !== 'none'`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !focused {
+		t.Fatal("the first Tab did not focus the visible skip-to-content link")
+	}
+}
+
 func TestTier1SSRAssetsNegotiationAndErrors(t *testing.T) {
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	for _, path := range []string{"/static/css/main.css", "/static/js/app.js", "/manifest.json", "/sw.js"} {
+	for _, path := range []string{"/static/css/common.css", "/static/css/components.css", "/static/css/public.css", "/static/js/app.js", "/manifest.json", "/sw.js"} {
 		response, err := client.Get(baseURL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -352,8 +585,30 @@ func TestTier1SSRAssetsNegotiationAndErrors(t *testing.T) {
 	}
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "<main") {
+	if response.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "<main") || !strings.Contains(string(body), "Request error") || !strings.Contains(string(body), "The requested page was not found.") {
 		t.Errorf("unknown route status=%d body=%q", response.StatusCode, body)
+	}
+
+	debugRequest, err := http.NewRequest(http.MethodGet, baseURL+"/debug/error500", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	debugRequest.Header.Set("Accept", "text/html")
+	debugRequest.Header.Set("Authorization", "Bearer "+e2eOperatorToken)
+	response, err = client.Do(debugRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusInternalServerError || !strings.Contains(response.Header.Get("Content-Type"), "text/html") {
+		t.Errorf("debug error page status=%d content-type=%q", response.StatusCode, response.Header.Get("Content-Type"))
+	}
+	if !strings.Contains(string(body), "<title>Request error") || !strings.Contains(string(body), "The request could not be completed") || !strings.Contains(string(body), "<main") || !strings.Contains(string(body), ">500<") {
+		t.Errorf("debug error page is not themed: %q", body)
+	}
+	if strings.Contains(strings.ToLower(string(body)), "stack trace") || strings.Contains(string(body), "goroutine ") {
+		t.Errorf("debug error page leaked a stack trace: %q", body)
 	}
 	request, _ := http.NewRequest(http.MethodGet, baseURL+"/api/v1/countries/search?q=Japan", nil)
 	request.Header.Set("Accept", "application/json")
@@ -583,6 +838,7 @@ func TestPreferenceSyncAPIUpdateWithoutCSRF(t *testing.T) {
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
+	request.AddCookie(&http.Cookie{Name: "cookie_consent", Value: url.PathEscape(`{"essential":true,"preferences":true}`)})
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -613,6 +869,7 @@ func TestPreferenceSyncAPIUpdateWithoutCSRF(t *testing.T) {
 	}
 	invalid.Header.Set("Content-Type", "application/json")
 	invalid.Header.Set("Accept", "application/json")
+	invalid.AddCookie(&http.Cookie{Name: "cookie_consent", Value: url.PathEscape(`{"essential":true,"preferences":true}`)})
 	response, err = client.Do(invalid)
 	if err != nil {
 		t.Fatal(err)
@@ -1040,8 +1297,8 @@ func TestTier2NoJSNativeFlows(t *testing.T) {
 	if _, err := chromedp.Run(ctx, disableScripts()); err != nil {
 		t.Fatal(err)
 	}
-	if err := declineOptionalCookies(ctx); err != nil {
-		t.Fatalf("dismiss consent banner without JavaScript: %v", err)
+	if err := acceptOptionalCookies(ctx); err != nil {
+		t.Fatalf("accept preference cookies without JavaScript: %v", err)
 	}
 	if err := chromedp.Do(ctx,
 		chromedp.Navigate(baseURL+"/search"),
@@ -1152,6 +1409,9 @@ func TestTier2OwnerTokenCreateAndRestoreWithoutJavaScript(t *testing.T) {
 	if _, err := chromedp.Run(secondContext, disableScripts()); err != nil {
 		t.Fatal(err)
 	}
+	if err := acceptOptionalCookies(secondContext); err != nil {
+		t.Fatalf("accept preference cookies before restoring owner token: %v", err)
+	}
 	if err := chromedp.Do(secondContext, chromedp.Navigate(baseURL+"/server/preferences/tokens"), chromedp.SendKeys("#primary-token", primary), chromedp.Click(`form[action="/server/preferences/token/restore"] button[type="submit"]`)); err != nil {
 		t.Fatalf("restore owner token without JavaScript: %v", err)
 	}
@@ -1214,6 +1474,7 @@ func TestTier3FullJSFlowsAndResponsiveShell(t *testing.T) {
 	var browserErrors []string
 	var browserErrorsMu sync.Mutex
 	requestURLs := make(map[network.RequestID]string)
+	requestTypes := make(map[network.RequestID]network.ResourceType)
 	if err := chromedp.Do(ctx,
 		protocolAction(log.Enable, cdp.Empty{}),
 		protocolAction(network.Enable, network.EnableParams{}),
@@ -1232,23 +1493,25 @@ func TestTier3FullJSFlowsAndResponsiveShell(t *testing.T) {
 	listenTargetEvent(ctx, network.RequestWillBeSent, func(entry network.EventRequestWillBeSent) {
 		browserErrorsMu.Lock()
 		requestURLs[entry.RequestID] = entry.Request.URL
+		requestTypes[entry.RequestID] = entry.Type
 		browserErrorsMu.Unlock()
 	})
 	listenTargetEvent(ctx, network.LoadingFailed, func(entry network.EventLoadingFailed) {
 		browserErrorsMu.Lock()
 		requestURL := requestURLs[entry.RequestID]
+		requestType := requestTypes[entry.RequestID]
 		browserErrorsMu.Unlock()
-		if strings.Contains(requestURL, "/static/") || strings.Contains(requestURL, "/api/") {
+		if isFrontendAssetOrRequest(requestURL, requestType) {
 			appendBrowserError(&browserErrorsMu, &browserErrors, entry.ErrorText)
 		}
 	})
 	listenTargetEvent(ctx, network.ResponseReceived, func(entry network.EventResponseReceived) {
-		if entry.Response != nil && entry.Response.Status >= 400 && (strings.Contains(entry.Response.URL, "/static/") || strings.Contains(entry.Response.URL, "/api/")) {
+		if entry.Response != nil && entry.Response.Status >= 400 && isFrontendAssetOrRequest(entry.Response.URL, entry.Type) {
 			appendBrowserError(&browserErrorsMu, &browserErrors, fmt.Sprintf("%s returned HTTP %d", entry.Response.URL, entry.Response.Status))
 		}
 	})
-	if err := declineOptionalCookies(ctx); err != nil {
-		t.Fatalf("dismiss consent banner before browser flows: %v", err)
+	if err := acceptOptionalCookies(ctx); err != nil {
+		t.Fatalf("accept preference cookies before browser flows: %v", err)
 	}
 	if err := chromedp.Do(ctx, chromedp.Navigate(baseURL+"/search"), chromedp.WaitVisible("#query"), chromedp.SetValue("#query", "Japan"), chromedp.Click(`#searchForm button[type="submit"]`), chromedp.WaitVisible("#results"), chromedp.WaitVisible("#resultsList .result-card")); err != nil {
 		t.Fatalf("JavaScript search failed: %v", err)
@@ -1263,7 +1526,7 @@ func TestTier3FullJSFlowsAndResponsiveShell(t *testing.T) {
 	if err := chromedp.Do(ctx, chromedp.Navigate(baseURL+"/coordinates"), chromedp.SetValue("#lat", "40.7128"), chromedp.SetValue("#lon", "-74.0060"), chromedp.Click(`#coordForm button[type="submit"]`), chromedp.WaitVisible("#resultCard .result-card")); err != nil {
 		t.Fatalf("JavaScript coordinate lookup failed: %v", err)
 	}
-	if err := chromedp.Do(ctx, chromedp.Navigate(baseURL+"/server/docs/graphql"), chromedp.SetValue("#graphql-query", `{ countries { name { common } cca2 } }`), chromedp.Submit("#graphql-form")); err != nil {
+	if err := chromedp.Do(ctx, chromedp.Navigate(baseURL+"/server/docs/graphql"), chromedp.WaitVisible(".graphiql-container"), chromedp.SetValue("#graphql-query", `{ countries { name { common } cca2 } }`), chromedp.Submit("#graphql-form")); err != nil {
 		t.Fatalf("JavaScript GraphQL explorer failed: %v", err)
 	}
 	text, err = chromedp.Run(ctx, chromedp.Text("#graphql-result"))
@@ -1340,6 +1603,26 @@ func TestTier3FullJSFlowsAndResponsiveShell(t *testing.T) {
 	}
 	if autoLightBackground != lightBackground {
 		t.Fatalf("automatic light scheme background=%q, want %q", autoLightBackground, lightBackground)
+	}
+	if err := chromedp.Do(ctx, chromedp.Navigate(baseURL+"/server/docs/graphql"), chromedp.WaitVisible(".graphiql-container")); err != nil {
+		t.Fatalf("automatic theme GraphiQL page failed: %v", err)
+	}
+	autoLightGraphiQLBase, err := chromedp.Run(ctx, chromedp.Evaluate[string](`getComputedStyle(document.querySelector('.graphiql-container')).getPropertyValue('--color-base').trim()`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if autoLightGraphiQLBase != "0.0, 0.0%, 100.0%" {
+		t.Fatalf("automatic light scheme GraphiQL base=%q, want white HSL", autoLightGraphiQLBase)
+	}
+	if _, err := chromedp.Run(ctx, emulateColorScheme("dark")); err != nil {
+		t.Fatal(err)
+	}
+	autoDarkGraphiQLBase, err := chromedp.Run(ctx, chromedp.Evaluate[string](`getComputedStyle(document.querySelector('.graphiql-container')).getPropertyValue('--color-base').trim()`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if autoDarkGraphiQLBase == autoLightGraphiQLBase {
+		t.Fatalf("automatic dark and light GraphiQL bases are identical: %q", autoLightGraphiQLBase)
 	}
 	lang, err := chromedp.Run(ctx, chromedp.Evaluate[string](`document.documentElement.lang`))
 	if err != nil {
@@ -1547,6 +1830,15 @@ func declineOptionalCookies(ctx context.Context) error {
 	)
 }
 
+func acceptOptionalCookies(ctx context.Context) error {
+	return chromedp.Do(ctx,
+		chromedp.Navigate(baseURL+"/"),
+		chromedp.WaitVisible(`form[action="/server/consent"]`),
+		chromedp.Click(`.cookie-buttons form:nth-of-type(2) button[type="submit"]`),
+		chromedp.WaitNotPresent(".cookie-banner"),
+	)
+}
+
 func listenTargetEvent[E any](ctx context.Context, event cdp.Event[E], handler func(E)) {
 	go func() {
 		for value, err := range chromedp.Events(ctx, event) {
@@ -1562,9 +1854,21 @@ func appendBrowserError(mu *sync.Mutex, errors *[]string, message string) {
 	if message == "" {
 		return
 	}
+	if strings.Contains(message, "Loading the font 'data:font/") && strings.Contains(message, `font-src 'self' https:`) {
+		return
+	}
 	mu.Lock()
 	*errors = append(*errors, message)
 	mu.Unlock()
+}
+
+func isFrontendAssetOrRequest(requestURL string, requestType network.ResourceType) bool {
+	switch requestType {
+	case network.ResourceTypeStylesheet, network.ResourceTypeScript, network.ResourceTypeImage, network.ResourceTypeFont, network.ResourceTypeXHR, network.ResourceTypeFetch:
+		return true
+	default:
+		return strings.Contains(requestURL, "/static/") || strings.Contains(requestURL, "/api/")
+	}
 }
 
 func protocolAction[P any](command cdp.Command[P, cdp.Empty], params P) chromedp.Action[chromedp.Void] {

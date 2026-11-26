@@ -79,9 +79,9 @@
                         <span class="code-lang">{{t .Lang "server.page.home.example_get_all"}}</span>
                     </div>
                     <div class="code-content">
-                        <pre><code>curl "{{.BaseURL}}{{.APIBasePath}}/countries"</code></pre>
+                        <pre><code>curl -q -LSsf "{{.BaseURL}}{{.APIBasePath}}/countries"</code></pre>
                     </div>
-                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl {{.BaseURL}}{{.APIBasePath}}/countries" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
+                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl -q -LSsf {{.BaseURL}}{{.APIBasePath}}/countries" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
                 </div>
 
                 <div class="code-block api-example">
@@ -89,9 +89,9 @@
                         <span class="code-lang">{{t .Lang "server.page.home.example_search"}}</span>
                     </div>
                     <div class="code-content">
-                        <pre><code>curl "{{.BaseURL}}{{.APIBasePath}}/countries/search?q=united"</code></pre>
+                        <pre><code>curl -q -LSsf "{{.BaseURL}}{{.APIBasePath}}/countries/search?q=united"</code></pre>
                     </div>
-                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl {{.BaseURL}}{{.APIBasePath}}/countries/search?q=united" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
+                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl -q -LSsf {{.BaseURL}}{{.APIBasePath}}/countries/search?q=united" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
                 </div>
 
                 <div class="code-block api-example">
@@ -99,9 +99,9 @@
                         <span class="code-lang">{{t .Lang "server.page.home.example_get_by_code"}}</span>
                     </div>
                     <div class="code-content">
-                        <pre><code>curl "{{.BaseURL}}{{.APIBasePath}}/countries/US"</code></pre>
+                        <pre><code>curl -q -LSsf "{{.BaseURL}}{{.APIBasePath}}/countries/US"</code></pre>
                     </div>
-                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl {{.BaseURL}}{{.APIBasePath}}/countries/US" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
+                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl -q -LSsf {{.BaseURL}}{{.APIBasePath}}/countries/US" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
                 </div>
 
                 <div class="code-block api-example">
@@ -109,9 +109,9 @@
                         <span class="code-lang">{{t .Lang "server.page.home.example_nearest"}}</span>
                     </div>
                     <div class="code-content">
-                        <pre><code>curl "{{.BaseURL}}{{.APIBasePath}}/coordinates?lat=40.71&amp;lon=-74.01"</code></pre>
+                        <pre><code>curl -q -LSsf "{{.BaseURL}}{{.APIBasePath}}/coordinates?lat=40.71&amp;lon=-74.01"</code></pre>
                     </div>
-                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl {{.BaseURL}}{{.APIBasePath}}/coordinates?lat=40.71&amp;lon=-74.01" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
+                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl -q -LSsf {{.BaseURL}}{{.APIBasePath}}/coordinates?lat=40.71&amp;lon=-74.01" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
                 </div>
 
                 <div class="code-block api-example">
@@ -119,9 +119,9 @@
                         <span class="code-lang">{{t .Lang "server.page.home.example_list"}}</span>
                     </div>
                     <div class="code-content">
-                        <pre><code>curl "{{.BaseURL}}{{.APIBasePath}}/countries"</code></pre>
+                        <pre><code>curl -q -LSsf "{{.BaseURL}}{{.APIBasePath}}/countries"</code></pre>
                     </div>
-                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl {{.BaseURL}}{{.APIBasePath}}/countries" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
+                    <button class="copy-btn btn btn-secondary" type="button" data-copy="curl -q -LSsf {{.BaseURL}}{{.APIBasePath}}/countries" data-copied-label="{{t .Lang "tokens.copied"}}" aria-label="{{t .Lang "preferences.copy"}}"><span class="copy-icon" aria-hidden="true">📋</span><span class="copy-text" aria-live="polite">{{t .Lang "preferences.copy"}}</span></button>
                 </div>
             </div>
         </section>

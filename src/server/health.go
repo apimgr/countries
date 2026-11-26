@@ -17,20 +17,37 @@ import (
 )
 
 type HealthResponse struct {
-	Project        HealthProjectInfo `json:"project"`
-	Status         string            `json:"status"`
-	PendingRestart bool              `json:"pending_restart,omitempty"`
-	RestartReason  []string          `json:"restart_reason,omitempty"`
-	Version        string            `json:"version"`
-	GoVersion      string            `json:"go_version"`
-	Build          HealthBuildInfo   `json:"build"`
-	Uptime         string            `json:"uptime"`
-	Mode           string            `json:"mode"`
-	Timestamp      time.Time         `json:"timestamp"`
-	Cluster        HealthClusterInfo `json:"cluster"`
-	Features       HealthFeatures    `json:"features"`
-	Checks         HealthChecks      `json:"checks"`
-	Stats          HealthStats       `json:"stats"`
+	Project        HealthProjectInfo  `json:"project"`
+	Status         string             `json:"status"`
+	PendingRestart bool               `json:"pending_restart,omitempty"`
+	RestartReason  []string           `json:"restart_reason,omitempty"`
+	Version        string             `json:"version"`
+	GoVersion      string             `json:"go_version"`
+	Build          HealthBuildInfo    `json:"build"`
+	Uptime         string             `json:"uptime"`
+	Mode           string             `json:"mode"`
+	Timestamp      time.Time          `json:"timestamp"`
+	Features       HealthFeatures     `json:"features"`
+	Checks         HealthChecks       `json:"checks"`
+	Stats          HealthStats        `json:"stats"`
+	DBType         string             `json:"db_type"`
+	DBLocality     string             `json:"db_locality"`
+	Maintenance    *HealthMaintenance `json:"maintenance,omitempty"`
+}
+
+type HealthMaintenance struct {
+	Reason      string                  `json:"reason"`
+	Message     string                  `json:"message"`
+	Since       time.Time               `json:"since"`
+	SelfHealing HealthSelfHealingStatus `json:"self_healing"`
+}
+
+type HealthSelfHealingStatus struct {
+	Enabled     bool       `json:"enabled"`
+	Exhausted   bool       `json:"exhausted"`
+	Attempts    int        `json:"attempts"`
+	LastAttempt *time.Time `json:"last_attempt"`
+	NextAttempt *time.Time `json:"next_attempt"`
 }
 
 type HealthProjectInfo struct {
@@ -42,10 +59,6 @@ type HealthProjectInfo struct {
 type HealthBuildInfo struct {
 	Commit string `json:"commit"`
 	Date   string `json:"date"`
-}
-
-type HealthClusterInfo struct {
-	Enabled bool `json:"enabled"`
 }
 
 type HealthFeatures struct {
@@ -148,7 +161,6 @@ type healthTemplateData struct {
 	UptimeText             string
 	TimestampText          string
 	BuildDateText          string
-	ClusterText            string
 	VersionLabel           string
 	GoVersionLabel         string
 	BuildLabel             string
@@ -156,7 +168,6 @@ type healthTemplateData struct {
 	ModeLabel              string
 	ModeText               string
 	TimestampLabel         string
-	ClusterLabel           string
 	RuntimeLabel           string
 	FeaturesLabel          string
 	ChecksLabel            string
@@ -205,7 +216,6 @@ func newHealthTemplateData(response HealthResponse, lang string) healthTemplateD
 		RestartNotice:          healthLabel(lang, "health.pending_restart", "A restart is required for the changed settings."),
 		UptimeText:             humanHealthUptimeForLang(response.Uptime, lang),
 		TimestampText:          humanHealthTimestamp(response.Timestamp),
-		ClusterText:            localizedEnabled(lang, response.Cluster.Enabled),
 		ModeText:               healthLabel(lang, "health.mode."+response.Mode, humanizeHealthWord(response.Mode)),
 		VersionLabel:           labels("health.label.version", "Version"),
 		GoVersionLabel:         labels("health.label.go_version", "Go version"),
@@ -213,7 +223,6 @@ func newHealthTemplateData(response HealthResponse, lang string) healthTemplateD
 		UptimeLabel:            labels("health.label.uptime", "Uptime"),
 		ModeLabel:              labels("health.label.mode", "Mode"),
 		TimestampLabel:         labels("health.label.checked", "Checked"),
-		ClusterLabel:           labels("health.section.cluster", "Cluster"),
 		RuntimeLabel:           labels("health.section.runtime", "Runtime"),
 		FeaturesLabel:          labels("health.section.features", "Features"),
 		ChecksLabel:            labels("health.section.checks", "Component Status"),
@@ -482,6 +491,15 @@ func (s *Server) buildHealthResponse() HealthResponse {
 	if version == "" {
 		version = "dev"
 	}
+	dbType := strings.ToLower(strings.TrimSpace(s.config.Server.Database.Driver))
+	if dbType == "" || dbType == "sqlite2" || dbType == "sqlite3" {
+		dbType = "sqlite"
+	}
+	dbLocality := "local"
+	if dbType == "libsql" || dbType == "turso" {
+		dbType = "libsql"
+		dbLocality = "remote"
+	}
 	modeName := string(mode.Get())
 	if modeName != "production" && modeName != "development" && modeName != "debug" {
 		modeName = "production"
@@ -519,6 +537,39 @@ func (s *Server) buildHealthResponse() HealthResponse {
 		}
 	}
 	checks := HealthChecks{Database: databaseStatus, Cache: cacheStatus, Disk: diskStatus, Scheduler: schedulerStatus, Tor: torCheck, I2P: i2pCheck, Datasets: datasets}
+	var maintenance *HealthMaintenance
+	if s.maintenance.Load() {
+		s.maintenanceMu.RLock()
+		reason, since, lastAttempt, attempts, exhausted := s.maintenanceReason, s.maintenanceSince, s.maintenanceLastAttempt, s.maintenanceAttempts, s.maintenanceExhausted
+		s.maintenanceMu.RUnlock()
+		if reason == "" {
+			reason = "database_connection"
+		}
+		if since.IsZero() {
+			since = now
+		}
+		interval, err := time.ParseDuration(s.config.Server.Maintenance.SelfHealing.RetryInterval)
+		if err != nil || interval <= 0 {
+			interval = 30 * time.Second
+		}
+		var next *time.Time
+		var last *time.Time
+		if !lastAttempt.IsZero() {
+			value := lastAttempt
+			last = &value
+		}
+		if !exhausted {
+			value := lastAttempt.Add(interval)
+			if lastAttempt.IsZero() {
+				value = now.Add(interval)
+			}
+			next = &value
+		}
+		maintenance = &HealthMaintenance{
+			Reason: reason, Message: "Server is in read-only maintenance mode", Since: since,
+			SelfHealing: HealthSelfHealingStatus{Enabled: !exhausted, Exhausted: exhausted, Attempts: attempts, LastAttempt: last, NextAttempt: next},
+		}
+	}
 	stats := HealthStats{ActiveConns: 1}
 	if s.healthStore != nil {
 		stored := s.healthStore.Stats(now)
@@ -533,13 +584,13 @@ func (s *Server) buildHealthResponse() HealthResponse {
 		Project: HealthProjectInfo{Name: s.config.Server.Branding.Title, Tagline: s.config.Server.Branding.Tagline, Description: s.config.Server.Branding.Description},
 		Status:  status, PendingRestart: pendingRestart, RestartReason: restartReasons, Version: version, GoVersion: runtime.Version(),
 		Build: HealthBuildInfo{Commit: commit, Date: buildDate}, Uptime: compactHealthUptime(now.Sub(started)),
-		Mode: modeName, Timestamp: now, Cluster: HealthClusterInfo{Enabled: false},
+		Mode: modeName, Timestamp: now,
 		Features: HealthFeatures{
 			Tor:   torInfo,
 			I2P:   i2pInfo,
 			GeoIP: s.config.Server.GeoIP.Enabled,
 		},
-		Checks: checks, Stats: stats,
+		Checks: checks, Stats: stats, DBType: dbType, DBLocality: dbLocality, Maintenance: maintenance,
 	}
 }
 
@@ -749,7 +800,7 @@ func (h HealthResponse) apiText() string {
 		}
 	}
 	fmt.Fprintf(&output, "version: %s\ngo_version: %s\nbuild.commit: %s\nbuild.date: %s\n", h.Version, h.GoVersion, h.Build.Commit, h.Build.Date)
-	fmt.Fprintf(&output, "uptime: %s\nmode: %s\ntimestamp: %s\ncluster.enabled: %t\n", h.Uptime, h.Mode, h.Timestamp.UTC().Format(time.RFC3339), h.Cluster.Enabled)
+	fmt.Fprintf(&output, "uptime: %s\nmode: %s\ntimestamp: %s\n", h.Uptime, h.Mode, h.Timestamp.UTC().Format(time.RFC3339))
 	fmt.Fprintf(&output, "features.tor: %s\nfeatures.i2p: %s\nfeatures.geoip: %s\n", overlayText(h.Features.Tor.Status, h.Features.Tor.Hostname), i2pText(h.Features.I2P), enabledText(h.Features.GeoIP))
 	fmt.Fprintf(&output, "checks.database: %s\nchecks.cache: %s\nchecks.disk: %s\nchecks.scheduler: %s\n", h.Checks.Database, h.Checks.Cache, h.Checks.Disk, h.Checks.Scheduler)
 	if h.Checks.Tor != "" {
@@ -765,6 +816,7 @@ func (h HealthResponse) apiText() string {
 	for _, stat := range h.Stats.Project {
 		fmt.Fprintf(&output, "stats.%s: %d\n", stat.Key, stat.Value)
 	}
+	fmt.Fprintf(&output, "db_type: %s\ndb_locality: %s\n", h.DBType, h.DBLocality)
 	return output.String()
 }
 
@@ -788,7 +840,6 @@ func (h HealthResponse) frontendText(lang string) string {
 		fmt.Fprintf(&output, "%s:     %s (%s)\n", healthLabel(lang, "health.label.build", "Build"), h.Build.Commit, date)
 	}
 	fmt.Fprintf(&output, "%s:      %s\n%s:    %s\n%s:       %s\n%s:      %s\n", healthLabel(lang, "health.label.go_version", "Go"), h.GoVersion, healthLabel(lang, "health.label.uptime", "Uptime"), humanHealthUptimeForLang(h.Uptime, lang), healthLabel(lang, "health.label.mode", "Mode"), healthLabel(lang, "health.mode."+h.Mode, humanizeHealthWord(h.Mode)), healthLabel(lang, "health.label.checked", "Checked"), humanHealthTimestamp(h.Timestamp))
-	fmt.Fprintf(&output, "%s:   %s\n\n", healthLabel(lang, "health.section.cluster", "Cluster"), localizedEnabled(lang, h.Cluster.Enabled))
 	fmt.Fprintf(&output, "%s\n  %s: %s\n  %s: %s\n  %s: %s\n\n", healthLabel(lang, "health.section.features", "Features"), healthLabel(lang, "health.feature.tor", "Tor"), localizedOverlayText(lang, h.Features.Tor.Status, h.Features.Tor.Hostname), healthLabel(lang, "health.feature.i2p", "I2P"), localizedI2PText(lang, h.Features.I2P), healthLabel(lang, "health.feature.geoip", "GeoIP"), localizedEnabled(lang, h.Features.GeoIP))
 	fmt.Fprintf(&output, "%s\n", healthLabel(lang, "health.section.checks", "Checks"))
 	for _, check := range h.Checks.ordered() {

@@ -227,7 +227,7 @@ func (m *Manager) EnsureCertificate(ctx context.Context, domains []string) error
 }
 
 // RenewManagedCertificate renews the app-managed certificate once it is
-// within seven days of expiration. System and user-managed certificates are
+// within 30 days of expiration. System and user-managed certificates are
 // deliberately left untouched.
 func (m *Manager) RenewManagedCertificate(ctx context.Context, domains []string) error {
 	if !m.config.Enabled || !m.config.LetsEncrypt.Enabled {
@@ -262,7 +262,7 @@ func (m *Manager) RenewManagedCertificate(ctx context.Context, domains []string)
 	if err != nil {
 		return fmt.Errorf("parse managed certificate: %w", err)
 	}
-	if time.Until(leaf.NotAfter) > 7*24*time.Hour {
+	if time.Until(leaf.NotAfter) > 30*24*time.Hour {
 		return nil
 	}
 	m.issueMu.Lock()

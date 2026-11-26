@@ -7,6 +7,7 @@
     <header class="page-header">
       <h1 class="page-title">{{t .Lang "preferences.title"}}</h1>
       <p class="page-lead">{{t .Lang "preferences.description"}}</p>
+      {{if .PrivacySignal}}<p class="notice" role="status">{{if eq .PrivacySignal "dnt"}}{{t .Lang "preferences.privacy_signal_dnt"}}{{else}}{{t .Lang "preferences.privacy_signal"}}{{end}}</p>{{end}}
     </header>
     <form method="post" action="{{path .URLPrefix "/server/preferences"}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -37,7 +38,7 @@
         <legend>{{t .Lang "preferences.privacy"}}</legend>
         <input type="hidden" name="consent_form" value="1">
         <label><input type="checkbox" checked disabled> {{t .Lang "preferences.essential"}}</label>
-        <label><input type="checkbox" name="consent_preferences" {{if .ConsentPreferences}}checked{{end}}> {{t .Lang "preferences.preference_cookies"}}</label>
+        <label id="consent-preferences"><input type="checkbox" name="consent_preferences" {{if .ConsentPreferences}}checked{{end}}> {{t .Lang "preferences.preference_cookies"}}</label>
         <label><input type="checkbox" name="consent_analytics" {{if .ConsentAnalytics}}checked{{end}}> {{t .Lang "preferences.analytics_cookies"}}</label>
         {{if .ShowCCPA}}<label><input type="checkbox" name="ccpa_opt_out" {{if .CCPAOptOut}}checked{{end}}> {{t .Lang "preferences.ccpa"}}</label>{{end}}
       </fieldset>

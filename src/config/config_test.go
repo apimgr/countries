@@ -3,10 +3,12 @@ package config
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"log"
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -37,6 +39,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.Database.Driver != "sqlite" || cfg.Server.Database.URL != "{data_dir}/db/server.db" {
 		t.Errorf("Server.Database = %+v, want SQLite at the data directory", cfg.Server.Database)
 	}
+	if task := cfg.Server.Scheduler.Tasks["database_check"]; !task.Enabled || task.Schedule != "@every 1m" {
+		t.Errorf("database_check scheduler defaults = %+v", task)
+	}
 	if cfg.Server.FQDN != "localhost" {
 		t.Errorf("Server.FQDN = %q, want localhost", cfg.Server.FQDN)
 	}
@@ -45,6 +50,12 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.Server.Address != "::" {
 		t.Errorf("Server.Address = %q, want ::", cfg.Server.Address)
+	}
+	if cfg.Server.Tor.Expose || cfg.Server.Tor.ContactEmail != "" || cfg.Server.I2P.Expose {
+		t.Errorf("overlay advertisement defaults = Tor %+v, I2P %+v; want private addresses by default", cfg.Server.Tor, cfg.Server.I2P)
+	}
+	if cfg.Server.Maintenance.SelfHealing.RetryInterval != "30s" || cfg.Server.Maintenance.SelfHealing.MaxAttempts != 0 {
+		t.Errorf("self-healing defaults = %+v, want unlimited retries every 30s", cfg.Server.Maintenance.SelfHealing)
 	}
 	if cfg.Server.Mode != "production" {
 		t.Errorf("Server.Mode = %q, want production", cfg.Server.Mode)
@@ -64,6 +75,9 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if !notifications.DiskLow.Enabled || notifications.DiskLow.ThresholdPercent != 85 || notifications.DiskLow.CheckInterval != "5m" || notifications.DiskLow.Repeat != "24h" {
 		t.Errorf("disk-low defaults = %+v", notifications.DiskLow)
+	}
+	if !notifications.DatabaseError.Enabled || notifications.DatabaseError.Failures != 3 || notifications.DatabaseError.CheckInterval != "1m" || notifications.DatabaseError.Repeat != "24h" {
+		t.Errorf("database-error defaults = %+v", notifications.DatabaseError)
 	}
 	if cfg.Server.Tokens.MaxLinked != 25 || cfg.Server.Tokens.CookieMaxAge != "1y" || cfg.Server.Tokens.IdlePurgeDays != 0 {
 		t.Errorf("token defaults = %+v, want 25 linked tokens, 1y cookie, and no idle purge", cfg.Server.Tokens)
@@ -95,14 +109,157 @@ func TestDefaultConfig(t *testing.T) {
 	if len(cfg.WebRobots.Deny) != 1 || cfg.WebRobots.Deny[0] != "/debug" {
 		t.Errorf("WebRobots.Deny = %v, want [/debug]", cfg.WebRobots.Deny)
 	}
-	if cfg.WebSecurity.CORS != "*" {
-		t.Errorf("WebSecurity.CORS = %q, want *", cfg.WebSecurity.CORS)
+	if len(cfg.Server.CORS.AllowedOrigins) != 1 || cfg.Server.CORS.AllowedOrigins[0] != "*" || !cfg.Server.CORS.AllowCredentials || cfg.Server.CORS.MaxAge != 86400 {
+		t.Errorf("server.cors defaults = %+v, want wildcard, credentials enabled, max_age 86400", cfg.Server.CORS)
+	}
+	if !cfg.Server.Notifications.Email.Events.UpdateFailed || !cfg.Server.Notifications.Email.Events.UpdateStaged {
+		t.Error("update_failed and update_staged email events should default to enabled")
 	}
 	if !strings.Contains(cfg.Server.Pages.Help.MCP, "getCountries") || !strings.Contains(cfg.Server.Pages.Help.MCP, "Example prompts") {
 		t.Errorf("server.pages.help.mcp default is missing project tools or prompts: %q", cfg.Server.Pages.Help.MCP)
 	}
 	if !cfg.Web.Headers.ClearSiteData.OnTokenRevocation || !cfg.Web.Headers.ClearSiteData.OnConsentWithdrawal || cfg.Web.Headers.ClearSiteData.ExecutionContexts {
 		t.Errorf("Clear-Site-Data defaults = %+v", cfg.Web.Headers.ClearSiteData)
+	}
+}
+
+func TestConfiguredConnectionHelpers(t *testing.T) {
+	for input, want := range map[string]string{"": "sqlite", " sqlite3 ": "sqlite", "TURSO": "libsql", "custom": "custom"} {
+		if got := normalizeConfiguredDatabaseDriver(input); got != want {
+			t.Errorf("normalizeConfiguredDatabaseDriver(%q) = %q, want %q", input, got, want)
+		}
+	}
+	for input, want := range map[string]string{"libsql://db.example": "libsql", "https://db.example": "https", "file:./server.db": "file", "server.db": ""} {
+		if got := connectionURLScheme(input); got != want {
+			t.Errorf("connectionURLScheme(%q) = %q, want %q", input, got, want)
+		}
+	}
+	for input, want := range map[string]bool{
+		"redis://user:password@cache.example":  true,
+		"libsql://db.example?authToken=secret": true,
+		"libsql://db.example?jwt=secret":       true,
+		"libsql://db.example":                  false,
+		"broken?password=secret":               true,
+	} {
+		if got := connectionURLHasCredentials(input); got != want {
+			t.Errorf("connectionURLHasCredentials(%q) = %t, want %t", input, got, want)
+		}
+	}
+}
+
+func TestPersistConnectionSeeds(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "server.yml")
+	if err := os.WriteFile(configPath, []byte("server:\n  cache: {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistConnectionSeed(configPath, "server.cache.url", "redis://cache.example", false); err != nil {
+		t.Fatalf("persist regular connection seed: %v", err)
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil || !bytes.Contains(configData, []byte("redis://cache.example")) {
+		t.Fatalf("server.yml does not contain the saved cache URL: %s (%v)", configData, err)
+	}
+	if err := persistConnectionSeed(configPath, "server.database.token", "remote-token", true); err != nil {
+		t.Fatalf("persist secret connection seed: %v", err)
+	}
+	secretPath := filepath.Join(dir, "secrets.yml")
+	secretData, err := os.ReadFile(secretPath)
+	if err != nil || !bytes.Contains(secretData, []byte("remote-token")) {
+		t.Fatalf("secrets.yml does not contain the saved token: %s (%v)", secretData, err)
+	}
+	info, err := os.Stat(secretPath)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("secrets.yml permissions = %v, %v; want 0600", info, err)
+	}
+	if err := persistConnectionSeed(filepath.Join(dir, "missing.yml"), "server.cache.url", "redis://cache.example", false); err == nil {
+		t.Fatal("persistConnectionSeed() accepted a missing config file")
+	}
+	if err := os.WriteFile(configPath, []byte("server: ["), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistConnectionSeed(configPath, "server.cache.url", "redis://cache.example", false); err == nil {
+		t.Fatal("persistConnectionSeed() accepted malformed YAML")
+	}
+}
+
+func TestResetInvalidNotificationConfig(t *testing.T) {
+	tests := []struct {
+		message string
+		mutate  func(*Config)
+		check   func(*testing.T, *Config)
+	}{
+		{message: "notifications.webui.position", mutate: func(cfg *Config) { cfg.Server.Notifications.WebUI.Position = "invalid" }, check: func(t *testing.T, cfg *Config) {
+			if cfg.Server.Notifications.WebUI.Position != DefaultConfig().Server.Notifications.WebUI.Position {
+				t.Fatal("toast position was not reset")
+			}
+		}},
+		{message: "disk_low.threshold_percent", mutate: func(cfg *Config) { cfg.Server.Notifications.DiskLow.ThresholdPercent = 999 }, check: func(t *testing.T, cfg *Config) {
+			if cfg.Server.Notifications.DiskLow.ThresholdPercent != DefaultConfig().Server.Notifications.DiskLow.ThresholdPercent {
+				t.Fatal("disk threshold was not reset")
+			}
+		}},
+		{message: "unclassified notification error", mutate: func(cfg *Config) { cfg.Server.Notifications.WebUI.Duration = -1 }, check: func(t *testing.T, cfg *Config) {
+			if !reflect.DeepEqual(cfg.Server.Notifications, DefaultConfig().Server.Notifications) {
+				t.Fatal("notification settings were not fully reset")
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.message, func(t *testing.T) {
+			cfg := DefaultConfig()
+			test.mutate(cfg)
+			resetInvalidNotificationConfig(cfg, errors.New(test.message))
+			test.check(t, cfg)
+		})
+	}
+}
+
+func TestDebugSettingsDefaultsAndBooleanParsing(t *testing.T) {
+	cfg := DefaultConfig()
+	debug := cfg.Server.Debug
+	if !debug.Pprof || !debug.LogQueries || !debug.LogCache || debug.LogBodies || !debug.RuntimeEndpoints || debug.MaxBodyLogSize != "10KB" || debug.BlockProfileRate != 1 || debug.MutexProfileFraction != 1 {
+		t.Fatalf("debug defaults = %+v", debug)
+	}
+	if err := yaml.Unmarshal([]byte("pprof: no\nlog_bodies: yes\nblock_profile_rate: 0\n"), &cfg.Server.Debug); err != nil {
+		t.Fatalf("decode debug settings: %v", err)
+	}
+	if cfg.Server.Debug.Pprof || !cfg.Server.Debug.LogBodies || cfg.Server.Debug.BlockProfileRate != 0 || cfg.Server.Debug.LogQueries != debug.LogQueries {
+		t.Fatalf("parsed debug settings = %+v", cfg.Server.Debug)
+	}
+	if got := cfg.Server.Debug.BodyLogLimit(); got != 10*1024 {
+		t.Errorf("BodyLogLimit() = %d, want %d", got, 10*1024)
+	}
+}
+
+func TestLoadGeneratesWebhookSecretInPrivateSecretsFile(t *testing.T) {
+	directory := testutil.TempDir(t)
+	path := filepath.Join(directory, "server.yml")
+	contents := "server:\n  contact:\n    admin:\n      webhooks:\n        generic: https://hooks.example.test/notify\n"
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	secret := cfg.Server.Contact.Admin.WebhookSecrets["generic"]
+	if len(secret) < 40 {
+		t.Fatalf("generated webhook secret length = %d", len(secret))
+	}
+	info, err := os.Stat(filepath.Join(directory, "secrets.yml"))
+	if err != nil {
+		t.Fatalf("stat secrets.yml: %v", err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Errorf("secrets.yml mode = %04o, want 0600", info.Mode().Perm())
+	}
+	encoded, err := os.ReadFile(filepath.Join(directory, "secrets.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), "generic_secret:") || !strings.Contains(string(encoded), secret) {
+		t.Error("secrets.yml does not contain the generated webhook signing secret")
 	}
 }
 
@@ -211,7 +368,7 @@ func TestLoadNotificationConfiguration(t *testing.T) {
 	t.Setenv("SMTP_FROM_NAME", "Countries")
 	t.Setenv("SMTP_FROM_EMAIL", "mail@example.test")
 	path := filepath.Join(testutil.TempDir(t), "server.yml")
-	contents := "server:\n  notifications:\n    webui:\n      position: bottom-left\n      duration: 4\n      warning_duration: 8\n    email:\n      smtp:\n        host: relay.example.test\n        port: 2525\n        tls: starttls\n      from:\n        name: Countries\n        email: mail@example.test\n      reply_to: support@example.test\n      events:\n        startup: true\n    disk_low:\n      enabled: false\n      threshold_percent: 90\n      check_interval: 10m\n      repeat: 12h\n"
+	contents := "server:\n  notifications:\n    webui:\n      position: bottom-left\n      duration: 4\n      warning_duration: 8\n    email:\n      smtp:\n        host: relay.example.test\n        port: 2525\n        tls: starttls\n      from:\n        name: Countries\n        email: mail@example.test\n      reply_to: support@example.test\n      events:\n        startup: true\n    database_error:\n      enabled: false\n      failures: 5\n      check_interval: 2m\n      repeat: 12h\n    disk_low:\n      enabled: false\n      threshold_percent: 90\n      check_interval: 10m\n      repeat: 12h\n"
 	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -228,6 +385,12 @@ func TestLoadNotificationConfiguration(t *testing.T) {
 	}
 	if got.DiskLow.Enabled || got.DiskLow.ThresholdPercent != 90 || got.DiskLow.CheckInterval != "10m" || got.DiskLow.Repeat != "12h" {
 		t.Errorf("disk-low settings = %+v", got.DiskLow)
+	}
+	if got.DatabaseError.Enabled || got.DatabaseError.Failures != 5 || got.DatabaseError.CheckInterval != "2m" || got.DatabaseError.Repeat != "12h" {
+		t.Errorf("database-error settings = %+v", got.DatabaseError)
+	}
+	if task := cfg.Server.Scheduler.Tasks["database_check"]; task.Schedule != "@every 2m" {
+		t.Errorf("database_check schedule = %q, want @every 2m", task.Schedule)
 	}
 }
 
@@ -526,6 +689,15 @@ func TestParseBoolSupportsConfiguredTruthValues(t *testing.T) {
 	}
 }
 
+func TestParseBoolOrDefaultUsesFallbackForInvalidConfiguration(t *testing.T) {
+	if got := ParseBoolOrDefault("test.boolean.invalid", "maybe", true); !got {
+		t.Fatal("ParseBoolOrDefault() did not use the configured default")
+	}
+	if got := ParseBoolOrDefault("test.boolean.valid", "off", true); got {
+		t.Fatal("ParseBoolOrDefault() ignored a valid false value")
+	}
+}
+
 func TestLoadParsesFlexibleBooleanValues(t *testing.T) {
 	path := filepath.Join(testutil.TempDir(t), "server.yml")
 	contents := "server:\n  metrics:\n    enabled: enable\nweb-ui:\n  notifications:\n    enabled: off\n"
@@ -679,11 +851,11 @@ func TestLoad_RoundTrip(t *testing.T) {
 	if loaded.Server.FQDN != "example.test" {
 		t.Errorf("loaded Server.FQDN = %q, want example.test", loaded.Server.FQDN)
 	}
-	if loaded.Server.Contact.DPO != original.Server.Contact.DPO || loaded.Server.Contact.General.Email != original.Server.Contact.General.Email {
+	if loaded.Server.Contact.DPO.Name != original.Server.Contact.DPO.Name || loaded.Server.Contact.DPO.Email != original.Server.Contact.DPO.Email || loaded.Server.Contact.General.Email != original.Server.Contact.General.Email {
 		t.Errorf("loaded contact config = %+v, want %+v", loaded.Server.Contact, original.Server.Contact)
 	}
-	if loaded.Server.Contact.Abuse != original.Server.Contact.Abuse || loaded.Server.Pages.Contact.Enabled || loaded.Server.Pages.Contact.Antispam.MinFillSeconds != 7 || loaded.Server.Notifications.Email.SMTP != original.Server.Notifications.Email.SMTP || loaded.Server.Notifications.Email.From != original.Server.Notifications.Email.From {
-		t.Errorf("contact settings did not round-trip: pages=%+v smtp=%+v abuse=%+v", loaded.Server.Pages.Contact, loaded.Server.Notifications.Email.SMTP, loaded.Server.Contact.Abuse)
+	if loaded.Server.Contact.Abuse.Name != original.Server.Contact.Abuse.Name || loaded.Server.Contact.Abuse.Email != original.Server.Contact.Abuse.Email || !reflect.DeepEqual(loaded.Server.Contact.Abuse.Webhooks, original.Server.Contact.Abuse.Webhooks) || loaded.Server.Pages.Contact.Enabled || loaded.Server.Pages.Contact.Antispam.MinFillSeconds != 7 || loaded.Server.Notifications.Email.SMTP != original.Server.Notifications.Email.SMTP || loaded.Server.Notifications.Email.From != original.Server.Notifications.Email.From {
+		t.Errorf("contact settings did not round-trip: pages=%+v smtp=%+v want=%+v from=%+v want=%+v abuse=%+v", loaded.Server.Pages.Contact, loaded.Server.Notifications.Email.SMTP, original.Server.Notifications.Email.SMTP, loaded.Server.Notifications.Email.From, original.Server.Notifications.Email.From, loaded.Server.Contact.Abuse)
 	}
 	if !loaded.Server.Privacy.Data.Sold {
 		t.Error("loaded Privacy.Data.Sold = false, want true")
@@ -967,11 +1139,14 @@ func TestSaveNodeConfigurationWritesOnlyNodeSettings(t *testing.T) {
 	if !bytes.HasPrefix(data, []byte("# "+serverConfigHeader+"\n")) {
 		t.Fatalf("server.yml header = %q", data[:min(len(data), 160)])
 	}
-	var document map[string]map[string]any
+	var document map[string]any
 	if err := yaml.Unmarshal(data, &document); err != nil {
 		t.Fatalf("parse server.yml: %v", err)
 	}
-	server := document["server"]
+	server, ok := document["server"].(map[string]any)
+	if !ok {
+		t.Fatalf("server.yml server settings = %#v", document["server"])
+	}
 	if server["port"] != "64501" || server["database"] == nil || server["ssl"] == nil {
 		t.Fatalf("server.yml node settings = %#v", server)
 	}
@@ -1146,5 +1321,66 @@ func TestValidateTrackingConfigurations(t *testing.T) {
 				t.Fatalf("ValidateTracking(%+v) error = %v, wantErr %t", test.config, err, test.wantErr)
 			}
 		})
+	}
+}
+
+func TestRedactConnectionURL(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{name: "database token query", url: "libsql://db.example.test?authToken=secret&tls=true", want: "libsql://db.example.test?authToken=%5Bredacted%5D&tls=true"},
+		{name: "password userinfo", url: "rediss://alice:p%40ss@cache.example.test:6379/2", want: "rediss://alice:%5Bredacted%5D@cache.example.test:6379/2"},
+		{name: "password-only userinfo", url: "valkey://p%40ss@cache.example.test:6379/0", want: "valkey://:%5Bredacted%5D@cache.example.test:6379/0"},
+		{name: "local file path", url: "/var/lib/countries/server.db", want: "/var/lib/countries/server.db"},
+		{name: "malformed url", url: "http://[broken", want: "[redacted]"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := RedactConnectionURL(test.url); got != test.want {
+				t.Fatalf("RedactConnectionURL(%q) = %q, want %q", test.url, got, test.want)
+			}
+		})
+	}
+}
+
+func TestConfigSanitizedRedactsSecretsWithoutMutatingConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Server.Token = "operator-secret"
+	cfg.Server.Database.URL = "libsql://db.example.test?authToken=database-secret"
+	cfg.Server.Database.Token = "database-secret"
+	cfg.Server.Cache.URL = "rediss://user:cache-secret@cache.example.test:6379/0"
+	cfg.Server.Cache.Password = "cache-secret"
+	cfg.Server.Cache.TLSKey = "/config/ssl/cache.key"
+	cfg.Server.Backup.Password = "backup-secret"
+	cfg.Server.Security.EncryptionKey = "encryption-secret"
+	cfg.Server.SSL.Key = "/config/ssl/server.key"
+	cfg.Server.SSL.LetsEncrypt.DNSCredentials = map[string]string{"provider": "dns-secret"}
+	cfg.Server.Pages.Contact.CaptchaSecretKey = "captcha-secret"
+	cfg.Server.Notifications.Email.SMTP.Password = "smtp-secret"
+	cfg.Server.Metrics.Auth.Tokens = MetricsAuthTokens{Prometheus: "prom-secret", Grafana: "grafana-secret", Loki: "loki-secret"}
+	cfg.Server.Contact.Admin.WebhookSecrets = map[string]string{"discord": "webhook-secret"}
+	cfg.Server.Contact.Admin.Webhooks = map[string]string{"discord": "https://user:webhook-secret@example.test/hook"}
+	cfg.Data.CVE.APIKey = "cve-secret"
+
+	sanitized := cfg.Sanitized()
+	encoded, err := yaml.Marshal(sanitized)
+	if err != nil {
+		t.Fatalf("marshal sanitized config: %v", err)
+	}
+	for _, secret := range []string{"operator-secret", "database-secret", "cache-secret", "backup-secret", "encryption-secret", "server.key", "dns-secret", "captcha-secret", "smtp-secret", "prom-secret", "grafana-secret", "loki-secret", "webhook-secret", "cve-secret"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Errorf("sanitized config contains sensitive value %q", secret)
+		}
+	}
+	if got := sanitized.Server.Database.URL; got != "libsql://db.example.test?authToken=%5Bredacted%5D" {
+		t.Errorf("sanitized database URL = %q", got)
+	}
+	if got := sanitized.Server.Cache.URL; got != "rediss://user:%5Bredacted%5D@cache.example.test:6379/0" {
+		t.Errorf("sanitized cache URL = %q", got)
+	}
+	if cfg.Server.Database.URL != "libsql://db.example.test?authToken=database-secret" || cfg.Server.Contact.Admin.Webhooks["discord"] != "https://user:webhook-secret@example.test/hook" {
+		t.Fatal("Sanitized mutated the active configuration")
 	}
 }

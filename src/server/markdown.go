@@ -18,7 +18,7 @@ const maxOperatorPageBody = 256 * 1024
 
 func newPageHTMLPolicy(rich bool) *bluemonday.Policy {
 	policy := bluemonday.NewPolicy()
-	elements := []string{"p", "br", "span", "div", "strong", "b", "em", "i", "u", "s", "small", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "a", "img"}
+	elements := []string{"p", "br", "span", "div", "strong", "b", "em", "i", "u", "s", "small", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "a", "img"}
 	if rich {
 		elements = append(elements, "hr", "code", "pre", "blockquote", "table", "thead", "tbody", "tr", "th", "td", "dl", "dt", "dd", "sup", "sub")
 	}
@@ -36,11 +36,7 @@ var strictHTMLPolicy = newPageHTMLPolicy(false)
 var richHTMLPolicy = newPageHTMLPolicy(true)
 
 func markdownToHTML(source string) template.HTML {
-	var rendered bytes.Buffer
-	if err := goldmark.Convert([]byte(source), &rendered); err != nil {
-		return template.HTML("<p>Content unavailable.</p>")
-	}
-	return template.HTML(sanitizePageHTML(rendered.String(), richHTMLPolicy))
+	return template.HTML(sanitizePageHTML(markdownSourceToHTML(source), richHTMLPolicy))
 }
 
 func textToHTML(source string) template.HTML {
@@ -99,7 +95,7 @@ func markdownSourceToHTML(source string) string {
 	if err := goldmark.Convert([]byte(source), &rendered); err != nil {
 		return "<p>Content unavailable.</p>"
 	}
-	return rendered.String()
+	return strings.ReplaceAll(strings.ReplaceAll(rendered.String(), "<h1>", "<h2>"), "</h1>", "</h2>")
 }
 
 func sanitizePageHTML(source string, policy *bluemonday.Policy) string {
@@ -157,7 +153,7 @@ func sanitizeDataURLs(root *xhtml.Node) {
 		for index := 0; index < len(root.Attr); {
 			attribute := root.Attr[index]
 			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(attribute.Val)), "data:") &&
-				!(root.Data == "img" && attribute.Key == "src" && isSafeRasterDataURL(attribute.Val)) {
+				(root.Data != "img" || attribute.Key != "src" || !isSafeRasterDataURL(attribute.Val)) {
 				root.Attr = append(root.Attr[:index], root.Attr[index+1:]...)
 				continue
 			}
@@ -202,14 +198,25 @@ func localizedPageBody(body any, language string) (string, bool) {
 	if value, ok := body.(string); ok {
 		return value, true
 	}
-	values, ok := body.(map[string]any)
-	if !ok {
+	values := make(map[string]string)
+	switch body := body.(type) {
+	case map[string]any:
+		for key, value := range body {
+			if text, ok := value.(string); ok {
+				values[key] = text
+			}
+		}
+	case map[string]string:
+		for key, value := range body {
+			values[key] = value
+		}
+	default:
 		return "", false
 	}
-	if value, ok := values[language].(string); ok {
+	if value, ok := values[language]; ok {
 		return value, true
 	}
-	if value, ok := values["default"].(string); ok {
+	if value, ok := values["default"]; ok {
 		return value, true
 	}
 	return "", false

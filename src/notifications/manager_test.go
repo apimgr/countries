@@ -20,7 +20,7 @@ func TestManagerAvailabilityAndEvents(t *testing.T) {
 		t.Fatal("manager without config can send")
 	}
 	cfg := config.DefaultConfig()
-	manager := &Manager{Config: cfg, Sender: Sender{Config: SMTPConfig{Host: "relay.example"}}}
+	manager := &Manager{Config: cfg, Sender: Sender{Config: SMTPConfig{Host: "relay.example"}}, FQDN: "countries.example"}
 	if manager.CanSend() {
 		t.Fatal("manager with email disabled can send")
 	}
@@ -52,6 +52,8 @@ func TestManagerAvailabilityAndEvents(t *testing.T) {
 		{"scheduler error", func(e *config.NotificationEmailEventsConfig) { e.SchedulerError = true }, "scheduler_error", true},
 		{"update available", func(e *config.NotificationEmailEventsConfig) { e.UpdateAvailable = true }, "update_available", true},
 		{"update installed", func(e *config.NotificationEmailEventsConfig) { e.UpdateInstalled = true }, "update_installed", true},
+		{"update failed", func(e *config.NotificationEmailEventsConfig) { e.UpdateFailed = true }, "update_failed", true},
+		{"update staged", func(e *config.NotificationEmailEventsConfig) { e.UpdateStaged = true }, "update_staged", true},
 		{"disk low", func(*config.NotificationEmailEventsConfig) {}, "disk_low", true},
 		{"database error", func(*config.NotificationEmailEventsConfig) {}, "database_error", true},
 		{"test", func(*config.NotificationEmailEventsConfig) {}, "test", true},
@@ -64,6 +66,18 @@ func TestManagerAvailabilityAndEvents(t *testing.T) {
 				t.Errorf("eventEnabled(%q) = %t, want %t", test.event, got, test.want)
 			}
 		})
+	}
+	cfg.Server.Notifications.DatabaseError.Enabled = false
+	if manager.eventEnabled("database_error") {
+		t.Fatal("database_error event enabled while its notification is disabled")
+	}
+	cfg.Server.Notifications.DatabaseError.Enabled = true
+	if !manager.eventEnabled("database_error") {
+		t.Fatal("database_error event disabled with its notification enabled")
+	}
+	message := sanitizeDatabaseNotificationError("connect postgres://operator:secret@db.example/x?token=abc")
+	if strings.Contains(message, "operator") || strings.Contains(message, "secret") || strings.Contains(message, "abc") {
+		t.Fatalf("database notification error contains credentials: %q", message)
 	}
 }
 
@@ -85,8 +99,11 @@ func TestManagerGlobalVariablesAndTemplateResolution(t *testing.T) {
 		t.Fatalf("branded overlay variables = %#v", values)
 	}
 	manager.FQDN = ""
-	if got := manager.globalVariables()["fqdn"]; got != "localhost" {
-		t.Fatalf("empty FQDN fallback = %q", got)
+	if got := manager.globalVariables()["fqdn"]; got != "" || manager.globalVariables()["app_url"] != "https://" {
+		t.Fatalf("empty FQDN must remain unresolved, got %#v", manager.globalVariables())
+	}
+	if manager.CanSend() {
+		t.Fatal("manager without a resolved FQDN can send email")
 	}
 
 	manager.Templates = fstest.MapFS{"event.tmpl": &fstest.MapFile{Data: []byte("Subject: Built in\n---\nBuilt in body")}}
@@ -118,6 +135,80 @@ func TestManagerGlobalVariablesAndTemplateResolution(t *testing.T) {
 	}
 }
 
+func TestManagerEmailTemplateLanguageAndPlaceholderResolution(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Server.I18N.DefaultLanguage = "en"
+	manager := &Manager{Config: cfg, Templates: managerTemplates(), ProjectName: "countries", FQDN: "countries.example"}
+	manager.Language = "fr"
+	templateText, err := manager.loadTemplateForLanguage("backup_complete", manager.notificationLanguage())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(templateText, "Sauvegarde terminée") || !strings.Contains(templateText, "{filename}") || !strings.Contains(templateText, "{app_name}") {
+		t.Fatalf("localized template lost translation or placeholders: %q", templateText)
+	}
+	subject, body, err := RenderTemplate(templateText, map[string]string{
+		"app_name": "Countries", "fqdn": "countries.example", "timestamp": "now",
+		"filename": "daily.tar", "size": "1 MB", "app_url": "https://countries.example",
+	})
+	if err != nil || !strings.Contains(subject, "Countries") || !strings.Contains(body, "daily.tar") {
+		t.Fatalf("localized template render = (%q, %q, %v)", subject, body, err)
+	}
+	manager.Language = "unsupported"
+	if got := manager.notificationLanguage(); got != "en" {
+		t.Fatalf("unsupported language resolved to %q, want en", got)
+	}
+	cfg.Server.I18N.AvailableLanguages = []string{"en"}
+	manager.Language = "fr"
+	if got := manager.notificationLanguage(); got != "en" {
+		t.Fatalf("unavailable language resolved to %q, want en", got)
+	}
+}
+
+func TestEmailTemplatesExistInEverySupportedLanguage(t *testing.T) {
+	cfg := config.DefaultConfig()
+	manager := &Manager{Config: cfg, Templates: managerTemplates()}
+	names := []string{"backup_complete", "backup_failed", "database_error", "disk_low", "scheduler_error", "security_alert", "shutdown", "ssl_expiring", "ssl_renewal_failed", "ssl_renewed", "startup", "test", "update_available", "update_failed", "update_installed", "update_staged"}
+	for _, lang := range []string{"ar", "de", "en", "es", "fr", "it", "ja", "zh"} {
+		for _, name := range names {
+			translated, err := manager.loadTemplateForLanguage(name, lang)
+			if err != nil {
+				t.Fatalf("loadTemplateForLanguage(%q, %q): %v", name, lang, err)
+			}
+			base, err := manager.loadTemplate(name)
+			if err != nil {
+				t.Fatalf("loadTemplate(%q): %v", name, err)
+			}
+			want := make(map[string]bool)
+			for _, match := range templateVariable.FindAllStringSubmatch(base, -1) {
+				want[match[1]] = true
+			}
+			got := make(map[string]bool)
+			for _, match := range templateVariable.FindAllStringSubmatch(translated, -1) {
+				got[match[1]] = true
+			}
+			if len(want) != len(got) {
+				t.Fatalf("template %q in %q has a different placeholder set: got %v, want %v", name, lang, got, want)
+			}
+			for key := range want {
+				if !got[key] {
+					t.Fatalf("template %q in %q is missing {%s}", name, lang, key)
+				}
+			}
+		}
+	}
+}
+
+func TestFormatNotificationTimeUsesHumanReadableTimezone(t *testing.T) {
+	t.Setenv("TZ", "UTC")
+	if got := formatNotificationTime("2026-01-05T19:03:07Z"); got != "January 05, 2026 at 19:03:07 UTC" {
+		t.Fatalf("formatNotificationTime(timestamp) = %q", got)
+	}
+	if got := formatNotificationTime("2026-01-05"); got != "January 05, 2026 at 00:00:00 UTC" {
+		t.Fatalf("formatNotificationTime(date) = %q", got)
+	}
+}
+
 func TestManagerDryRunOverrideValidationAndRenderedNotifications(t *testing.T) {
 	cfg := config.DefaultConfig()
 	manager := &Manager{Config: cfg, Templates: managerTemplates(), ProjectName: "countries", FQDN: "countries.example", Version: "1.2.3"}
@@ -128,7 +219,7 @@ func TestManagerDryRunOverrideValidationAndRenderedNotifications(t *testing.T) {
 		t.Fatal("DryRun without built-in templates succeeded")
 	}
 	rendered, err := manager.DryRun()
-	if err != nil || len(rendered) != 14 {
+	if err != nil || len(rendered) != 16 {
 		t.Fatalf("DryRun() rendered %d templates, error = %v", len(rendered), err)
 	}
 	if err := manager.CheckOverrides(); err != nil {
@@ -200,7 +291,7 @@ func TestManagerDryRunOverrideValidationAndRenderedNotifications(t *testing.T) {
 }
 
 func managerTemplates() fs.FS {
-	names := []string{"security_alert", "backup_complete", "backup_failed", "ssl_expiring", "ssl_renewed", "ssl_renewal_failed", "scheduler_error", "startup", "shutdown", "disk_low", "database_error", "update_available", "update_installed", "test"}
+	names := []string{"security_alert", "backup_complete", "backup_failed", "ssl_expiring", "ssl_renewed", "ssl_renewal_failed", "scheduler_error", "startup", "shutdown", "disk_low", "database_error", "update_available", "update_installed", "update_failed", "update_staged", "test"}
 	files := make(fstest.MapFS, len(names))
 	for _, name := range names {
 		files[name+".tmpl"] = &fstest.MapFile{Data: []byte("Subject: {app_name} " + name + "\n---\nVersion {version}")}

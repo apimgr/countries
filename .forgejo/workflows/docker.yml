@@ -2,18 +2,19 @@ name: Docker Build
 
 on:
   push:
-    # ALL branches
-    branches: ['**']
+    # Only main publishes the rolling container image.
+    branches: [main]
     tags:
       - 'v*'
       - '*.*.*'
+      - '*-beta'
   schedule:
     - cron: '0 4 * * *'
   workflow_dispatch:
 
 concurrency:
-  group: docker-${{ forgejo.ref }}
-  cancel-in-progress: ${{ forgejo.ref == 'refs/heads/main' || forgejo.ref == 'refs/heads/master' || forgejo.ref == 'refs/heads/beta' }}
+  group: docker-${{ forgejo.ref }}-${{ forgejo.event_name }}
+  cancel-in-progress: ${{ forgejo.ref == 'refs/heads/main' }}
 
 env:
   PROJECT_NAME: countries
@@ -147,9 +148,14 @@ jobs:
             manifest:com.github.containers.toolbox=false
             manifest:maintainer=apimgr
 
+      - name: Verify published standard image
+        run: |
+          docker pull --platform linux/amd64 "$REGISTRY/$IMAGE_NAME:$COMMIT_ID"
+          bash .github/scripts/verify-container-image.sh "$REGISTRY/$IMAGE_NAME:$COMMIT_ID"
+
   build-devel:
     runs-on: ubuntu-26.04
-    if: (forgejo.event_name == 'schedule' || forgejo.event_name == 'workflow_dispatch' || forgejo.event_name == 'push') && (forgejo.ref == 'refs/heads/main' || forgejo.ref == 'refs/heads/master')
+    if: (forgejo.event_name == 'schedule' || forgejo.event_name == 'workflow_dispatch' || forgejo.event_name == 'push') && forgejo.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
@@ -223,10 +229,6 @@ jobs:
             org.opencontainers.image.vcs-type=Git
             com.github.containers.toolbox=false
             maintainer=apimgr
-            org.opencontainers.image.schema-version=${{ env.VERSION }}
-            org.opencontainers.image.vcs-type=Git
-            com.github.containers.toolbox=false
-            maintainer=apimgr
           annotations: |
             manifest:org.opencontainers.image.vendor=apimgr
             manifest:org.opencontainers.image.authors=apimgr
@@ -244,7 +246,8 @@ jobs:
             manifest:org.opencontainers.image.vcs-type=Git
             manifest:com.github.containers.toolbox=false
             manifest:maintainer=apimgr
-            manifest:org.opencontainers.image.schema-version=${{ env.VERSION }}
-            manifest:org.opencontainers.image.vcs-type=Git
-            manifest:com.github.containers.toolbox=false
-            manifest:maintainer=apimgr
+
+      - name: Verify published devel image
+        run: |
+          docker pull --platform linux/amd64 "$REGISTRY/$IMAGE_NAME:devel"
+          bash .github/scripts/verify-container-image.sh "$REGISTRY/$IMAGE_NAME:devel"

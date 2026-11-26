@@ -10,6 +10,14 @@ import (
 	"github.com/apimgr/countries/src/testutil"
 )
 
+func TestWindowsServiceBinaryPathQuotesSpaces(t *testing.T) {
+	path := `C:\Program Files\apimgr\countries\countries.exe`
+	want := `"C:\Program Files\apimgr\countries\countries.exe"`
+	if got := windowsServiceBinaryPath(path); got != want {
+		t.Fatalf("windowsServiceBinaryPath() = %q, want %q", got, want)
+	}
+}
+
 func TestConfirmUninstall(t *testing.T) {
 	for _, test := range []struct {
 		answer  string
@@ -424,6 +432,9 @@ func setupServiceCommandStubs(t *testing.T, names ...string) string {
 printf '%s %s\n' "${0##*/}" "$*" >> "$TEST_SERVICE_COMMAND_LOG"
 if [ "$TEST_SERVICE_COMMAND_FAIL" = "${0##*/}" ]; then
   exit 17
+fi
+if [ "${0##*/}" = "sc.exe" ] && [ "$1" = "query" ]; then
+  printf '        STATE              : 4  RUNNING\n'
 fi
 `
 	for _, name := range names {

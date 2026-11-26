@@ -77,7 +77,7 @@ func runMaintenanceOps(command string, args []string, configDir, dataDir, logsDi
 	if err != nil {
 		return true, err
 	}
-	defer func() { _ = db.Close() }()
+	defer func() { _ = database.Close(db) }()
 	ctx := context.Background()
 	switch command {
 	case "token":
@@ -198,7 +198,12 @@ func maintenanceTokenCommand(ctx context.Context, db *sql.DB, args []string, log
 	if err := confirmMaintenance("Type token prefix to confirm: ", prefix, yes); err != nil {
 		return err
 	}
-	result, err := db.ExecContext(ctx, `UPDATE api_tokens SET revoked_at = ?, revoked_reason = 'operator' WHERE id = ? AND revoked_at IS NULL`, time.Now().UTC().Unix(), tokenID)
+	var result sql.Result
+	err = database.Write(ctx, db, func(tx *sql.Tx) error {
+		var err error
+		result, err = tx.ExecContext(ctx, `UPDATE api_tokens SET revoked_at = ?, revoked_reason = 'operator' WHERE id = ? AND revoked_at IS NULL`, time.Now().UTC().Unix(), tokenID)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("revoke linked token: %w", err)
 	}
@@ -406,12 +411,8 @@ func updateSecurityReport(ctx context.Context, db *sql.DB, cfg *config.Config, a
 		return errors.New("invalid security report severity")
 	}
 	now := time.Now().UTC()
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
 	var oldStatus, oldSeverity, creditPref, creditName, component string
+	err := database.Write(ctx, db, func(tx *sql.Tx) error {
 	if err := tx.QueryRowContext(ctx, `SELECT status,severity,credit_pref,COALESCE(credit_name,''),component FROM security_reports WHERE tracking_id = ?`, id).Scan(&oldStatus, &oldSeverity, &creditPref, &creditName, &component); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New("security report not found")
@@ -454,7 +455,9 @@ func updateSecurityReport(ctx context.Context, db *sql.DB, cfg *config.Config, a
 			return fmt.Errorf("record security researcher acknowledgment: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	return nil
+	})
+	if err != nil {
 		return err
 	}
 	if err := appendSecurityLog(logsDir, map[string]any{"event": "security.report_updated", "tracking_id": id, "old_status": oldStatus, "new_status": nextStatus, "time": now.Format(time.RFC3339)}); err != nil {
@@ -878,24 +881,25 @@ func ownerResourceTables(ctx context.Context, db *sql.DB) ([]string, error) {
 }
 
 func deleteOwnerTransaction(ctx context.Context, db *sql.DB, ownerID string, resourceTables []string) (ownerDeleteCounts, error) {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return ownerDeleteCounts{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	counts, err := ownerCountsTx(ctx, tx, ownerID, resourceTables)
-	if err != nil {
-		return ownerDeleteCounts{}, err
-	}
-	for _, table := range resourceTables {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM `+quoteSQLiteIdentifier(table)+` WHERE owner_id=?`, ownerID); err != nil {
-			return ownerDeleteCounts{}, fmt.Errorf("delete owner resources: %w", err)
+	var counts ownerDeleteCounts
+	err := database.Write(ctx, db, func(tx *sql.Tx) error {
+		var err error
+		counts, err = ownerCountsTx(ctx, tx, ownerID, resourceTables)
+		if err != nil {
+			return err
 		}
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM owners WHERE id=?`, ownerID); err != nil {
-		return ownerDeleteCounts{}, fmt.Errorf("delete owner: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
+		for _, table := range resourceTables {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM `+quoteSQLiteIdentifier(table)+` WHERE owner_id=?`, ownerID); err != nil {
+				return fmt.Errorf("delete owner resources: %w", err)
+			}
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM owners WHERE id=?`, ownerID)
+		if err != nil {
+			return fmt.Errorf("delete owner: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
 		return ownerDeleteCounts{}, err
 	}
 	return counts, nil

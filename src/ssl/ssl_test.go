@@ -505,7 +505,7 @@ func TestSaveManagedCertificateAndRenewalSelection(t *testing.T) {
 	root := testutil.TempDir(t)
 	certPath := filepath.Join(root, "example.test.crt")
 	keyPath := filepath.Join(root, "example.test.key")
-	writeTLSCertificate(t, certPath, keyPath, []string{"example.test"}, time.Now().Add(-time.Hour), time.Now().Add(14*24*time.Hour))
+	writeTLSCertificate(t, certPath, keyPath, []string{"example.test"}, time.Now().Add(-time.Hour), time.Now().Add(45*24*time.Hour))
 	certificatePEM, err := os.ReadFile(certPath)
 	if err != nil {
 		t.Fatal(err)
@@ -540,7 +540,7 @@ func TestSaveManagedCertificateAndRenewalSelection(t *testing.T) {
 		t.Fatalf("GetTLSConfig() managed certificate error = %v", err)
 	}
 	if err := manager.RenewManagedCertificate(context.Background(), []string{"example.test"}); err != nil {
-		t.Fatalf("RenewManagedCertificate() renewed a certificate with more than seven days remaining: %v", err)
+		t.Fatalf("RenewManagedCertificate() renewed a certificate with more than 30 days remaining: %v", err)
 	}
 }
 

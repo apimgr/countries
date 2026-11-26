@@ -17,6 +17,35 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestInstallFullBackupWithoutOverwrite(t *testing.T) {
+	directory := t.TempDir()
+	candidate := filepath.Join(directory, "candidate.tar.gz")
+	destination := filepath.Join(directory, "backup.tar.gz")
+	if err := os.WriteFile(candidate, []byte("verified backup"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := installFullWithoutOverwrite(candidate, destination); err != nil {
+		t.Fatalf("install full backup: %v", err)
+	}
+	if _, err := os.Stat(candidate); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("candidate remains after install: %v", err)
+	}
+	content, err := os.ReadFile(destination)
+	if err != nil || string(content) != "verified backup" {
+		t.Fatalf("installed backup = %q, error = %v", content, err)
+	}
+	if err := os.WriteFile(candidate, []byte("replacement"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := installFullWithoutOverwrite(candidate, destination); err == nil {
+		t.Fatal("install replaced an existing full backup")
+	}
+	content, err = os.ReadFile(destination)
+	if err != nil || string(content) != "verified backup" {
+		t.Fatalf("existing backup after collision = %q, error = %v", content, err)
+	}
+}
+
 func TestCreateVerifyAndRestoreEncryptedFullBackup(t *testing.T) {
 	root := createBackupTestRoot(t)
 	source := makeBackupFixture(t, root, "original config\n")

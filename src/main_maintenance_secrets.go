@@ -52,7 +52,7 @@ func handleSecretMaintenance(args []string, configDir, dataDir, logsDir, configP
 	if err != nil {
 		return fmt.Errorf("open server database: %w", err)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() { _ = database.Close(db) }()
 	ctx := context.Background()
 	if err := database.EnsureGeneratedSecrets(ctx, db); err != nil {
 		return fmt.Errorf("initialize generated secrets: %w", err)
@@ -256,22 +256,23 @@ func rotateEncryptionKey(ctx context.Context, db *sql.DB, cfg *config.Config, co
 }
 
 func stageEncryptionRotation(ctx context.Context, db *sql.DB, previous, pending string, previousUntil, now time.Time) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin encryption-key rotation: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 	updated := now.UTC().Format(time.RFC3339Nano)
-	for name, value := range map[string]string{
-		"encryption_key_previous":       previous,
-		"encryption_key_previous_until": previousUntil.UTC().Format(time.RFC3339Nano),
-		"encryption_key_pending":        pending,
-	} {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO app_secrets(name,value,updated_at) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, name, value, updated); err != nil {
-			return fmt.Errorf("stage %s: %w", name, err)
+	err := database.Write(ctx, db, func(tx *sql.Tx) error {
+		for name, value := range map[string]string{
+			"encryption_key_previous":       previous,
+			"encryption_key_previous_until": previousUntil.UTC().Format(time.RFC3339Nano),
+			"encryption_key_pending":        pending,
+		} {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO app_secrets(name,value,updated_at) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, name, value, updated); err != nil {
+				return fmt.Errorf("stage %s: %w", name, err)
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("stage encryption-key rotation: %w", err)
 	}
-	return tx.Commit()
+	return nil
 }
 
 func recoverPendingSecretRotations(ctx context.Context, db *sql.DB, cfg *config.Config, configDir, logsDir string, now time.Time) error {
@@ -306,15 +307,10 @@ func CleanupExpiredSecretRotationRows(ctx context.Context, db *sql.DB, logsDir s
 		if now.Before(until) {
 			continue
 		}
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("begin %s key retirement: %w", name, err)
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM app_secrets WHERE name IN (?,?)`, name+"_previous", name+"_previous_until"); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("retire expired %s key: %w", name, err)
-		}
-		if err := tx.Commit(); err != nil {
+		if err := database.Write(ctx, db, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `DELETE FROM app_secrets WHERE name IN (?,?)`, name+"_previous", name+"_previous_until")
+			return err
+		}); err != nil {
 			return fmt.Errorf("commit %s key retirement: %w", name, err)
 		}
 	}
@@ -478,30 +474,22 @@ func refuseActivePreviousSecret(ctx context.Context, db *sql.DB, name string, no
 }
 
 func storeSecretRotation(ctx context.Context, db *sql.DB, name, previous, newCurrent string, previousUntil, now time.Time) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin %s rotation: %w", name, err)
-	}
-	defer func() { _ = tx.Rollback() }()
 	updated := now.UTC().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO app_secrets(name,value,updated_at) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, name+"_previous", previous, updated); err != nil {
-		return fmt.Errorf("store previous %s: %w", name, err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO app_secrets(name,value,updated_at) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, name+"_previous_until", previousUntil.UTC().Format(time.RFC3339Nano), updated); err != nil {
-		return fmt.Errorf("store previous %s expiry: %w", name, err)
-	}
-	if newCurrent != "" {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO app_secrets(name,value,updated_at) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, name, newCurrent, updated); err != nil {
-			return fmt.Errorf("store new %s: %w", name, err)
+	err := database.Write(ctx, db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO app_secrets(name,value,updated_at) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, name+"_previous", previous, updated); err != nil {
+			return fmt.Errorf("store previous %s: %w", name, err)
 		}
-	}
-	if name == "encryption_key" {
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit previous encryption key before activating the new key: %w", err)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO app_secrets(name,value,updated_at) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, name+"_previous_until", previousUntil.UTC().Format(time.RFC3339Nano), updated); err != nil {
+			return fmt.Errorf("store previous %s expiry: %w", name, err)
+		}
+		if newCurrent != "" {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO app_secrets(name,value,updated_at) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, name, newCurrent, updated); err != nil {
+				return fmt.Errorf("store new %s: %w", name, err)
+			}
 		}
 		return nil
-	}
-	if err := tx.Commit(); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("commit %s rotation state: %w", name, err)
 	}
 	return nil
@@ -640,15 +628,10 @@ func reencryptCiphertext(ciphertext, previous, current []byte) ([]byte, bool, er
 }
 
 func updateEncryptedRow(ctx context.Context, db *sql.DB, query string, args ...any) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
+	return database.Write(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, query, args...)
 		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
-		return err
-	}
-	return tx.Commit()
+	})
 }
 
 func reencryptDNSCredentials(configDir, configPath string, credentials map[string]string, key []byte) error {

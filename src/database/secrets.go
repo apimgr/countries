@@ -15,23 +15,20 @@ import (
 func EnsureGeneratedSecrets(ctx context.Context, db *sql.DB) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin generated-secret initialization: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	for _, name := range []string{"installation_secret", "cookie_signing_key", "csrf_token_secret"} {
-		secret := make([]byte, 32)
-		if _, err := rand.Read(secret); err != nil {
-			return fmt.Errorf("generate %s: %w", name, err)
+	if err := Write(ctx, db, func(tx *sql.Tx) error {
+		for _, name := range []string{"installation_secret", "cookie_signing_key", "csrf_token_secret"} {
+			secret := make([]byte, 32)
+			if _, err := rand.Read(secret); err != nil {
+				return fmt.Errorf("generate %s: %w", name, err)
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO app_secrets (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO NOTHING`, name, base64.StdEncoding.EncodeToString(secret), now); err != nil {
+				return fmt.Errorf("initialize %s: %w", name, err)
+			}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO app_secrets (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO NOTHING`, name, base64.StdEncoding.EncodeToString(secret), now); err != nil {
-			return fmt.Errorf("initialize %s: %w", name, err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit generated-secret initialization: %w", err)
+		return nil
+	}); err != nil {
+		return fmt.Errorf("initialize generated secrets: %w", err)
 	}
 	return nil
 }
@@ -61,7 +58,10 @@ func SetAppSecret(ctx context.Context, db *sql.DB, name, value string, updatedAt
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	_, err := db.ExecContext(ctx, `INSERT INTO app_secrets (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, name, value, updatedAt.UTC().Format(time.RFC3339Nano))
+	err := Write(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO app_secrets (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, name, value, updatedAt.UTC().Format(time.RFC3339Nano))
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("write application secret: %w", err)
 	}
@@ -75,7 +75,12 @@ func InsertAppSecretIfAbsent(ctx context.Context, db *sql.DB, name, value string
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	result, err := db.ExecContext(ctx, `INSERT INTO app_secrets (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO NOTHING`, name, value, updatedAt.UTC().Format(time.RFC3339Nano))
+	var result sql.Result
+	err := Write(ctx, db, func(tx *sql.Tx) error {
+		var err error
+		result, err = tx.ExecContext(ctx, `INSERT INTO app_secrets (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO NOTHING`, name, value, updatedAt.UTC().Format(time.RFC3339Nano))
+		return err
+	})
 	if err != nil {
 		return false, fmt.Errorf("import application secret: %w", err)
 	}
@@ -93,7 +98,10 @@ func DeleteAppSecret(ctx context.Context, db *sql.DB, name string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if _, err := db.ExecContext(ctx, `DELETE FROM app_secrets WHERE name = ?`, name); err != nil {
+	if err := Write(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM app_secrets WHERE name = ?`, name)
+		return err
+	}); err != nil {
 		return fmt.Errorf("delete application secret: %w", err)
 	}
 	return nil

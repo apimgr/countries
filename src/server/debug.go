@@ -17,8 +17,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const debugBodyLimit = 10 * 1024
-
 var debugSensitiveFields = map[string]struct{}{
 	"authorization": {}, "token": {}, "session": {}, "code": {}, "key": {},
 	"password": {}, "secret": {}, "auth": {}, "pwd": {}, "api_key": {},
@@ -33,17 +31,43 @@ func (s *Server) debugMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		var requestBody []byte
-		if r.Body != nil && r.ContentLength != 0 {
-			requestBody, _ = io.ReadAll(io.LimitReader(r.Body, debugBodyLimit+1))
+		bodyLimit := s.config.Server.Debug.BodyLogLimit()
+		captureLimit := 0
+		if s.config.Server.Debug.LogBodies {
+			captureLimit = int(bodyLimit)
+		}
+		if captureLimit > 0 && r.Body != nil && r.ContentLength != 0 {
+			requestBody, _ = io.ReadAll(io.LimitReader(r.Body, bodyLimit+1))
 			r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(requestBody), r.Body))
-			if len(requestBody) > debugBodyLimit {
-				requestBody = requestBody[:debugBodyLimit]
+			if int64(len(requestBody)) > bodyLimit {
+				requestBody = requestBody[:bodyLimit]
 			}
 		}
-		wrapped := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		wrapped := &debugResponseWriter{
+			WrapResponseWriter: middleware.NewWrapResponseWriter(w, r.ProtoMajor),
+			limit:              captureLimit,
+		}
 		next.ServeHTTP(wrapped, r)
-		s.debugLog(r, wrapped.Status(), time.Since(started), wrapped.BytesWritten(), requestBody)
+		s.debugLog(r, wrapped.Status(), time.Since(started), wrapped.BytesWritten(), requestBody, wrapped.body, wrapped.Header().Get("Content-Type"))
 	})
+}
+
+type debugResponseWriter struct {
+	middleware.WrapResponseWriter
+	limit int
+	body  []byte
+}
+
+func (w *debugResponseWriter) Write(body []byte) (int, error) {
+	remaining := w.limit + 1 - len(w.body)
+	if remaining > 0 {
+		if len(body) > remaining {
+			w.body = append(w.body, body[:remaining]...)
+		} else {
+			w.body = append(w.body, body...)
+		}
+	}
+	return w.WrapResponseWriter.Write(body)
 }
 
 func sanitizeDebugBody(body []byte, contentType string) string {
@@ -86,6 +110,12 @@ func redactDebugValue(value interface{}) {
 				typed[name] = "[redacted]"
 				continue
 			}
+			if strings.EqualFold(name, "url") || strings.HasSuffix(strings.ToLower(name), "_url") {
+				if raw, ok := child.(string); ok && strings.TrimSpace(raw) != "" {
+					typed[name] = sanitizeDebugURL(raw)
+					continue
+				}
+			}
 			redactDebugValue(child)
 		}
 	case []interface{}:
@@ -108,7 +138,7 @@ func isDebugSensitiveField(name string) bool {
 	return false
 }
 
-func (s *Server) debugLog(r *http.Request, status int, duration time.Duration, size int, requestBody []byte) {
+func (s *Server) debugLog(r *http.Request, status int, duration time.Duration, size int, requestBody, responseBody []byte, responseContentType string) {
 	if !appmode.DebugEnabled() {
 		return
 	}
@@ -136,14 +166,22 @@ func (s *Server) debugLog(r *http.Request, status int, duration time.Duration, s
 	if len(requestBody) > 0 {
 		attrs = append(attrs, "request_body", sanitizeDebugBody(requestBody, r.Header.Get("Content-Type")))
 	}
+	if len(responseBody) > 0 {
+		attrs = append(attrs, "response_body", sanitizeDebugBody(responseBody, responseContentType))
+	}
 	slog.Debug("request", attrs...)
 }
 
 func sanitizeDebugURL(raw string) string {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.RawQuery == "" {
-		return raw
+	if err != nil {
+		return "[redacted]"
 	}
+	lower := strings.ToLower(raw)
+	if parsed.Scheme == "" && parsed.Host == "" && (strings.Contains(lower, "password=") || strings.Contains(lower, "passwd=") || strings.Contains(lower, "pwd=") || strings.Contains(lower, "token=") || strings.Contains(lower, "secret=")) {
+		return "[redacted]"
+	}
+	parsed.User = nil
 	query := parsed.Query()
 	for name := range query {
 		if isDebugSensitiveField(name) {
@@ -155,7 +193,7 @@ func sanitizeDebugURL(raw string) string {
 }
 
 func (s *Server) handleDebugConfig(w http.ResponseWriter, r *http.Request) {
-	encoded, err := yaml.Marshal(s.config)
+	encoded, err := yaml.Marshal(s.config.Sanitized())
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Configuration is unavailable")
 		return
@@ -165,6 +203,7 @@ func (s *Server) handleDebugConfig(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Configuration is unavailable")
 		return
 	}
+	redactDebugValue(sanitized)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": sanitized})
 }
 

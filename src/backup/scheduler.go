@@ -5,14 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
+	"os/user"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/apimgr/countries/src/paths"
+	"github.com/apimgr/countries/src/privilege"
 	"github.com/shirou/gopsutil/v3/disk"
 )
 
@@ -103,8 +108,8 @@ func NewScheduler(options ScheduledOptions) (*Scheduler, error) {
 	if options.Now == nil {
 		options.Now = time.Now
 	}
-	if err := os.MkdirAll(absolute, 0700); err != nil {
-		return nil, fmt.Errorf("create backup directory: %w", err)
+	if err := EnsureBackupDir(absolute); err != nil {
+		return nil, err
 	}
 	return &Scheduler{options: options, backupDir: absolute}, nil
 }
@@ -112,12 +117,27 @@ func NewScheduler(options ScheduledOptions) (*Scheduler, error) {
 // RunDaily creates the cumulative incremental against the latest full before
 // creating the new full, both from the same snapshot instant.
 func (s *Scheduler) RunDaily(ctx context.Context) (ScheduleResult, error) {
-	if _, err := s.ApplyRetention(ctx); err != nil {
-		return ScheduleResult{}, fmt.Errorf("initial backup retention sweep: %w", err)
-	}
-	latest, err := s.latestFull(ctx)
-	if err != nil {
-		return ScheduleResult{}, err
+	if err := EnsureBackupDir(s.backupDir); err != nil { return ScheduleResult{}, err }
+	if err := sweepBackupTemporaryFiles(s.backupDir); err != nil { return ScheduleResult{}, fmt.Errorf("backup temporary-file sweep: %w", err) }
+	candidatePath, err := s.newestFullCandidate(ctx)
+	if err != nil { return ScheduleResult{}, err }
+	var latest *Result
+	forceTimestampedFull := false
+	if candidatePath != "" {
+		matches, headerErr := backupPasswordMatches(candidatePath, s.options.Backup.Password)
+		if headerErr != nil {
+			log.Printf("WARN: latest backup base is corrupt; skipping daily incremental: %v", headerErr)
+			forceTimestampedFull = true
+		} else if !matches {
+			log.Printf("INFO: backup encryption password changed; skipping daily incremental")
+			forceTimestampedFull = true
+		} else {
+			verified, verifyErr := Verify(ctx, candidatePath, s.options.Backup.Password, s.options.Backup.Limits)
+			if verifyErr != nil {
+				log.Printf("WARN: latest backup base failed verification; skipping daily incremental: %v", verifyErr)
+				forceTimestampedFull = true
+			} else if verified.Manifest.Type == "full" { latest = &verified }
+		}
 	}
 	if skip, reason, err := s.diskPressure(); err != nil {
 		return ScheduleResult{}, err
@@ -126,9 +146,14 @@ func (s *Scheduler) RunDaily(ctx context.Context) (ScheduleResult, error) {
 	}
 	snapshotAt := s.options.Now().UTC()
 	fullPath := s.fullPath(snapshotAt)
-	if existing, err := Verify(ctx, fullPath, s.options.Backup.Password, s.options.Backup.Limits); err == nil && existing.Manifest.Type == "full" {
+	if forceTimestampedFull { fullPath = s.timestampedFullPath(snapshotAt) }
+	if _, err := os.Lstat(fullPath); err == nil && !forceTimestampedFull {
+		if existing, verifyErr := Verify(ctx, fullPath, s.options.Backup.Password, s.options.Backup.Limits); verifyErr == nil && existing.Manifest.Type == "full" {
 		return ScheduleResult{Skipped: true, SkipReason: "daily full backup already exists for this date"}, nil
-	}
+		}
+		fullPath = s.timestampedFullPath(snapshotAt)
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) { return ScheduleResult{}, err }
+	if _, err := os.Lstat(fullPath); err == nil { return ScheduleResult{}, fmt.Errorf("full backup filename already exists: %s", fullPath) } else if !errors.Is(err, fs.ErrNotExist) { return ScheduleResult{}, err }
 	snapshot, err := CaptureSnapshot(ctx, s.options.Backup)
 	if err != nil {
 		return ScheduleResult{}, fmt.Errorf("capture daily backup snapshot: %w", err)
@@ -170,8 +195,54 @@ func (s *Scheduler) RunDaily(ctx context.Context) (ScheduleResult, error) {
 	return result, nil
 }
 
+// EnsureBackupDir creates and secures the configured backup directory and verifies it is writable.
+func EnsureBackupDir(path string) error {
+	mode := os.FileMode(0700)
+	if privilege.IsElevated() { mode = 0755 }
+	if err := paths.EnsureDir(path); err != nil { return backupDirectoryError(path, mode, err) }
+	if err := os.Chmod(path, mode); err != nil { return backupDirectoryError(path, mode, err) }
+	probe, err := os.CreateTemp(path, ".countries-backup-probe-*")
+	if err != nil { return backupDirectoryError(path, mode, err) }
+	probePath := probe.Name()
+	if err := probe.Close(); err != nil { _ = os.Remove(probePath); return backupDirectoryError(path, mode, err) }
+	if err := os.Remove(probePath); err != nil { return backupDirectoryError(path, mode, err) }
+	return nil
+}
+
+func backupDirectoryError(path string, expectedMode os.FileMode, cause error) error {
+	owner := "unknown"
+	mode := expectedMode.String()
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm().String()
+		value := reflect.ValueOf(info.Sys())
+		indirect := reflect.Indirect(value)
+		if indirect.IsValid() && indirect.Kind() == reflect.Struct {
+			uid := indirect.FieldByName("Uid")
+			if uid.IsValid() && uid.CanUint() { if account, err := user.LookupId(strconv.FormatUint(uid.Uint(), 10)); err == nil { owner = account.Username } }
+		}
+	}
+	running := "unknown"
+	if account, err := user.Current(); err == nil { running = account.Username }
+	return fmt.Errorf("backup directory %q (owner %s, mode %s; running user %s) is unavailable: %w", path, owner, mode, running, cause)
+}
+
+func sweepBackupTemporaryFiles(directory string) error {
+	entries, err := os.ReadDir(directory)
+	if err != nil { return err }
+	for _, entry := range entries {
+		if entry.IsDir() { continue }
+		name := entry.Name()
+		if strings.HasPrefix(name, ".backup-verify-") || strings.HasPrefix(name, ".countries-backup-probe-") || strings.HasPrefix(name, ".countries-backup-partial-") {
+			if err := os.Remove(filepath.Join(directory, name)); err != nil && !errors.Is(err, fs.ErrNotExist) { return err }
+		}
+	}
+	return nil
+}
+
 // RunHourly creates a cumulative incremental against the newest full archive.
 func (s *Scheduler) RunHourly(ctx context.Context) (ScheduleResult, error) {
+	if err := EnsureBackupDir(s.backupDir); err != nil { return ScheduleResult{}, err }
+	if err := sweepBackupTemporaryFiles(s.backupDir); err != nil { return ScheduleResult{}, fmt.Errorf("backup temporary-file sweep: %w", err) }
 	latest, err := s.latestFull(ctx)
 	if err != nil {
 		return ScheduleResult{}, err
@@ -265,15 +336,15 @@ func (s *Scheduler) ApplyRetention(ctx context.Context) ([]string, error) {
 		if item.kind != "daily" && item.kind != "hourly" {
 			continue
 		}
-		manifest, err := readManifest(ctx, item.path, s.options.Backup.Password, s.options.Backup.Limits)
+		baseName, isIncremental, err := incrementalBaseReference(ctx, item.path, s.options.Backup.Limits)
 		if err != nil {
 			return nil, fmt.Errorf("inspect retained incremental %s: %w", item.name, err)
 		}
-		if manifest.Type == "incremental" && manifest.BaseBackup != "" {
-			protectedBases[manifest.BaseBackup] = true
-			incrementalBases[item.name] = manifest.BaseBackup
-			baseReferences[manifest.BaseBackup]++
-			keep[manifest.BaseBackup] = true
+		if isIncremental && baseName != "" {
+			protectedBases[baseName] = true
+			incrementalBases[item.name] = baseName
+			baseReferences[baseName]++
+			keep[baseName] = true
 		}
 	}
 	deleted := make([]string, 0)
@@ -339,17 +410,27 @@ type backupCandidate struct {
 }
 
 func (s *Scheduler) latestFull(ctx context.Context) (*Result, error) {
+	path, err := s.newestFullCandidate(ctx)
+	if err != nil || path == "" { return nil, err }
+	verified, err := Verify(ctx, path, s.options.Backup.Password, s.options.Backup.Limits)
+	if err != nil { return nil, err }
+	if verified.Manifest.Type != "full" { return nil, errors.New("newest backup candidate is not a full backup") }
+	return &verified, nil
+}
+
+func (s *Scheduler) newestFullCandidate(ctx context.Context) (string, error) {
 	entries, err := os.ReadDir(s.backupDir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return "", nil
 	}
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	var latest *Result
+	var latestPath string
+	var latestTime time.Time
 	for _, entry := range entries {
 		if err := contextErr(ctx); err != nil {
-			return nil, err
+			return "", err
 		}
 		if !entry.Type().IsRegular() {
 			continue
@@ -359,18 +440,14 @@ func (s *Scheduler) latestFull(ctx context.Context) (*Result, error) {
 			continue
 		}
 		path := filepath.Join(s.backupDir, entry.Name())
-		verified, err := Verify(ctx, path, s.options.Backup.Password, s.options.Backup.Limits)
-		if err != nil {
-			continue
-		}
-		if verified.Manifest.Type != "full" {
-			continue
-		}
-		if latest == nil || verified.Manifest.SnapshotAt > latest.Manifest.SnapshotAt {
-			latest = &verified
+		info, err := entry.Info(); if err != nil { return "", err }
+		candidateTime := info.ModTime()
+		if _, parsed, ok := s.classifyBackupName(entry.Name()); ok && !parsed.IsZero() { candidateTime = parsed }
+		if latestPath == "" || candidateTime.After(latestTime) {
+			latestPath, latestTime = path, candidateTime
 		}
 	}
-	return latest, nil
+	return latestPath, nil
 }
 
 func (s *Scheduler) diskPressure() (bool, string, error) {
@@ -474,6 +551,12 @@ func (s *Scheduler) fullPath(snapshotAt time.Time) string {
 	return filepath.Join(s.backupDir, s.options.ProjectName+"_backup_"+snapshotAt.Format("2006-01-02")+extension)
 }
 
+func (s *Scheduler) timestampedFullPath(snapshotAt time.Time) string {
+	extension := ".tar.gz"
+	if s.options.Backup.Password != "" { extension += ".enc" }
+	return filepath.Join(s.backupDir, s.options.ProjectName+"_backup_"+snapshotAt.Format("2006-01-02_150405")+extension)
+}
+
 func markNewestMatching(backups []backupCandidate, keep map[string]bool, count int, predicate func(backupCandidate) bool) {
 	marked := 0
 	for index := len(backups) - 1; index >= 0 && marked < count; index-- {
@@ -490,6 +573,19 @@ func readManifest(ctx context.Context, path, password string, limits Limits) (Ma
 		return Manifest{}, err
 	}
 	return verified.Manifest, nil
+}
+
+func incrementalBaseReference(ctx context.Context, path string, limits Limits) (string, bool, error) {
+	header, encrypted, err := readEncryptedBackupHeader(path)
+	if err != nil { return "", false, err }
+	if encrypted {
+		if header.baseBackup == "" { return "", false, errors.New("encrypted incremental header has no base reference") }
+		return header.baseBackup, true, nil
+	}
+	manifest, err := readManifest(ctx, path, "", limits)
+	if err != nil { return "", false, err }
+	if manifest.Type != "incremental" || manifest.BaseBackup == "" { return "", false, errors.New("incremental archive has no valid base reference") }
+	return manifest.BaseBackup, true, nil
 }
 
 func parseSizeCap(value, volume string, usage DiskUsageFunc) (int64, error) {

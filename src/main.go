@@ -31,7 +31,9 @@ import (
 	"github.com/apimgr/countries/src/auditlog"
 	"github.com/apimgr/countries/src/backup"
 	"github.com/apimgr/countries/src/common/api"
+	"github.com/apimgr/countries/src/common/i18n"
 	"github.com/apimgr/countries/src/common/logbuffer"
+	"github.com/apimgr/countries/src/common/network"
 	"github.com/apimgr/countries/src/config"
 	"github.com/apimgr/countries/src/countries"
 	"github.com/apimgr/countries/src/database"
@@ -45,6 +47,7 @@ import (
 	backgroundscheduler "github.com/apimgr/countries/src/scheduler"
 	"github.com/apimgr/countries/src/securitydata"
 	"github.com/apimgr/countries/src/server"
+	"github.com/apimgr/countries/src/server/banner"
 	"github.com/apimgr/countries/src/service"
 	"github.com/apimgr/countries/src/ssl"
 	"github.com/apimgr/countries/src/updater"
@@ -52,6 +55,9 @@ import (
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
+
+var unresolvedFQDNWarning sync.Once
+var errUpdateStaged = errors.New("update downloaded and staged; restart with elevated privileges to apply it")
 
 //go:embed data/countries.json
 var countryData embed.FS
@@ -80,21 +86,85 @@ func init() {
 
 const projectName = "countries"
 
+func selectServerLanguage(flagValue, configValue string) string {
+	for _, value := range []string{flagValue, configValue} {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" || value == "auto" {
+			continue
+		}
+		if i18n.IsSupported(value) {
+			return value
+		}
+		return "en"
+	}
+	for _, name := range []string{"LC_ALL", "LANG"} {
+		value := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+		value = strings.SplitN(strings.SplitN(value, ".", 2)[0], "_", 2)[0]
+		if value == "" {
+			continue
+		}
+		if i18n.IsSupported(value) {
+			return value
+		}
+		return "en"
+	}
+	return "en"
+}
+
+func localDatabasePath(cfg *config.Config, dataDir string) string {
+	if isRemoteDatabase(cfg.Server.Database.Driver, cfg.Server.Database.URL) {
+		return filepath.Join(paths.GetDatabaseDir(dataDir), "server.db")
+	}
+	databasePath := strings.ReplaceAll(cfg.Server.Database.URL, "{data_dir}", dataDir)
+	if cfg.Server.Database.URL == "" || cfg.Server.Database.URL == "{data_dir}/db/server.db" {
+		return filepath.Join(paths.GetDatabaseDir(dataDir), "server.db")
+	}
+	return databasePath
+}
+
+func isRemoteDatabase(driver, connectionURL string) bool {
+	driver = strings.ToLower(strings.TrimSpace(driver))
+	urlScheme := strings.ToLower(strings.SplitN(connectionURL, "://", 2)[0])
+	return driver == "libsql" || driver == "turso" || urlScheme == "libsql" || urlScheme == "https" || urlScheme == "http"
+}
+
 var updaterReleaseURL = "https://api.github.com/repos/apimgr/countries/releases?per_page=100"
 
 func main() {
+	if service.IsWindowsService() {
+		err := service.RunWindowsService(func(ctx context.Context) error {
+			if code := runWithContext(ctx); code != 0 {
+				return fmt.Errorf("server exited with status %d", code)
+			}
+			return nil
+		})
+		if err != nil {
+			log.Printf("Windows service stopped with error: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
 	os.Exit(run())
 }
 
 func run() int {
+	return runWithContext(context.Background())
+}
+
+func runWithContext(serviceContext context.Context) int {
+	if preScanCommandHelp(os.Args[1:]) {
+		return 0
+	}
 	logbuffer.Install()
-	startedElevated := updater.CanApplyStaged()
+	startedElevated := privilege.IsElevated()
 	configDir, dataDir, logsDir := paths.GetDefaultDirs(projectName)
 	cacheDir := paths.GetCacheDir(projectName)
 	backupDirResolved := paths.GetBackupDir(projectName)
 
 	port := flag.String("port", "", "Server port (overrides config)")
 	address := flag.String("address", "", "Server address (overrides config)")
+	baseURL := flag.String("baseurl", "", "URL path prefix (overrides config)")
+	langFlag := flag.String("lang", "", "Language for command output")
 	configDirFlag := flag.String("config", "", "Configuration directory")
 	dataDirFlag := flag.String("data", "", "Data directory")
 	cacheDirFlag := flag.String("cache", "", "Cache directory")
@@ -105,6 +175,7 @@ func run() int {
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	color := flag.String("color", "auto", "Color output: auto, yes, no")
 	status := flag.Bool("status", false, "Check service status (for healthcheck)")
+	shellCmd := flag.String("shell", "", "Shell integration: completions, init, or help")
 	daemon := flag.Bool("daemon", false, "Run as background daemon")
 	i2pFlag := flag.Bool("i2p", false, "Enable the I2P eepsite")
 	help := flag.Bool("help", false, "Show help")
@@ -162,6 +233,18 @@ func run() int {
 		printVersion()
 		os.Exit(0)
 	}
+	if *shellCmd != "" {
+		args := flag.Args()
+		shell := ""
+		if len(args) > 0 {
+			shell = args[0]
+		}
+		if err := runServerShell(*shellCmd, shell); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 64
+		}
+		return 0
+	}
 
 	if *configDirFlag != "" {
 		configDir = *configDirFlag
@@ -198,7 +281,37 @@ func run() int {
 	if envBackup := os.Getenv("BACKUP_DIR"); envBackup != "" && *backupDirFlag == "" {
 		backupDirResolved = envBackup
 	}
+	for _, directory := range []*string{&configDir, &dataDir, &cacheDir, &logsDir, &backupDirResolved} {
+		safe, err := paths.SafeDirPath(*directory)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid directory path: %v\n", err)
+			return 64
+		}
+		*directory = safe
+	}
 	configPath := filepath.Join(configDir, "server.yml")
+	if *serviceCmd == "--install" && startedElevated && runtime.GOOS != "windows" {
+		databaseDir := paths.GetDatabaseDir(dataDir)
+		if err := paths.EnsureDirs(configDir, dataDir, logsDir, cacheDir, backupDirResolved, databaseDir, filepath.Join(configDir, "yaml.d"), filepath.Join(configDir, "ssl")); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to prepare service directories: %v\n", err)
+			os.Exit(1)
+		}
+		identity, err := ensureServiceAccount(projectName, dataDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to prepare service account: %v\n", err)
+			os.Exit(1)
+		}
+		if identity.Created || identity.GroupCreated {
+			if err := service.RecordServiceAccount(identity, projectName); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to record service account: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		if err := chownServicePaths(identity, configDir, dataDir, logsDir, cacheDir, backupDirResolved, databaseDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to secure service directories: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	if *serviceCmd != "" {
 		handleServiceCommand(*serviceCmd, configDir, dataDir, cacheDir, logsDir, backupDirResolved)
 		return 0
@@ -229,8 +342,11 @@ func run() int {
 			os.Exit(78)
 		}
 		command, args := resolveUpdateInvocation(updateCmd.value, flag.Args())
-		if err := handleUpdateCommandWithArgs(command, cfg, args, configPath); err != nil {
+		if err := handleUpdateCommandWithArgsElevation(command, cfg, args, startedElevated, dataDir, configPath); err != nil {
 			log.Printf("Update command failed: %v", err)
+			if errors.Is(err, errUpdateStaged) {
+				return 75
+			}
 			os.Exit(1)
 		}
 		return 0
@@ -246,15 +362,24 @@ func run() int {
 		return 0
 	}
 	var startupUpdateErr error
-	if startedElevated {
+	if startedElevated && runtime.GOOS != "windows" {
 		if executable, executableErr := os.Executable(); executableErr != nil {
 			startupUpdateErr = fmt.Errorf("resolve executable for staged update: %w", executableErr)
-		} else if applied, applyErr := updater.ApplyStaged(dataDir, executable, Version, buildEpoch()); applyErr != nil {
-			startupUpdateErr = applyErr
-		} else if applied {
-			if restartErr := updater.RestartSelf(); restartErr != nil {
-				startupUpdateErr = fmt.Errorf("restart after applying staged update: %w", restartErr)
+		} else if stagedVersion, stagedErr := updater.StagedVersion(dataDir); stagedErr == nil {
+			checksumCtx, checksumCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			checksum, checksumErr := updater.ReleaseChecksum(checksumCtx, nil, updaterReleaseURL, stagedVersion, updater.BinaryName(projectName, ""))
+			checksumCancel()
+			if checksumErr != nil {
+				startupUpdateErr = updater.DiscardStaged(dataDir, fmt.Errorf("verify staged update against official release: %w", checksumErr))
+			} else if applied, applyErr := updater.ApplyStagedVerified(dataDir, executable, Version, buildEpoch(), checksum); applyErr != nil {
+				startupUpdateErr = applyErr
+			} else if applied {
+				if restartErr := updater.RestartSelf(); restartErr != nil {
+					startupUpdateErr = fmt.Errorf("restart after applying staged update: %w", restartErr)
+				}
 			}
+		} else if !errors.Is(stagedErr, os.ErrNotExist) {
+			startupUpdateErr = updater.DiscardStaged(dataDir, stagedErr)
 		}
 	}
 
@@ -317,15 +442,8 @@ func run() int {
 			}
 		}
 	}
-	_, configStatErr := os.Stat(configPath)
-	firstConfigRun := os.IsNotExist(configStatErr)
-	if firstConfigRun {
-		legacyConfigPath := strings.TrimSuffix(configPath, ".yml") + ".yaml"
-		if _, legacyErr := os.Stat(legacyConfigPath); legacyErr == nil {
-			firstConfigRun = false
-		}
-	}
-	if firstConfigRun && strings.TrimSpace(*port) == "" {
+	generatedInitialPort := strings.TrimSpace(*port) == "" && strings.TrimSpace(os.Getenv("PORT")) == "" && strings.TrimSpace(startupSettings.Port) == ""
+	if generatedInitialPort {
 		initialPort, portErr := config.SelectInitialServerPort(os.Getenv("PORT"))
 		if portErr != nil {
 			log.Fatalf("Failed to select initial server port: %v", portErr)
@@ -333,6 +451,16 @@ func run() int {
 		startupSettings.Port = initialPort
 	}
 	serverPort := resolveServerPort(*port, os.Getenv("PORT"), startupSettings.Port)
+	_, _, portErr := resolveServerListeners(serverPort, false)
+	invalidConfiguredPort := portErr != nil && strings.TrimSpace(*port) == "" && strings.TrimSpace(os.Getenv("PORT")) == ""
+	if portErr != nil {
+		fallbackPort, fallbackErr := config.SelectInitialServerPort("")
+		if fallbackErr != nil {
+			log.Fatalf("Failed to select a replacement server port: %v", fallbackErr)
+		}
+		log.Printf("WARN: invalid server port %q; using %s", serverPort, fallbackPort)
+		serverPort = fallbackPort
+	}
 	serverAddress := resolveServerAddress(*address, os.Getenv("LISTEN"), startupSettings.Address)
 	serverAddress, addressFallback, addressErr := fallbackIPv4ListenerAddress(serverAddress)
 	if addressErr != nil {
@@ -392,18 +520,18 @@ func run() int {
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
-	if firstConfigRun && cfg.Server.Port != serverPort {
+	if *baseURL != "" {
+		cfg.Server.BaseURL = *baseURL
+	}
+	cfg.Lang = selectServerLanguage(*langFlag, cfg.Lang)
+	if (generatedInitialPort && cfg.Server.Port != serverPort) || invalidConfiguredPort {
 		cfg.Server.Port = serverPort
 		if err := config.SaveNodeConfiguration(configPath, cfg); err != nil {
-			log.Fatalf("Failed to save selected first-run server port: %v", err)
+			log.Fatalf("Failed to save selected server port: %v", err)
 		}
 	}
 	if envValue, exists := os.LookupEnv("I2P_ENABLED"); exists {
-		if enabled, parseErr := config.ParseBool(envValue, cfg.Server.I2P.Enabled); parseErr == nil {
-			cfg.Server.I2P.Enabled = enabled
-		} else {
-			log.Printf("Invalid I2P_ENABLED boolean; using configured value")
-		}
+		cfg.Server.I2P.Enabled = config.ParseBoolOrDefault("I2P_ENABLED", envValue, cfg.Server.I2P.Enabled)
 	}
 	if i2pFlagSet {
 		cfg.Server.I2P.Enabled = *i2pFlag
@@ -414,9 +542,17 @@ func run() int {
 	}
 	if debugFlagSet {
 		appmode.SetDebugEnabled(*debug)
-	} else if debugValue, set := os.LookupEnv("DEBUG"); set {
-		appmode.SetDebugEnabled(config.IsTruthy(debugValue))
+	} else if debugValue, set := os.LookupEnv("DEBUG"); set && debugValue != "" {
+		appmode.SetDebugEnabled(config.ParseBoolOrDefault("DEBUG", debugValue, appmode.DebugEnabled()))
 	}
+	if appmode.DebugEnabled() {
+		runtime.SetBlockProfileRate(cfg.Server.Debug.BlockProfileRate)
+		runtime.SetMutexProfileFraction(cfg.Server.Debug.MutexProfileFraction)
+	} else {
+		runtime.SetBlockProfileRate(0)
+		runtime.SetMutexProfileFraction(0)
+	}
+	database.SetDebugQueryLogging(cfg.Server.Debug.LogQueries)
 	sslEnabled := cfg.Server.SSL.Enabled || cfg.Server.SSL.LetsEncrypt.Enabled
 	httpPort, httpsPort, listenerErr = resolveServerListeners(serverPort, sslEnabled)
 	if listenerErr != nil {
@@ -455,21 +591,24 @@ func run() int {
 	server.Commit = CommitID
 	server.BuildDate = BuildDate
 
-	driver := strings.ToLower(strings.TrimSpace(cfg.Server.Database.Driver))
-	if driver == "" || driver == "sqlite2" || driver == "sqlite3" {
-		driver = "sqlite"
-	}
-	if driver != "sqlite" {
-		fmt.Fprintf(os.Stderr, "Unsupported database driver %q\n", cfg.Server.Database.Driver)
-		os.Exit(78)
-	}
-	databasePath := strings.ReplaceAll(cfg.Server.Database.URL, "{data_dir}", dataDir)
-	if cfg.Server.Database.URL == "" || cfg.Server.Database.URL == "{data_dir}/db/server.db" {
-		databasePath = filepath.Join(paths.GetDatabaseDir(dataDir), "server.db")
-	}
-	db, err := database.Open(databasePath)
+	databasePath := localDatabasePath(cfg, dataDir)
+	maxLifetime, _ := time.ParseDuration(cfg.Server.Database.Pool.MaxLifetime)
+	maxIdleTime, _ := time.ParseDuration(cfg.Server.Database.Pool.MaxIdleTime)
+	db, err := database.OpenConfigured(database.DatabaseOptions{
+		Driver:  cfg.Server.Database.Driver,
+		URL:     cfg.Server.Database.URL,
+		Token:   cfg.Server.Database.Token,
+		DataDir: dataDir,
+		Pool:    database.PoolOptions{MaxOpen: cfg.Server.Database.Pool.MaxOpen, MaxIdle: cfg.Server.Database.Pool.MaxIdle, MaxLifetime: maxLifetime, MaxIdleTime: maxIdleTime},
+		Cache:   database.ReplicaOptions{Enabled: cfg.Server.Database.Cache.Enabled, Path: cfg.Server.Database.Cache.Path, SyncInterval: cfg.Server.Database.Cache.SyncInterval, OfflineMode: cfg.Server.Database.Cache.OfflineMode, MaxAge: cfg.Server.Database.Cache.MaxAge},
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize server database: %v\n", err)
+		os.Exit(70)
+	}
+	if err := RecoverPGPRotation(context.Background(), db, filepath.Join(configDir, "security")); err != nil {
+		log.Printf("FATAL: could not recover PGP key rotation: %v", err)
+		_ = database.Close(db)
 		os.Exit(70)
 	}
 	if err := config.MigrateConfigLayout(configPath); err != nil {
@@ -489,12 +628,15 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "Failed to initialize generated server secrets: %v\n", err)
 		os.Exit(70)
 	}
+	for _, key := range cfg.GeneratedSecrets {
+		recordConfigSecretAudit(logsDir, key)
+	}
 	if err := RecoverPendingSecretRotations(context.Background(), db, cfg, configDir, logsDir, time.Now().UTC()); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to finish pending secret rotation; server startup stopped.")
 		os.Exit(70)
 	}
 	defer func() {
-		if err := db.Close(); err != nil {
+		if err := database.Close(db); err != nil {
 			log.Printf("Failed to close server database: %v", err)
 		}
 	}()
@@ -521,8 +663,14 @@ func run() int {
 			if openErr := manager.Open(); openErr != nil {
 				log.Printf("GeoIP database load incomplete; country checks will fail open: %v", openErr)
 			}
-			if missing := manager.MissingDatabases(); len(missing) > 0 {
-				log.Printf("Downloading missing GeoIP databases: %s", strings.Join(missing, ", "))
+			missing := manager.MissingDatabases()
+			stale := manager.IsStale(time.Now().UTC(), 21*24*time.Hour)
+			if len(missing) > 0 || stale {
+				if len(missing) > 0 {
+					log.Printf("Downloading missing GeoIP databases: %s", strings.Join(missing, ", "))
+				} else {
+					log.Printf("Refreshing stale GeoIP databases")
+				}
 				updateCtx, cancelUpdate := context.WithTimeout(context.Background(), 8*time.Minute)
 				if updateErr := manager.Update(updateCtx); updateErr != nil {
 					log.Printf("GeoIP initial database update incomplete; country checks will fail open: %v", updateErr)
@@ -566,13 +714,31 @@ func run() int {
 	if emailErr != nil {
 		log.Printf("SMTP connection failed; email notifications disabled until next startup: %v", emailErr)
 	}
+	defer emailManager.Close()
 	if startupUpdateErr != nil {
 		log.Printf("update.failed error=%q", startupUpdateErr.Error())
 		recordUpdateAudit(logsDir, "update.failed", "error", "failure", nil)
 		notifySchedulerFailure(emailManager, "Update installation", startupUpdateErr)
+		if notifyErr := emailManager.Notify("update_failed", map[string]string{"version": Version, "new_version": Version, "current_version": Version, "error": startupUpdateErr.Error()}); notifyErr != nil {
+			log.Printf("Could not send update failure notification: %v", notifyErr)
+		}
 	}
 	log.Printf("email.configured=%t", cfg.Server.Notifications.Email.Enabled)
+	cacheTimeout, _ := time.ParseDuration(cfg.Server.Cache.Timeout)
+	cacheClient, cacheErr := database.OpenCache(database.CacheOptions{
+		Type: cfg.Server.Cache.Type, URL: cfg.Server.Cache.URL, Host: cfg.Server.Cache.Host,
+		Port: cfg.Server.Cache.Port, Username: cfg.Server.Cache.Username, Password: cfg.Server.Cache.Password,
+		Database: cfg.Server.Cache.Database, TLS: cfg.Server.Cache.TLS, TLSSkipVerify: cfg.Server.Cache.TLSSkipVerify,
+		TLSCA: cfg.Server.Cache.TLSCA, TLSCert: cfg.Server.Cache.TLSCert, TLSKey: cfg.Server.Cache.TLSKey,
+		ConfigDir: configDir, PoolSize: cfg.Server.Cache.PoolSize, MinIdle: cfg.Server.Cache.MinIdle, Timeout: cacheTimeout,
+	})
+	if cacheErr != nil {
+		log.Printf("WARN: cache unavailable; database-backed rate limiting will remain active")
+	}
 	srv := server.New(countriesService, cfg, serverAddress, serverPort, Version, BuildDate, CommitID, db)
+	srv.SetCacheClient(cacheClient, cacheErr)
+	srv.SetDataDir(dataDir)
+	srv.SetNotificationManager(emailManager)
 	srv.SetMetricsDataDir(dataDir)
 	if geoIPManager != nil {
 		srv.SetGeoIPManager(geoIPManager)
@@ -590,11 +756,20 @@ func run() int {
 		healthStore.RefreshChecks(context.Background())
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(serviceContext)
 	defer cancel()
 	var backgroundScheduler *backgroundscheduler.Scheduler
 	configWatcher := config.NewConfigWatcher(configPath, cfg, func(_, next *config.Config, restartSettings []string) {
 		*cfg = *next
+		if *baseURL != "" {
+			cfg.Server.BaseURL = *baseURL
+		}
+		cfg.Lang = selectServerLanguage(*langFlag, cfg.Lang)
+		database.SetDebugQueryLogging(cfg.Server.Debug.LogQueries)
+		if appmode.DebugEnabled() {
+			runtime.SetBlockProfileRate(cfg.Server.Debug.BlockProfileRate)
+			runtime.SetMutexProfileFraction(cfg.Server.Debug.MutexProfileFraction)
+		}
 		srv.ApplyReloadedConfig(cfg)
 		emailManager.Config = cfg
 		emailManager.Sender.Config = smtpSenderConfig(cfg.Server.Notifications.Email.SMTP)
@@ -602,11 +777,6 @@ func run() int {
 		if backgroundScheduler != nil {
 			if err := updateSchedulerConfiguration(backgroundScheduler, cfg.Server.Scheduler); err != nil {
 				log.Printf("WARN: could not apply scheduler configuration: %v", err)
-			}
-		}
-		if !debugFlagSet {
-			if _, set := os.LookupEnv("DEBUG"); !set {
-				appmode.SetDebugEnabled(cfg.Server.Debug)
 			}
 		}
 		srv.SetPendingRestart(len(restartSettings) > 0, restartSettings)
@@ -618,7 +788,7 @@ func run() int {
 	backupSchedule, backupScheduleErr := backup.NewScheduler(backup.ScheduledOptions{
 		ProjectName: projectName, BackupDir: backupDir,
 		Backup: backup.Options{
-			ConfigDir: configDir, DataDir: dataDir, DatabasePath: databasePath,
+			ConfigDir: configDir, DataDir: dataDir, DatabasePath: databasePath, DatabaseDriver: cfg.Server.Database.Driver,
 			BackupDir: backupDir, AppVersion: Version, CreatedBy: "scheduler",
 			Password: cfg.Server.Backup.Password, Compliance: cfg.Server.Compliance.Enabled,
 			Limits: backupLimits(cfg.Server.Restore),
@@ -749,7 +919,11 @@ func run() int {
 			line := time.Now().UTC().Format(time.RFC3339) + " [" + strings.ToUpper(level) + "] " + fmt.Sprintf(format, args...) + "\n"
 			schedulerLogMu.Lock()
 			defer schedulerLogMu.Unlock()
-			_, _ = (logbuffer.Writer{Buffer: logbuffer.Default(), Output: schedulerLogFile}).Write([]byte(line))
+			if _, writeErr := (logbuffer.Writer{Buffer: logbuffer.Default(), Output: schedulerLogFile}).Write([]byte(line)); writeErr != nil {
+				if _, stderrErr := fmt.Fprintf(os.Stderr, "scheduler log write failed: %v\n", writeErr); stderrErr != nil {
+					log.Print("scheduler log write failed and stderr is unavailable")
+				}
+			}
 		},
 	})
 	if taskConfig, ok := cfg.Server.Scheduler.Tasks["geoip_update"]; ok && taskConfig.Enabled && cfg.Server.GeoIP.Enabled {
@@ -812,11 +986,7 @@ func run() int {
 				}
 				srv.RecordScheduledTaskEnd("healthcheck_self", time.Since(started), checkErr, time.Now())
 				if checkErr != nil {
-					if db.PingContext(taskCtx) != nil {
-						if notifyErr := emailManager.Notify("database_error", map[string]string{"error": "database health check failed", "since": time.Now().UTC().Format(time.RFC3339)}); notifyErr != nil {
-							log.Printf("Could not send database error notification: %v", notifyErr)
-						}
-					} else {
+					if db.PingContext(taskCtx) == nil {
 						notifySchedulerFailure(emailManager, "Self health check", checkErr)
 					}
 				}
@@ -824,6 +994,79 @@ func run() int {
 			},
 		}); err != nil {
 			log.Printf("Could not register self health check task: %v", err)
+		}
+	}
+	if taskConfig, ok := cfg.Server.Scheduler.Tasks["database_check"]; ok && taskConfig.Enabled {
+		repeat, _ := time.ParseDuration(cfg.Server.Notifications.DatabaseError.Repeat)
+		retryInterval, _ := time.ParseDuration(cfg.Server.Maintenance.SelfHealing.RetryInterval)
+		if retryInterval <= 0 {
+			retryInterval = 30 * time.Second
+		}
+		monitor := &backgroundscheduler.DatabaseMonitor{
+			Failures: cfg.Server.Notifications.DatabaseError.Failures,
+			Repeat:   repeat,
+			Probe: func(ctx context.Context) error {
+				return probeDatabaseHandles(ctx, db)
+			},
+			Notify: func(since time.Time, message string) {
+				if notifyErr := emailManager.Notify("database_error", map[string]string{
+					"error": message, "since": since.Format(time.RFC3339),
+				}); notifyErr != nil {
+					log.Printf("Could not send database error notification: %v", notifyErr)
+				}
+			},
+			Logf: func(level, format string, args ...any) { log.Printf("%s: %s", level, fmt.Sprintf(format, args...)) },
+		}
+		selfHealingExhausted := false
+		if err := backgroundScheduler.Register(backgroundscheduler.Task{
+			ID: "database_check", Name: "Database connection check", Schedule: taskConfig.Schedule,
+			Enabled: true, Func: func(taskCtx context.Context) error {
+				if selfHealingExhausted {
+					return nil
+				}
+				started := time.Now()
+				srv.RecordScheduledTaskStart("database_check")
+				var checkErr error
+			retryLoop:
+				for {
+					checkErr = monitor.Check(taskCtx)
+					if checkErr == nil {
+						if srv.IsMaintenanceMode() {
+							log.Print("Issue resolved, exiting maintenance mode")
+							srv.SetMaintenanceMode(false)
+							if notifyErr := emailManager.Notify("scheduler_error", map[string]string{"task_name": "Database connection", "error": "Database connection recovered"}); notifyErr != nil {
+								log.Printf("Could not send database recovery notification: %v", notifyErr)
+							}
+						}
+						break
+					}
+					attempts, since := monitor.State()
+					maximum := cfg.Server.Maintenance.SelfHealing.MaxAttempts
+					exhausted := maximum > 0 && attempts >= maximum
+					srv.SetSelfHealingState("database_connection", since, attempts, exhausted)
+					if exhausted {
+						selfHealingExhausted = true
+						recordSelfHealingExhaustedAudit(logsDir, "database_connection", attempts)
+						if notifyErr := emailManager.Notify("scheduler_error", map[string]string{"task_name": "Database connection", "error": "Self-healing attempts exhausted; operator action is required"}); notifyErr != nil {
+							log.Printf("Could not send self-healing exhaustion notification: %v", notifyErr)
+						}
+						break
+					}
+					timer := time.NewTimer(retryInterval)
+					select {
+					case <-taskCtx.Done():
+						timer.Stop()
+						checkErr = taskCtx.Err()
+						break retryLoop
+					case <-timer.C:
+						continue
+					}
+				}
+				srv.RecordScheduledTaskEnd("database_check", time.Since(started), checkErr, time.Now())
+				return checkErr
+			},
+		}); err != nil {
+			log.Printf("Could not register database check task: %v", err)
 		}
 	}
 	if overlayManager.TorBinaryFound() {
@@ -954,9 +1197,15 @@ func run() int {
 									log.Printf("update.failed version=%q error=%q", release.TagName, stageErr.Error())
 									recordUpdateAudit(logsDir, "update.failed", "error", "failure", map[string]any{"version": release.TagName})
 									notifySchedulerFailure(emailManager, "Update installation", stageErr)
+									if notifyErr := emailManager.Notify("update_failed", map[string]string{"version": release.TagName, "new_version": release.TagName, "current_version": Version, "error": stageErr.Error()}); notifyErr != nil {
+										log.Printf("Could not send update failure notification: %v", notifyErr)
+									}
 								} else {
 									recordUpdateAudit(logsDir, "update.staged", "info", "success", map[string]any{"version": release.TagName})
 									log.Printf("Update staged: %s", release.TagName)
+									if notifyErr := emailManager.Notify("update_staged", map[string]string{"version": release.TagName, "new_version": release.TagName, "current_version": Version, "command": "restart to apply"}); notifyErr != nil {
+										log.Printf("Could not send update staged notification: %v", notifyErr)
+									}
 									select {
 									case reasonChan <- "update restart":
 									default:
@@ -969,7 +1218,7 @@ func run() int {
 								log.Printf("Automatic update install skipped: server did not start elevated")
 							}
 						}
-						if notifyErr := emailManager.Notify("update_available", map[string]string{"version": release.TagName, "current_version": Version, "command": manualCommand}); notifyErr != nil {
+						if notifyErr := emailManager.Notify("update_available", map[string]string{"version": release.TagName, "new_version": release.TagName, "current_version": Version, "channel": cfg.Server.Update.Branch, "command": manualCommand}); notifyErr != nil {
 							log.Printf("Could not send update notification: %v", notifyErr)
 						}
 						if secretErr := database.SetAppSecret(taskCtx, db, "update_notified_version", release.TagName, time.Now().UTC()); checkErr == nil {
@@ -1003,7 +1252,9 @@ func run() int {
 				srv.RecordScheduledTaskEnd("backup_daily", time.Since(started), runErr, time.Now())
 				if runErr != nil {
 					notifySchedulerFailure(emailManager, "Daily backup", runErr)
-					_ = emailManager.Notify("backup_failed", map[string]string{"error": runErr.Error(), "timestamp": time.Now().UTC().Format(time.RFC3339)})
+					if notifyErr := emailManager.Notify("backup_failed", map[string]string{"error": runErr.Error(), "timestamp": time.Now().UTC().Format(time.RFC3339)}); notifyErr != nil {
+						log.Printf("Could not send backup failure notification: %v", notifyErr)
+					}
 				} else if result.Full != nil {
 					if notifyErr := emailManager.Notify("backup_complete", map[string]string{"filename": filepath.Base(result.Full.Path), "size": strconv.FormatInt(result.Full.Size, 10)}); notifyErr != nil {
 						log.Printf("Could not send backup completion notification: %v", notifyErr)
@@ -1031,7 +1282,9 @@ func run() int {
 				srv.RecordScheduledTaskEnd("backup_hourly", time.Since(started), runErr, time.Now())
 				if runErr != nil {
 					notifySchedulerFailure(emailManager, "Hourly backup", runErr)
-					_ = emailManager.Notify("backup_failed", map[string]string{"error": runErr.Error(), "timestamp": time.Now().UTC().Format(time.RFC3339)})
+					if notifyErr := emailManager.Notify("backup_failed", map[string]string{"error": runErr.Error(), "timestamp": time.Now().UTC().Format(time.RFC3339)}); notifyErr != nil {
+						log.Printf("Could not send backup failure notification: %v", notifyErr)
+					}
 				}
 				return runErr
 			},
@@ -1058,20 +1311,22 @@ func run() int {
 		}
 	}
 	if len(cfg.Web.Security.Keyservers) > 0 {
-		if err := backgroundScheduler.Register(backgroundscheduler.Task{
-			ID: "pgp_keyserver_retry", Name: "PGP keyserver publication retries", Schedule: "@every 1m", Enabled: true,
-			Func: func(taskCtx context.Context) error {
-				started := time.Now()
-				srv.RecordScheduledTaskStart("pgp_keyserver_retry")
-				retryErr := retryPGPPublication(taskCtx, cfg, db, configDir, time.Now().UTC())
-				srv.RecordScheduledTaskEnd("pgp_keyserver_retry", time.Since(started), retryErr, time.Now())
-				if retryErr != nil {
-					notifySchedulerFailure(emailManager, "PGP keyserver publication", retryErr)
-				}
-				return retryErr
-			},
-		}); err != nil {
-			log.Printf("Could not register PGP keyserver retry task: %v", err)
+		if taskConfig, ok := cfg.Server.Scheduler.Tasks["keyserver_retry"]; ok && taskConfig.Enabled {
+			if err := backgroundScheduler.Register(backgroundscheduler.Task{
+				ID: "keyserver_retry", Name: "PGP keyserver publication retries", Schedule: taskConfig.Schedule, Enabled: true, RetryOnFail: taskConfig.RetryOnFail, RetryDelay: taskRetryDelay(taskConfig.RetryDelay),
+				Func: func(taskCtx context.Context) error {
+					started := time.Now()
+					srv.RecordScheduledTaskStart("keyserver_retry")
+					retryErr := retryPGPPublication(taskCtx, cfg, db, configDir, time.Now().UTC())
+					srv.RecordScheduledTaskEnd("keyserver_retry", time.Since(started), retryErr, time.Now())
+					if retryErr != nil {
+						notifySchedulerFailure(emailManager, "PGP keyserver publication", retryErr)
+					}
+					return retryErr
+				},
+			}); err != nil {
+				log.Printf("Could not register PGP keyserver retry task: %v", err)
+			}
 		}
 	}
 	if taskConfig, ok := cfg.Server.Scheduler.Tasks["log_rotation"]; ok && taskConfig.Enabled {
@@ -1170,6 +1425,29 @@ func run() int {
 	if primaryAddr == "" {
 		primaryAddr = httpsAddr
 	}
+	startupURLs := make([]string, 0, 2)
+	if portNumber, err := strconv.Atoi(httpPort); err == nil && portNumber > 0 {
+		if displayURL := network.GetDisplayURL(projectName, portNumber, false); displayURL != "" {
+			startupURLs = append(startupURLs, displayURL)
+		}
+	}
+	if portNumber, err := strconv.Atoi(httpsPort); err == nil && portNumber > 0 {
+		if displayURL := network.GetDisplayURL(projectName, portNumber, true); displayURL != "" {
+			startupURLs = append(startupURLs, displayURL)
+		}
+	}
+	if len(startupURLs) == 0 {
+		unresolvedFQDNWarning.Do(func() { log.Printf("WARN: could not resolve server FQDN; display URLs are unavailable") })
+	}
+	var forceColor *bool
+	if strings.EqualFold(*color, "yes") {
+		value := true
+		forceColor = &value
+	} else if strings.EqualFold(*color, "no") {
+		value := false
+		forceColor = &value
+	}
+	banner.PrintServerStartupBanner(projectName, Version, string(appmode.Get()), startupURLs, forceColor, cfg.Lang)
 	log.Printf("Starting countries server on %s", primaryAddr)
 	serverDone := make(chan error, 1)
 	go func() {
@@ -1191,6 +1469,9 @@ func run() int {
 	gracefulShutdown := ctx.Err() != nil
 	backgroundScheduler.Stop()
 	srv.SetSchedulerRunning(false)
+	if err := srv.CloseCache(); err != nil {
+		log.Printf("WARN: failed to flush rate-limit counters or close cache: %v", err)
+	}
 	cancel()
 	overlayManager.Close()
 	<-healthRefreshDone
@@ -1220,6 +1501,33 @@ func run() int {
 	return 0
 }
 
+func preScanCommandHelp(args []string) bool {
+	for index := 0; index < len(args); index++ {
+		name, value, hasValue := strings.Cut(args[index], "=")
+		if name != "--shell" && name != "--service" && name != "--maintenance" && name != "--update" {
+			continue
+		}
+		if !hasValue && index+1 < len(args) {
+			value = args[index+1]
+		}
+		if value != "--help" && value != "-h" && value != "help" {
+			continue
+		}
+		switch name {
+		case "--shell":
+			_ = runServerShell("help", "")
+		case "--service":
+			fmt.Println("Service commands: start, stop, restart, reload, status, --install, --uninstall, --disable")
+		case "--maintenance":
+			fmt.Println("Maintenance commands: backup, restore, update, mode, setup, pgp, security, secret, token, data, compliance, scheduler, email, tor")
+		case "--update":
+			fmt.Println("Update commands: check, yes, branch {stable|beta|devel}")
+		}
+		return true
+	}
+	return false
+}
+
 func recordUpdateAudit(logDir, eventName, severity, result string, details map[string]any) {
 	err := auditlog.Write(logDir, auditlog.Event{
 		Event: eventName, Category: "update", Severity: severity,
@@ -1227,6 +1535,26 @@ func recordUpdateAudit(logDir, eventName, severity, result string, details map[s
 	}, time.Now().UTC())
 	if err != nil {
 		log.Printf("Could not record audit event %s: %v", eventName, err)
+	}
+}
+
+func recordConfigSecretAudit(logDir, key string) {
+	if err := auditlog.Write(logDir, auditlog.Event{
+		Event: "config.secret_generated", Category: "config", Severity: "info",
+		Actor: auditlog.Actor{Type: "system", ID: projectName}, Result: "success",
+		Details: map[string]any{"key": key},
+	}, time.Now().UTC()); err != nil {
+		log.Printf("Could not record generated config secret event: %v", err)
+	}
+}
+
+func recordSelfHealingExhaustedAudit(logDir, reason string, attempts int) {
+	if err := auditlog.Write(logDir, auditlog.Event{
+		Event: "server.self_healing_exhausted", Category: "server", Severity: "critical",
+		Actor: auditlog.Actor{Type: "system", ID: projectName}, Result: "failure",
+		Details: map[string]any{"reason": reason, "attempts": attempts},
+	}, time.Now().UTC()); err != nil {
+		log.Printf("Could not record self-healing exhaustion audit event: %v", err)
 	}
 }
 
@@ -1238,12 +1566,40 @@ func taskRetryDelay(value string) time.Duration {
 	return delay
 }
 
+func probeDatabaseHandles(ctx context.Context, db *sql.DB) error {
+	if db == nil {
+		return fmt.Errorf("database handle is unavailable")
+	}
+	for handle := 0; handle < 2; handle++ {
+		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		connection, err := db.Conn(probeCtx)
+		if err != nil {
+			cancel()
+			return err
+		}
+		var result int
+		err = connection.QueryRowContext(probeCtx, "SELECT 1").Scan(&result)
+		closeErr := connection.Close()
+		cancel()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
+}
+
 func runSecurityCleanup(ctx context.Context, db *sql.DB, configDir, logsDir string, retentionDays int, now time.Time) error {
 	if retentionDays <= 0 {
 		retentionDays = 365
 	}
 	cutoff := now.AddDate(0, 0, -retentionDays)
-	if _, err := db.ExecContext(ctx, `DELETE FROM security_reports WHERE closed_at IS NOT NULL AND closed_at <= ?`, cutoff); err != nil {
+	if err := database.Write(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM security_reports WHERE closed_at IS NOT NULL AND closed_at <= ?`, cutoff)
+		return err
+	}); err != nil {
 		return fmt.Errorf("delete expired closed security reports: %w", err)
 	}
 	if err := CleanupExpiredSecretRotationRows(ctx, db, logsDir, now); err != nil {
@@ -1356,14 +1712,16 @@ func updateSchedulerConfiguration(scheduler *backgroundscheduler.Scheduler, cfg 
 }
 
 func notificationFQDN(cfg *config.Config) string {
-	if host := strings.TrimSpace(cfg.Server.FQDN); host != "" && !strings.EqualFold(host, "localhost") {
-		return host
+	if cfg != nil {
+		if configured := strings.TrimSpace(cfg.Server.FQDN); configured != "" {
+			return configured
+		}
 	}
-	host, err := os.Hostname()
-	if err == nil && strings.TrimSpace(host) != "" {
-		return strings.TrimSpace(host)
+	host := network.GetFQDN(projectName)
+	if host == "" {
+		unresolvedFQDNWarning.Do(func() { log.Printf("WARN: could not resolve server FQDN; URLs will be omitted") })
 	}
-	return "localhost"
+	return host
 }
 
 func notificationHostname() string {
@@ -1775,6 +2133,68 @@ func resolveRuntimeMode(cliMode, envMode, configured string) string {
 	return configured
 }
 
+func runServerShell(command, shell string) error {
+	binary := filepath.Base(os.Args[0])
+	if shell == "" {
+		shell = filepath.Base(os.Getenv("SHELL"))
+	}
+	if shell == "" || shell == "." || shell == "/" {
+		shell = "bash"
+	}
+	if command == "help" || command == "--help" || command == "-h" {
+		_, err := fmt.Fprintf(os.Stdout, "%s shell integration:\n  --shell completions [SHELL]  Print shell completions\n  --shell init [SHELL]         Print shell init command\n  SHELL: bash, zsh, fish, sh, dash, ksh, powershell, pwsh\n", binary)
+		return err
+	}
+	if command != "completions" && command != "init" {
+		return fmt.Errorf("usage: --shell [completions|init|help] [SHELL]")
+	}
+	supported := map[string]bool{"bash": true, "zsh": true, "fish": true, "sh": true, "dash": true, "ksh": true, "powershell": true, "pwsh": true}
+	if !supported[shell] {
+		return fmt.Errorf("unsupported shell %q", shell)
+	}
+	quoted := "'" + strings.ReplaceAll(binary, "'", "'\\''") + "'"
+	if command == "init" {
+		switch shell {
+		case "bash", "zsh":
+			_, err := fmt.Fprintf(os.Stdout, "source <(%s --shell completions %s)\n", quoted, shell)
+			return err
+		case "fish":
+			_, err := fmt.Fprintf(os.Stdout, "%s --shell completions fish | source\n", quoted)
+			return err
+		case "sh", "dash", "ksh":
+			_, err := fmt.Fprintf(os.Stdout, "eval \"$(%s --shell completions %s)\"\n", quoted, shell)
+			return err
+		default:
+			_, err := fmt.Fprintf(os.Stdout, "Invoke-Expression (& '%s' --shell completions %s)\n", strings.ReplaceAll(binary, "'", "''"), shell)
+			return err
+		}
+	}
+	commands := "--help --version --status --shell --service --maintenance --update --config --data --cache --log --backup --pid --address --port --baseurl --daemon --debug --i2p --color --lang --mode"
+	function := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return '_'
+	}, binary)
+	switch shell {
+	case "bash":
+		_, err := fmt.Fprintf(os.Stdout, "_%s_complete() {\n  local cur=\"${COMP_WORDS[COMP_CWORD]}\"\n  COMPREPLY=( $(compgen -W %q -- \"$cur\") )\n}\ncomplete -F _%s_complete %s\n", function, commands, function, quoted)
+		return err
+	case "zsh":
+		_, err := fmt.Fprintf(os.Stdout, "#compdef %s\n_arguments '*:argument:(%s)'\n", binary, commands)
+		return err
+	case "fish":
+		_, err := fmt.Fprintf(os.Stdout, "complete -c %s -f -a '%s'\n", binary, strings.ReplaceAll(commands, " ", " "))
+		return err
+	case "powershell", "pwsh":
+		_, err := fmt.Fprintf(os.Stdout, "Register-ArgumentCompleter -Native -CommandName '%s' -ScriptBlock { param($wordToComplete) '%s'.Split(' ') | Where-Object { $_ -like \"$wordToComplete*\" } }\n", strings.ReplaceAll(binary, "'", "''"), commands)
+		return err
+	default:
+		_, err := fmt.Fprintf(os.Stdout, "_%s_complete() { COMPREPLY=%q; }\n", function, commands)
+		return err
+	}
+}
+
 func printHelp() {
 	name := filepath.Base(os.Args[0])
 	fmt.Printf(`Countries API Server v%s
@@ -1783,6 +2203,7 @@ Usage: %s [options]
 
 Options:
   --port PORT          Server port (default: from config or random 64xxx; container: 80)
+  --baseurl PATH       URL path prefix (default: /)
   --address ADDRESS    Server address (default: from config or [::])
   --config DIR         Configuration directory
   --data DIR           Data directory
@@ -1792,6 +2213,9 @@ Options:
   --debug              Enable debug logging
   --daemon             Run as a background daemon
   --color auto|yes|no  Color output (NO_COLOR is honored in auto mode)
+  --lang CODE          Language for output (default: auto)
+  --shell completions [SHELL]  Print shell completions
+  --shell init [SHELL]         Print shell init command
   --status             Check service status (for healthcheck)
   --i2p               Enable the I2P eepsite (default on in a container)
   -h, --help           Show this help message
@@ -1810,12 +2234,13 @@ Service Commands:
   --service restart    Restart the service
   --service reload     Reload configuration
   --service status     Show service status
-  --service --install  Install as system service
+  --service --install  Install as system or user service
   --service --uninstall Remove system service
   --service --disable  Disable the service
 
 Maintenance Commands:
   --maintenance backup [file]   Backup configuration and data
+  --maintenance backup test <file> Verify a backup archive
   --maintenance restore [file]  Restore from backup
   --maintenance update          Check for and install updates
   --maintenance mode            Show current application mode
@@ -1934,18 +2359,29 @@ func newSSLManager(cfg *config.Config, configDir string, hasHTTPSListener bool) 
 }
 
 func sslDomains(cfg *config.Config) []string {
-	values := strings.Split(strings.TrimSpace(os.Getenv("DOMAIN")), ",")
-	if len(values) == 1 && values[0] == "" {
-		values = strings.Split(strings.TrimSpace(cfg.Server.FQDN), ",")
+	values := make([]string, 0)
+	detectedDomains := network.GetAllDomains()
+	if strings.TrimSpace(os.Getenv("DOMAIN")) == "" && cfg != nil && strings.TrimSpace(cfg.Server.FQDN) != "" {
+		detectedDomains = []string{cfg.Server.FQDN}
 	}
-	if len(values) == 1 && values[0] == "" {
-		values = []string{notificationFQDN(cfg)}
+	for _, domain := range detectedDomains {
+		if !isOverlayDomain(domain) {
+			values = append(values, domain)
+		}
+	}
+	if len(values) == 0 {
+		if fqdn := notificationFQDN(cfg); fqdn != "" {
+			values = []string{fqdn}
+		}
 	}
 	domains := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
 		domain := strings.TrimSpace(value)
 		if domain == "" {
+			continue
+		}
+		if isOverlayDomain(domain) {
 			continue
 		}
 		key := strings.ToLower(domain)
@@ -1956,6 +2392,11 @@ func sslDomains(cfg *config.Config) []string {
 		domains = append(domains, domain)
 	}
 	return domains
+}
+
+func isOverlayDomain(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	return strings.HasSuffix(lower, ".onion") || strings.HasSuffix(lower, ".i2p") || strings.HasSuffix(lower, ".exit")
 }
 
 func dnsCredentialsFingerprint(provider string, credentials map[string]string) string {
@@ -2054,6 +2495,29 @@ func handleMaintenanceCommand(cmd, configDir, dataDir, logsDir, configPath strin
 
 	switch cmd {
 	case "backup":
+		if len(args) > 0 && args[0] == "test" {
+			if len(args) != 2 {
+				fmt.Fprintln(os.Stderr, "Usage: countries --maintenance backup test <backup-file>")
+				os.Exit(64)
+			}
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
+				os.Exit(1)
+			}
+			password, err := promptBackupPassword(args[1], os.Stdin, os.Stderr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to read backup password: %v\n", err)
+				os.Exit(1)
+			}
+			verified, err := backup.Verify(context.Background(), args[1], password, backupLimits(cfg.Server.Restore))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Backup verification failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Backup verified: %s (version %s, %s)\n", args[1], verified.Manifest.AppVersion, verified.Manifest.Type)
+			return
+		}
 		cfg, err := config.Load(configPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
@@ -2071,6 +2535,10 @@ func handleMaintenanceCommand(cmd, configDir, dataDir, logsDir, configPath strin
 				extension += ".enc"
 			}
 			backupFile = filepath.Join(backupDir, fmt.Sprintf("countries_backup_%s%s", time.Now().UTC().Format("2006-01-02_150405"), extension))
+		}
+		if err := backup.EnsureBackupDir(filepath.Dir(backupFile)); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to prepare backup directory: %v\n", err)
+			os.Exit(1)
 		}
 		options, err := manualBackupOptions(configDir, dataDir, cfg, includeSSL, includeData)
 		if err == nil {
@@ -2091,22 +2559,45 @@ func handleMaintenanceCommand(cmd, configDir, dataDir, logsDir, configPath strin
 			fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 			os.Exit(1)
 		}
-		databasePath := strings.ReplaceAll(cfg.Server.Database.URL, "{data_dir}", dataDir)
-		if cfg.Server.Database.URL == "" || cfg.Server.Database.URL == "{data_dir}/db/server.db" {
-			databasePath = filepath.Join(paths.GetDatabaseDir(dataDir), "server.db")
-		}
-		if err := authorizeRestore(cfg, databasePath, privilege.IsElevated(), os.Stdin, os.Stderr); err != nil {
-			fmt.Fprintf(os.Stderr, "Restore authorization failed: %v\n", err)
-			os.Exit(1)
-		}
+		databasePath := localDatabasePath(cfg, dataDir)
 		password, err := promptBackupPassword(args[0], os.Stdin, os.Stderr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to read backup password: %v\n", err)
 			os.Exit(1)
 		}
+		var remoteDatabase *sql.DB
+		if isRemoteDatabase(cfg.Server.Database.Driver, cfg.Server.Database.URL) {
+			maxLifetime, _ := time.ParseDuration(cfg.Server.Database.Pool.MaxLifetime)
+			maxIdleTime, _ := time.ParseDuration(cfg.Server.Database.Pool.MaxIdleTime)
+			remoteDatabase, err = database.OpenConfigured(database.DatabaseOptions{Driver: cfg.Server.Database.Driver, URL: cfg.Server.Database.URL, Token: cfg.Server.Database.Token, DataDir: dataDir, SkipSchema: true, Pool: database.PoolOptions{MaxOpen: cfg.Server.Database.Pool.MaxOpen, MaxIdle: cfg.Server.Database.Pool.MaxIdle, MaxLifetime: maxLifetime, MaxIdleTime: maxIdleTime}})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Failed to connect to configured remote database")
+				os.Exit(1)
+			}
+			defer func() { _ = remoteDatabase.Close() }()
+		}
+		if err := authorizeRestore(cfg, databasePath, remoteDatabase, privilege.IsElevated(), os.Stdin, os.Stderr); err != nil {
+			fmt.Fprintf(os.Stderr, "Restore authorization failed: %v\n", err)
+			os.Exit(1)
+		}
+		verified, verifyErr := backup.Verify(context.Background(), args[0], password, backupLimits(cfg.Server.Restore))
+		if verifyErr != nil {
+			fmt.Fprintf(os.Stderr, "Backup verification failed: %v\n", verifyErr)
+			os.Exit(1)
+		}
+		if verified.Manifest.AppVersion != Version {
+			fmt.Fprintf(os.Stderr, "Warning: backup was created by version %s; current version is %s. Schema updates may be applied during restore.\n", verified.Manifest.AppVersion, Version)
+		}
+		if remoteDatabase != nil {
+			if err := database.EnsureSchema(context.Background(), remoteDatabase); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to initialize remote database schema: %v\n", err)
+				os.Exit(1)
+			}
+		}
 		_, err = backup.Restore(context.Background(), args[0], password, backup.RestoreOptions{
 			ConfigDir: configDir, DataDir: dataDir, DatabasePath: databasePath,
-			Limits: backupLimits(cfg.Server.Restore),
+			RemoteDatabase: remoteDatabase,
+			Limits:         backupLimits(cfg.Server.Restore),
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to restore backup: %v\n", err)
@@ -2123,8 +2614,11 @@ func handleMaintenanceCommand(cmd, configDir, dataDir, logsDir, configPath strin
 		if len(args) > 0 {
 			command = args[0]
 		}
-		if err := handleUpdateCommand(command, cfg, configPath); err != nil {
+		if err := handleUpdateCommandWithArgsElevation(command, cfg, args, privilege.IsElevated(), dataDir, configPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Update command failed: %v\n", err)
+			if errors.Is(err, errUpdateStaged) {
+				os.Exit(75)
+			}
 			os.Exit(1)
 		}
 	case "mode":
@@ -2190,13 +2684,10 @@ func manualBackupOptions(configDir, dataDir string, cfg *config.Config, includeS
 	if cfg.Server.Compliance.Enabled && cfg.Server.Backup.Password == "" {
 		return backup.Options{}, errors.New("compliance mode requires server.backup.encryption_password in secrets.yml")
 	}
-	databasePath := strings.ReplaceAll(cfg.Server.Database.URL, "{data_dir}", dataDir)
-	if cfg.Server.Database.URL == "" || cfg.Server.Database.URL == "{data_dir}/db/server.db" {
-		databasePath = filepath.Join(paths.GetDatabaseDir(dataDir), "server.db")
-	}
+	databasePath := localDatabasePath(cfg, dataDir)
 	backupDir := paths.GetBackupDir(projectName)
 	return backup.Options{
-		ConfigDir: configDir, DataDir: dataDir, DatabasePath: databasePath,
+		ConfigDir: configDir, DataDir: dataDir, DatabasePath: databasePath, DatabaseDriver: cfg.Server.Database.Driver,
 		BackupDir: backupDir, AppVersion: Version, CreatedBy: "operator",
 		Password: cfg.Server.Backup.Password, Compliance: cfg.Server.Compliance.Enabled,
 		IncludeSSL: includeSSL, IncludeData: includeData, Limits: backupLimits(cfg.Server.Restore),
@@ -2215,16 +2706,16 @@ func promptBackupPassword(path string, input *os.File, output *os.File) (string,
 	if err != nil {
 		return "", err
 	}
-	var prefix [len("COUNTRIES-BACKUP-V1\x00")]byte
-	n, readErr := file.Read(prefix[:])
+	var prefix [len("BKUP1")]byte
+	n, readErr := io.ReadFull(file, prefix[:])
 	closeErr := file.Close()
-	if readErr != nil && !errors.Is(readErr, io.EOF) {
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
 		return "", readErr
 	}
 	if closeErr != nil {
 		return "", closeErr
 	}
-	if n < len(prefix) || string(prefix[:]) != "COUNTRIES-BACKUP-V1\x00" {
+	if n < len(prefix) || string(prefix[:]) != "BKUP1" {
 		return "", nil
 	}
 	if !term.IsTerminal(int(input.Fd())) {
@@ -2240,8 +2731,14 @@ func promptBackupPassword(path string, input *os.File, output *os.File) (string,
 	return string(password), err
 }
 
-func authorizeRestore(cfg *config.Config, databasePath string, root bool, input *os.File, output *os.File) error {
-	empty, err := restoreDatabaseIsEmpty(databasePath)
+func authorizeRestore(cfg *config.Config, databasePath string, remoteDatabase *sql.DB, root bool, input *os.File, output *os.File) error {
+	var empty bool
+	var err error
+	if remoteDatabase != nil {
+		empty, err = remoteRestoreDatabaseIsEmpty(context.Background(), remoteDatabase)
+	} else {
+		empty, err = restoreDatabaseIsEmpty(databasePath)
+	}
 	if err != nil {
 		return err
 	}
@@ -2283,6 +2780,63 @@ func authorizeRestore(cfg *config.Config, databasePath string, root bool, input 
 	return nil
 }
 
+func remoteRestoreDatabaseIsEmpty(ctx context.Context, db *sql.DB) (bool, error) {
+	rows, err := db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'srv_%'`)
+	if err != nil {
+		return false, fmt.Errorf("inspect remote database schema: %w", err)
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			_ = rows.Close()
+			return false, err
+		}
+		tables = append(tables, name)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, err
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	if len(tables) == 0 {
+		return true, nil
+	}
+	for _, remoteName := range tables {
+		canonical := strings.TrimPrefix(remoteName, "srv_")
+		quotedName := `"` + strings.ReplaceAll(remoteName, `"`, `""`) + `"`
+		var count int64
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+quotedName).Scan(&count); err != nil {
+			return false, fmt.Errorf("inspect remote database table %s: %w", canonical, err)
+		}
+		if count == 0 {
+			continue
+		}
+		if canonical == "config_meta" {
+			var version int
+			if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM `+quotedName).Scan(&version); err != nil {
+				return false, err
+			}
+			if count == 1 && version == 1 {
+				continue
+			}
+		}
+		if canonical == "health_request_stats" {
+			var requests int64
+			if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(requests_total), 0) FROM `+quotedName).Scan(&requests); err != nil {
+				return false, err
+			}
+			if count == 1 && requests == 0 {
+				continue
+			}
+		}
+		return false, nil
+	}
+	return true, nil
+}
+
 func restoreDatabaseIsEmpty(databasePath string) (bool, error) {
 	if info, err := os.Stat(databasePath); os.IsNotExist(err) {
 		return true, nil
@@ -2295,15 +2849,34 @@ func restoreDatabaseIsEmpty(databasePath string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("inspect current database: %w", err)
 	}
-	defer func() { _ = db.Close() }()
-	for _, table := range []string{"owners", "api_tokens", "security_reports", "backups"} {
+	defer func() { _ = database.Close(db) }()
+	for _, table := range []string{"owners", "api_tokens", "app_secrets", "audit_log", "backups", "captcha_challenges", "config", "config_meta", "health_request_hours", "health_request_stats", "pgp_keys", "rate_limits", "scheduler_history", "scheduler_tasks", "security_reports", "security_thanks"} {
 		var count int64
 		if err := db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil {
 			return false, fmt.Errorf("inspect current database table %s: %w", table, err)
 		}
-		if count > 0 {
-			return false, nil
+		if count == 0 {
+			continue
 		}
+		if table == "config_meta" {
+			var version int
+			if err := db.QueryRowContext(context.Background(), "SELECT COALESCE(MAX(version),0) FROM config_meta").Scan(&version); err != nil {
+				return false, err
+			}
+			if count == 1 && version == 1 {
+				continue
+			}
+		}
+		if table == "health_request_stats" {
+			var requests int64
+			if err := db.QueryRowContext(context.Background(), "SELECT COALESCE(MAX(requests_total),0) FROM health_request_stats").Scan(&requests); err != nil {
+				return false, err
+			}
+			if count == 1 && requests == 0 {
+				continue
+			}
+		}
+		return false, nil
 	}
 	return true, nil
 }
@@ -2364,6 +2937,10 @@ func handleUpdateCommand(cmd string, cfg *config.Config, configPaths ...string) 
 }
 
 func handleUpdateCommandWithArgs(cmd string, cfg *config.Config, args []string, configPaths ...string) error {
+	return handleUpdateCommandWithArgsElevation(cmd, cfg, args, privilege.IsElevated(), paths.GetDataDir(projectName), configPaths...)
+}
+
+func handleUpdateCommandWithArgsElevation(cmd string, cfg *config.Config, args []string, startedElevated bool, dataDir string, configPaths ...string) error {
 	switch cmd {
 	case "check":
 		release, err := checkUpdate(cfg)
@@ -2389,6 +2966,13 @@ func handleUpdateCommandWithArgs(cmd string, cfg *config.Config, args []string, 
 			return fmt.Errorf("resolve current binary: %w", err)
 		}
 		binaryName := updater.BinaryName(projectName, "")
+		if !startedElevated {
+			if err := updater.Stage(context.Background(), nil, release, binaryName, projectName, dataDir); err != nil {
+				return err
+			}
+			fmt.Printf("Update %s was staged. Run with elevated privileges to apply it.\n", release.TagName)
+			return errUpdateStaged
+		}
 		if err := updater.Install(context.Background(), nil, release, binaryName, projectName, binaryPath); err != nil {
 			return err
 		}

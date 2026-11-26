@@ -31,14 +31,15 @@ import (
 )
 
 type Config struct {
-	ConfigDir   string            `yaml:"-"`
-	Data        DataConfig        `yaml:"data"`
-	Server      ServerConfig      `yaml:"server"`
-	CLI         CLIConfig         `yaml:"cli"`
-	Web         WebConfig         `yaml:"web"`
-	WebUI       WebUIConfig       `yaml:"web-ui"`
-	WebRobots   WebRobotsConfig   `yaml:"web-robots"`
-	WebSecurity WebSecurityConfig `yaml:"web-security"`
+	ConfigDir        string            `yaml:"-"`
+	Lang             string            `yaml:"lang"`
+	GeneratedSecrets []string          `yaml:"-"`
+	Data             DataConfig        `yaml:"data"`
+	Server           ServerConfig      `yaml:"server"`
+	CLI              CLIConfig         `yaml:"cli"`
+	Web              WebConfig         `yaml:"web"`
+	WebUI            WebUIConfig       `yaml:"web-ui"`
+	WebRobots        WebRobotsConfig   `yaml:"web-robots"`
 }
 
 type DataConfig struct {
@@ -63,11 +64,15 @@ type CLIConfig struct {
 }
 
 type CLIBinaryDownloadConfig struct {
+	Dir         string `yaml:"dir"`
 	RequireAuth bool `yaml:"require_auth"`
 }
 
 type WebConfig struct {
 	Headers       WebHeadersConfig       `yaml:"headers"`
+	HSTS          HSTSConfig             `yaml:"hsts"`
+	Reports       ReportsConfig          `yaml:"reports"`
+	CSP           CSPConfig              `yaml:"csp"`
 	Announcements WebAnnouncementsConfig `yaml:"announcements"`
 	LLMS          WebLLMSConfig          `yaml:"llms"`
 	APIContact    string                 `yaml:"api_contact"`
@@ -103,7 +108,43 @@ type AnnouncementConfig struct {
 }
 
 type WebHeadersConfig struct {
+	COOP                    string              `yaml:"coop"`
+	COEP                    string              `yaml:"coep"`
+	CORP                    string              `yaml:"corp"`
+	OriginAgentCluster      bool                `yaml:"origin_agent_cluster"`
+	CrossDomainPolicies     string              `yaml:"cross_domain_policies"`
+	DNSPrefetchControl      string              `yaml:"dns_prefetch_control"`
+	HonorSecGPC             bool                `yaml:"honor_sec_gpc"`
+	HonorDNT                bool                `yaml:"honor_dnt"`
+	SecFetchValidation      bool                `yaml:"sec_fetch_validation"`
+	ServerTimingInDebugOnly bool                `yaml:"server_timing_in_debug_only"`
+	NEL                     NELConfig           `yaml:"nel"`
 	ClearSiteData ClearSiteDataConfig `yaml:"clear_site_data"`
+}
+
+type HSTSConfig struct { Enabled bool `yaml:"enabled"`; MaxAgeSeconds int `yaml:"max_age_seconds"`; IncludeSubdomains bool `yaml:"include_subdomains"`; Preload bool `yaml:"preload"` }
+type ReportsConfig struct { RateLimitPerMinute int `yaml:"rate_limit_per_minute"`; RateLimitPerIPBurst int `yaml:"rate_limit_per_ip_burst"` }
+type NELConfig struct { Enabled bool `yaml:"enabled"`; MaxAgeSeconds int `yaml:"max_age_seconds"`; IncludeSubdomains bool `yaml:"include_subdomains"`; SampleRate float64 `yaml:"sample_rate"` }
+type CSPConfig struct {
+	Enabled bool `yaml:"enabled"`
+	Mode string `yaml:"mode"`
+	ModeExplicit bool `yaml:"-"`
+	ScriptSrcExtra string `yaml:"script_src_extra"`
+	StyleSrcExtra string `yaml:"style_src_extra"`
+	ImgSrcExtra string `yaml:"img_src_extra"`
+	FontSrcExtra string `yaml:"font_src_extra"`
+	ConnectSrcExtra string `yaml:"connect_src_extra"`
+	FrameSrcExtra string `yaml:"frame_src_extra"`
+	FormActionExtra string `yaml:"form_action_extra"`
+	ScriptSrcOverride string `yaml:"script_src_override"`
+	StyleSrcOverride string `yaml:"style_src_override"`
+	ImgSrcOverride string `yaml:"img_src_override"`
+	FontSrcOverride string `yaml:"font_src_override"`
+	ConnectSrcOverride string `yaml:"connect_src_override"`
+	FrameSrcOverride string `yaml:"frame_src_override"`
+	FormActionOverride string `yaml:"form_action_override"`
+	ReportsEnabled bool `yaml:"reports_enabled"`
+	ReportsSampleRate float64 `yaml:"reports_sample_rate"`
 }
 
 type ClearSiteDataConfig struct {
@@ -134,15 +175,19 @@ func (c *ClearSiteDataConfig) UnmarshalYAML(node *yaml.Node) error {
 
 type ServerConfig struct {
 	Port           string                    `yaml:"port"`
+	BaseURL        string                    `yaml:"baseurl"`
 	PIDFile        bool                      `yaml:"pidfile"`
 	Database       DatabaseConfig            `yaml:"database"`
+	CORS           CORSConfig                `yaml:"cors"`
 	FQDN           string                    `yaml:"fqdn"`
 	Address        string                    `yaml:"address"`
 	Mode           string                    `yaml:"mode"`
 	Daemonize      bool                      `yaml:"daemonize"`
-	Debug          bool                      `yaml:"debug"`
+	Debug          DebugConfig               `yaml:"debug"`
 	I18N           I18NConfig                `yaml:"i18n"`
 	Token          string                    `yaml:"-"`
+	Cache          CacheConfig               `yaml:"cache"`
+	CSRF           CSRFConfig                `yaml:"csrf"`
 	Update         UpdateConfig              `yaml:"update"`
 	Tokens         TokensConfig              `yaml:"tokens"`
 	Metrics        MetricsConfig             `yaml:"metrics"`
@@ -166,6 +211,117 @@ type ServerConfig struct {
 	Compliance     ComplianceConfig          `yaml:"compliance"`
 	Restore        RestoreConfig             `yaml:"restore"`
 	Privacy        PrivacyConfig             `yaml:"privacy"`
+	Maintenance    MaintenanceConfig         `yaml:"maintenance"`
+}
+
+type CORSConfig struct {
+	AllowedOrigins  []string `yaml:"allowed_origins"`
+	AllowCredentials bool     `yaml:"allow_credentials"`
+	MaxAge           int      `yaml:"max_age"`
+}
+
+type CSRFConfig struct {
+	Enabled     bool     `yaml:"enabled"`
+	TokenLength int      `yaml:"token_length"`
+	CookieName  string   `yaml:"cookie_name"`
+	HeaderName  string   `yaml:"header_name"`
+	Secure      string   `yaml:"secure"`
+	ExemptPaths []string `yaml:"exempt_paths"`
+}
+
+type MaintenanceConfig struct {
+	SelfHealing SelfHealingConfig `yaml:"self_healing"`
+}
+
+type SelfHealingConfig struct {
+	RetryInterval string `yaml:"retry_interval"`
+	MaxAttempts   int    `yaml:"max_attempts"`
+}
+
+type DebugConfig struct {
+	Pprof                bool   `yaml:"pprof"`
+	LogQueries           bool   `yaml:"log_queries"`
+	LogCache             bool   `yaml:"log_cache"`
+	LogBodies            bool   `yaml:"log_bodies"`
+	MaxBodyLogSize       string `yaml:"max_body_log_size"`
+	BlockProfileRate     int    `yaml:"block_profile_rate"`
+	MutexProfileFraction int    `yaml:"mutex_profile_fraction"`
+	RuntimeEndpoints     bool   `yaml:"runtime_endpoints"`
+}
+
+func (c *DebugConfig) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("server.debug must be a mapping")
+	}
+	for _, field := range []struct {
+		name    string
+		current bool
+		target  *bool
+	}{
+		{name: "pprof", current: c.Pprof, target: &c.Pprof},
+		{name: "log_queries", current: c.LogQueries, target: &c.LogQueries},
+		{name: "log_cache", current: c.LogCache, target: &c.LogCache},
+		{name: "log_bodies", current: c.LogBodies, target: &c.LogBodies},
+		{name: "runtime_endpoints", current: c.RuntimeEndpoints, target: &c.RuntimeEndpoints},
+	} {
+		value, err := parseYAMLBool(mappingValue(node, field.name), field.current)
+		if err != nil {
+			return fmt.Errorf("server.debug.%s: %w", field.name, err)
+		}
+		*field.target = value
+	}
+	if value := mappingValue(node, "max_body_log_size"); value != nil {
+		c.MaxBodyLogSize = value.Value
+		if _, ok := parseDebugBodyLogSize(value.Value); !ok {
+			return fmt.Errorf("server.debug.max_body_log_size: invalid size")
+		}
+	}
+	for _, field := range []struct {
+		name   string
+		target *int
+	}{
+		{name: "block_profile_rate", target: &c.BlockProfileRate},
+		{name: "mutex_profile_fraction", target: &c.MutexProfileFraction},
+	} {
+		value := mappingValue(node, field.name)
+		if value == nil {
+			continue
+		}
+		parsed, err := strconv.Atoi(value.Value)
+		if err != nil || parsed < 0 {
+			return fmt.Errorf("server.debug.%s: invalid non-negative integer", field.name)
+		}
+		*field.target = parsed
+	}
+	return nil
+}
+
+// BodyLogLimit returns the configured body logging limit in bytes.
+func (c DebugConfig) BodyLogLimit() int64 {
+	if limit, ok := parseDebugBodyLogSize(c.MaxBodyLogSize); ok {
+		return limit
+	}
+	return 10 * 1024
+}
+
+func parseDebugBodyLogSize(value string) (int64, bool) {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	unit := int64(1)
+	for _, suffix := range []struct {
+		name string
+		base int64
+	}{{"KIB", 1024}, {"MIB", 1024 * 1024}, {"KB", 1024}, {"MB", 1024 * 1024}, {"B", 1}} {
+		if strings.HasSuffix(value, suffix.name) {
+			unit = suffix.base
+			value = strings.TrimSpace(strings.TrimSuffix(value, suffix.name))
+			break
+		}
+	}
+	amount, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || amount < 1 || amount > int64(^uint64(0)>>1)/unit {
+		return 0, false
+	}
+	return amount * unit, true
 }
 
 type BackupConfig struct {
@@ -204,6 +360,8 @@ func runningInContainer() bool {
 
 type TorConfig struct {
 	Binary                    string `yaml:"binary"`
+	Expose                    bool   `yaml:"expose"`
+	ContactEmail              string `yaml:"contact_email"`
 	UseNetwork                bool   `yaml:"use_network"`
 	MaxCircuits               int    `yaml:"max_circuits"`
 	StartupTimeout            int    `yaml:"startup_timeout"`
@@ -221,6 +379,7 @@ type TorConfig struct {
 
 type I2PConfig struct {
 	Enabled          bool   `yaml:"enabled"`
+	Expose           bool   `yaml:"expose"`
 	Binary           string `yaml:"binary"`
 	SAMAddress       string `yaml:"sam_address"`
 	VirtualPort      int    `yaml:"virtual_port"`
@@ -390,7 +549,7 @@ type PagesConfig struct {
 }
 
 type HelpPagesConfig struct {
-	Content string `yaml:"content"`
+	Content any    `yaml:"content"`
 	MCP     string `yaml:"mcp"`
 }
 
@@ -462,9 +621,10 @@ type ContactAntispamConfig struct {
 }
 
 type ServerNotificationsConfig struct {
-	WebUI   NotificationWebUIConfig       `yaml:"webui"`
-	Email   ServerNotificationEmailConfig `yaml:"email"`
-	DiskLow DiskLowNotificationConfig     `yaml:"disk_low"`
+	WebUI         NotificationWebUIConfig         `yaml:"webui"`
+	Email         ServerNotificationEmailConfig   `yaml:"email"`
+	DatabaseError DatabaseErrorNotificationConfig `yaml:"database_error"`
+	DiskLow       DiskLowNotificationConfig       `yaml:"disk_low"`
 }
 type ServerNotificationEmailConfig struct {
 	SMTP    SMTPConfig                    `yaml:"smtp"`
@@ -498,6 +658,8 @@ type NotificationEmailEventsConfig struct {
 	SchedulerError   bool `yaml:"scheduler_error"`
 	UpdateAvailable  bool `yaml:"update_available"`
 	UpdateInstalled  bool `yaml:"update_installed"`
+	UpdateFailed     bool `yaml:"update_failed"`
+	UpdateStaged     bool `yaml:"update_staged"`
 }
 
 type NotificationWebUIConfig struct {
@@ -513,14 +675,61 @@ type DiskLowNotificationConfig struct {
 	Repeat           string `yaml:"repeat"`
 }
 
+type DatabaseErrorNotificationConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	Failures      int    `yaml:"failures"`
+	CheckInterval string `yaml:"check_interval"`
+	Repeat        string `yaml:"repeat"`
+}
+
 type PublicContactConfig struct {
-	Name  string `yaml:"name"`
-	Email string `yaml:"email"`
+	Name           string            `yaml:"name"`
+	Email          string            `yaml:"email"`
+	Webhooks       map[string]string `yaml:"webhooks,omitempty"`
+	WebhookSecrets map[string]string `yaml:"-"`
 }
 
 type DatabaseConfig struct {
-	Driver string `yaml:"driver"`
-	URL    string `yaml:"url"`
+	Driver string             `yaml:"driver"`
+	URL    string             `yaml:"url"`
+	Token  string             `yaml:"-"`
+	Pool   DatabasePoolConfig `yaml:"pool"`
+	Cache  DatabaseCacheConfig `yaml:"cache"`
+}
+
+type DatabaseCacheConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	Path         string `yaml:"path"`
+	SyncInterval string `yaml:"sync_interval"`
+	OfflineMode  bool   `yaml:"offline_mode"`
+	MaxAge       string `yaml:"max_age"`
+}
+
+type DatabasePoolConfig struct {
+	MaxOpen     int    `yaml:"max_open"`
+	MaxIdle     int    `yaml:"max_idle"`
+	MaxLifetime string `yaml:"max_lifetime"`
+	MaxIdleTime string `yaml:"max_idle_time"`
+}
+
+type CacheConfig struct {
+	Type             string `yaml:"type"`
+	URL              string `yaml:"url"`
+	Host             string `yaml:"host"`
+	Port             int    `yaml:"port"`
+	Username         string `yaml:"username"`
+	Password         string `yaml:"-"`
+	Database         int    `yaml:"db"`
+	TLS              bool   `yaml:"tls"`
+	TLSSkipVerify     bool   `yaml:"tls_skip_verify"`
+	TLSCA             string `yaml:"tls_ca"`
+	TLSCert           string `yaml:"tls_cert"`
+	TLSKey            string `yaml:"tls_key"`
+	PoolSize          int    `yaml:"pool_size"`
+	MinIdle           int    `yaml:"min_idle"`
+	Timeout           string `yaml:"timeout"`
+	Prefix            string `yaml:"prefix"`
+	TTL               string `yaml:"ttl"`
 }
 
 type UpdateConfig struct {
@@ -710,10 +919,6 @@ type WebRobotsConfig struct {
 	Deny  []string `yaml:"deny"`
 }
 
-type WebSecurityConfig struct {
-	CORS string `yaml:"cors"`
-}
-
 func defaultSchedulerConfig() SchedulerConfig {
 	return SchedulerConfig{
 		Timezone: "America/New_York", CatchUpWindow: "1h",
@@ -729,6 +934,8 @@ func defaultSchedulerConfig() SchedulerConfig {
 			"backup_daily":     {Enabled: true, Schedule: "0 2 * * *"},
 			"backup_hourly":    {Enabled: false, Schedule: "@hourly"},
 			"disk_check":       {Enabled: true, Schedule: "@every 5m"},
+			"database_check":   {Enabled: true, Schedule: "@every 1m"},
+			"keyserver_retry":  {Enabled: true, Schedule: "@every 15m"},
 			"healthcheck_self": {Enabled: true, Schedule: "@every 5m"},
 			"tor_health":       {Enabled: true, Schedule: "@every 10m"},
 			"i2p_health":       {Enabled: true, Schedule: "@every 10m"},
@@ -773,14 +980,18 @@ func DefaultMCPHelpProjectContent() string {
 
 func DefaultConfig() *Config {
 	return &Config{
+		Lang: "auto",
 		Data: DataConfig{
 			SecurityDir: "{data_dir}/security",
 			CVE:         CVEDataConfig{Source: "https://services.nvd.nist.gov/rest/json/cves/2.0"},
 			Trivy:       TrivyDataConfig{Source: "ghcr.io/aquasecurity/trivy-db:2"},
 		},
-		CLI: CLIConfig{BinaryDownload: CLIBinaryDownloadConfig{RequireAuth: false}},
+		CLI: CLIConfig{BinaryDownload: CLIBinaryDownloadConfig{Dir: "{data_dir}/cli", RequireAuth: false}},
 		Web: WebConfig{
-			Headers: WebHeadersConfig{ClearSiteData: ClearSiteDataConfig{
+			HSTS: HSTSConfig{Enabled: true, MaxAgeSeconds: 63072000, IncludeSubdomains: true, Preload: true},
+			Reports: ReportsConfig{RateLimitPerMinute: 60, RateLimitPerIPBurst: 10},
+			CSP: CSPConfig{Enabled: true, Mode: "enforce", ReportsEnabled: true, ReportsSampleRate: 1},
+			Headers: WebHeadersConfig{COOP: "unsafe-none", COEP: "unsafe-none", CORP: "cross-origin", OriginAgentCluster: true, CrossDomainPolicies: "none", HonorSecGPC: true, SecFetchValidation: true, ServerTimingInDebugOnly: true, NEL: NELConfig{Enabled: true, MaxAgeSeconds: 2592000, IncludeSubdomains: true, SampleRate: 1}, ClearSiteData: ClearSiteDataConfig{
 				OnTokenRevocation: true, OnConsentWithdrawal: true,
 			}},
 			Announcements: WebAnnouncementsConfig{Enabled: true, Messages: []AnnouncementConfig{}},
@@ -788,10 +999,16 @@ func DefaultConfig() *Config {
 			Security:      WebDisclosureConfig{Keyservers: []string{}},
 		},
 		Server: ServerConfig{
-			Port:     "8080",
-			PIDFile:  true,
-			Database: DatabaseConfig{Driver: "sqlite", URL: "{data_dir}/db/server.db"},
-			FQDN:     "localhost",
+			Port:        "8080",
+			BaseURL:     "/",
+			CORS:        CORSConfig{AllowedOrigins: []string{"*"}, AllowCredentials: true, MaxAge: 86400},
+			Cache:       CacheConfig{Type: "memory", Host: "localhost", Port: 6379, TLSSkipVerify: true, PoolSize: 10, MinIdle: 2, Timeout: "5s", Prefix: "countries:", TTL: "1h"},
+			CSRF:        CSRFConfig{Enabled: true, TokenLength: 32, CookieName: "csrf_token", HeaderName: "X-CSRF-Token", Secure: "auto", ExemptPaths: []string{}},
+			Maintenance: MaintenanceConfig{SelfHealing: SelfHealingConfig{RetryInterval: "30s", MaxAttempts: 0}},
+			Debug:       DebugConfig{Pprof: true, LogQueries: true, LogCache: true, MaxBodyLogSize: "10KB", BlockProfileRate: 1, MutexProfileFraction: 1, RuntimeEndpoints: true},
+			PIDFile:     true,
+			Database:    DatabaseConfig{Driver: "sqlite", URL: "{data_dir}/db/server.db", Pool: DatabasePoolConfig{MaxOpen: 25, MaxIdle: 5, MaxLifetime: "5m", MaxIdleTime: "1m"}, Cache: DatabaseCacheConfig{Enabled: false, Path: "{data_dir}/db/cache.db", SyncInterval: "30s", OfflineMode: true, MaxAge: "1h"}},
+			FQDN:        "localhost",
 			SSL: SSLConfig{MinVersion: "TLS1.2", LetsEncrypt: LetsEncryptSettings{
 				Challenge: "http-01", DNSCredentials: map[string]string{},
 			}},
@@ -812,9 +1029,10 @@ func DefaultConfig() *Config {
 			Mode:           "production",
 			I18N:           I18NConfig{DefaultLanguage: "en", AvailableLanguages: i18n.Languages()},
 			Notifications: ServerNotificationsConfig{
-				WebUI:   NotificationWebUIConfig{Position: "top-right", Duration: 3, WarningDuration: 5},
-				Email:   ServerNotificationEmailConfig{SMTP: SMTPConfig{Port: 587, TLS: "auto"}, Events: NotificationEmailEventsConfig{BackupFailed: true, SSLExpiring: true, SSLRenewalFailed: true, SecurityAlert: true, SchedulerError: true, UpdateInstalled: true}},
-				DiskLow: DiskLowNotificationConfig{Enabled: true, ThresholdPercent: 85, CheckInterval: "5m", Repeat: "24h"},
+				WebUI:         NotificationWebUIConfig{Position: "top-right", Duration: 3, WarningDuration: 5},
+				Email:         ServerNotificationEmailConfig{SMTP: SMTPConfig{Port: 587, TLS: "auto"}, Events: NotificationEmailEventsConfig{BackupFailed: true, SSLExpiring: true, SSLRenewalFailed: true, SecurityAlert: true, SchedulerError: true, UpdateInstalled: true, UpdateFailed: true, UpdateStaged: true}},
+				DatabaseError: DatabaseErrorNotificationConfig{Enabled: true, Failures: 3, CheckInterval: "1m", Repeat: "24h"},
+				DiskLow:       DiskLowNotificationConfig{Enabled: true, ThresholdPercent: 85, CheckInterval: "5m", Repeat: "24h"},
 			},
 			Tokens:   TokensConfig{MaxLinked: 25, CookieMaxAge: "1y", IdlePurgeDays: 0},
 			Privacy:  defaultPrivacyConfig(),
@@ -857,9 +1075,110 @@ func DefaultConfig() *Config {
 			Allow: []string{"/", "/api"},
 			Deny:  []string{"/debug"},
 		},
-		WebSecurity: WebSecurityConfig{
-			CORS: "*",
-		},
+	}
+}
+
+// Sanitized returns a copy of the active configuration with secret values and
+// credentials embedded in database or cache URLs redacted for diagnostics.
+func (cfg *Config) Sanitized() *Config {
+	if cfg == nil {
+		return nil
+	}
+	copy := *cfg
+	copy.Data = cfg.Data
+	copy.Data.CVE.APIKey = "[redacted]"
+	copy.Server = cfg.Server
+	copy.Server.Token = "[redacted]"
+	copy.Server.Database = cfg.Server.Database
+	copy.Server.Database.URL = RedactConnectionURL(cfg.Server.Database.URL)
+	copy.Server.Database.Token = "[redacted]"
+	copy.Server.Cache = cfg.Server.Cache
+	copy.Server.Cache.URL = RedactConnectionURL(cfg.Server.Cache.URL)
+	copy.Server.Cache.Password = "[redacted]"
+	copy.Server.Cache.TLSKey = "[redacted]"
+	copy.Server.Backup = cfg.Server.Backup
+	copy.Server.Backup.Password = "[redacted]"
+	copy.Server.Security = cfg.Server.Security
+	copy.Server.Security.EncryptionKey = "[redacted]"
+	copy.Server.SSL = cfg.Server.SSL
+	copy.Server.SSL.Key = "[redacted]"
+	copy.Server.SSL.LetsEncrypt = cfg.Server.SSL.LetsEncrypt
+	copy.Server.SSL.LetsEncrypt.DNSCredentials = redactStringMap(cfg.Server.SSL.LetsEncrypt.DNSCredentials)
+	copy.Server.Pages = cfg.Server.Pages
+	copy.Server.Pages.Contact.CaptchaSecretKey = "[redacted]"
+	copy.Server.Notifications = cfg.Server.Notifications
+	copy.Server.Notifications.Email.SMTP.Password = "[redacted]"
+	copy.Server.Metrics = cfg.Server.Metrics
+	copy.Server.Metrics.Auth.Tokens = MetricsAuthTokens{Prometheus: "[redacted]", Grafana: "[redacted]", Loki: "[redacted]"}
+	copy.Server.Contact = cfg.Server.Contact
+	copy.Server.Contact.General = sanitizePublicContact(cfg.Server.Contact.General)
+	copy.Server.Contact.Abuse = sanitizePublicContact(cfg.Server.Contact.Abuse)
+	copy.Server.Contact.Security = sanitizePublicContact(cfg.Server.Contact.Security)
+	copy.Server.Contact.Admin = sanitizePublicContact(cfg.Server.Contact.Admin)
+	copy.Server.Contact.DPO = sanitizePublicContact(cfg.Server.Contact.DPO)
+	return &copy
+}
+
+func sanitizePublicContact(contact PublicContactConfig) PublicContactConfig {
+	secrets := make(map[string]string, len(contact.WebhookSecrets))
+	for key := range contact.WebhookSecrets {
+		secrets[key] = "[redacted]"
+	}
+	contact.WebhookSecrets = secrets
+	webhooks := make(map[string]string, len(contact.Webhooks))
+	for transport, value := range contact.Webhooks {
+		webhooks[transport] = RedactConnectionURL(value)
+	}
+	contact.Webhooks = webhooks
+	return contact
+}
+
+func redactStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	redacted := make(map[string]string, len(values))
+	for key := range values {
+		redacted[key] = "[redacted]"
+	}
+	return redacted
+}
+
+// RedactConnectionURL keeps URL structure visible while hiding credentials in
+// userinfo and common credential query parameters. Invalid input is omitted.
+func RedactConnectionURL(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return raw
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "[redacted]"
+	}
+	if parsed.User != nil {
+		username := parsed.User.Username()
+		password, hasPassword := parsed.User.Password()
+		if hasPassword && username != "" {
+			parsed.User = url.UserPassword(username, "[redacted]")
+		} else if hasPassword || username != "" || password != "" {
+			parsed.User = url.UserPassword("", "[redacted]")
+		}
+	}
+	query := parsed.Query()
+	for name := range query {
+		if isConnectionSecretKey(name) {
+			query.Set(name, "[redacted]")
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+func isConnectionSecretKey(name string) bool {
+	switch strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(name, "-", "_"), " ", "_")) {
+	case "auth_token", "authtoken", "token", "password", "pwd", "secret", "api_key", "apikey", "access_token", "refresh_token", "jwt":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -895,7 +1214,9 @@ func Load(path string) (*Config, error) {
 
 	cfg := DefaultConfig()
 	cfg.ConfigDir = filepath.Dir(path)
+	firstRun := false
 	if _, err := os.Stat(loadPath); os.IsNotExist(err) {
+		firstRun = true
 		// Select a stable first-run listener before persisting the config.
 		cfg.Server.Port, err = firstRunServerPort()
 		if err != nil {
@@ -915,6 +1236,7 @@ func Load(path string) (*Config, error) {
 	mergedNode := cloneYAMLConfigNode(defaultNode)
 	sources, discoveryIssues := readYAMLConfigSources(loadPath)
 	portConfigured := false
+	cspModeExplicit := false
 	for _, issue := range discoveryIssues {
 		log.Printf("WARN: %s", issue.Error())
 	}
@@ -933,6 +1255,9 @@ func Load(path string) (*Config, error) {
 			continue
 		}
 		sourceNode = normalizeYAMLConfigSource(sourceNode)
+		if hasYAMLConfigPath(sourceNode, "web", "csp", "mode") {
+			cspModeExplicit = true
+		}
 		serverSource := yamlConfigMappingValues(sourceNode)["server"]
 		portSource := yamlConfigMappingValues(serverSource)["port"]
 		if portSource != nil && portSource.Tag != "!!null" && strings.TrimSpace(portSource.Value) != "" {
@@ -987,6 +1312,7 @@ func Load(path string) (*Config, error) {
 		cfg = DefaultConfig()
 		cfg.ConfigDir = filepath.Dir(path)
 	}
+	cfg.Web.CSP.ModeExplicit = cspModeExplicit
 	if !portConfigured {
 		cfg.Server.Port, err = firstRunServerPort()
 		if err != nil {
@@ -1005,8 +1331,18 @@ func Load(path string) (*Config, error) {
 			log.Printf("WARN: cannot persist generated server port in %s: %v", loadPath, err)
 		}
 	}
+	if firstRun {
+		if err := seedConnectionEnvironment(path, cfg, true); err != nil {
+			log.Printf("WARN: unable to save first-run database/cache environment values")
+		}
+	}
 	if err := loadSecretSettings(loadPath, cfg); err != nil {
 		log.Printf("WARN: cannot load secrets from %s: %v", filepath.Join(filepath.Dir(path), "secrets.yml"), err)
+	}
+	if !firstRun {
+		if err := seedConnectionEnvironment(path, cfg, false); err != nil {
+			log.Printf("WARN: unable to apply database/cache environment policy")
+		}
 	}
 	for name, entry := range cfg.Server.Branding.Content {
 		if contentErr := validateBrandingContent(name, entry); contentErr != nil {
@@ -1020,6 +1356,7 @@ func Load(path string) (*Config, error) {
 	validateTokensConfig(cfg)
 	validateUpdateConfig(cfg)
 	validateGeoIPConfig(cfg)
+	validateMaintenanceConfig(cfg)
 	if err := ValidateTracking(&cfg.Server.Tracking); err != nil {
 		log.Printf("WARN: invalid server.tracking configuration; using defaults: %v", err)
 		cfg.Server.Tracking = DefaultConfig().Server.Tracking
@@ -1052,6 +1389,28 @@ func Load(path string) (*Config, error) {
 		cfg.Server.Pages.Contact.CaptchaSecretKey = defaults.CaptchaSecretKey
 	}
 	return cfg, nil
+}
+
+func hasYAMLConfigPath(node *yaml.Node, keys ...string) bool {
+	for _, key := range keys {
+		node = mappingValue(node, key)
+		if node == nil {
+			return false
+		}
+	}
+	return node.Tag != "!!null"
+}
+
+func validateMaintenanceConfig(cfg *Config) {
+	maintenance := &cfg.Server.Maintenance.SelfHealing
+	if maintenance.MaxAttempts < 0 {
+		log.Printf("WARN: invalid server.maintenance.self_healing.max_attempts; using 0")
+		maintenance.MaxAttempts = 0
+	}
+	if duration, err := time.ParseDuration(maintenance.RetryInterval); err != nil || duration <= 0 {
+		log.Printf("WARN: invalid server.maintenance.self_healing.retry_interval; using 30s")
+		maintenance.RetryInterval = "30s"
+	}
 }
 
 var yamlConfigSourceCache = struct {
@@ -1267,6 +1626,13 @@ func validateOverlayConfig(cfg *Config) {
 	setInt("tor.max_streams_per_circuit", &cfg.Server.Tor.MaxStreamsPerCircuit, torDefaults.MaxStreamsPerCircuit, 1, 65535)
 	setInt("tor.num_intro_points", &cfg.Server.Tor.NumIntroPoints, torDefaults.NumIntroPoints, 3, 10)
 	setInt("tor.virtual_port", &cfg.Server.Tor.VirtualPort, torDefaults.VirtualPort, 1, 65535)
+	if address := strings.TrimSpace(cfg.Server.Tor.ContactEmail); address != "" {
+		parsed, err := mail.ParseAddress(address)
+		if err != nil || parsed.Address != address {
+			log.Printf("Warning: invalid server.tor.contact_email; omitting the Tor contact address")
+			cfg.Server.Tor.ContactEmail = ""
+		}
+	}
 	for key, value := range map[string]*string{"tor.bandwidth_rate": &cfg.Server.Tor.BandwidthRate, "tor.bandwidth_burst": &cfg.Server.Tor.BandwidthBurst} {
 		if !validOverlayBandwidth(*value, false) {
 			fallback := torDefaults.BandwidthRate
@@ -1292,6 +1658,21 @@ func validateOverlayConfig(cfg *Config) {
 	if _, _, err := net.SplitHostPort(cfg.Server.I2P.SAMAddress); err != nil {
 		log.Printf("Warning: invalid server.i2p.sam_address; using %s", i2pDefaults.SAMAddress)
 		cfg.Server.I2P.SAMAddress = i2pDefaults.SAMAddress
+	}
+	for role, contact := range map[string]*PublicContactConfig{
+		"admin": &cfg.Server.Contact.Admin, "security": &cfg.Server.Contact.Security,
+		"abuse": &cfg.Server.Contact.Abuse, "general": &cfg.Server.Contact.General,
+	} {
+		for transport, endpoint := range contact.Webhooks {
+			if strings.TrimSpace(endpoint) == "" {
+				continue
+			}
+			parsed, err := url.Parse(endpoint)
+			if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+				log.Printf("Warning: invalid server.contact.%s.webhooks.%s; disabling this webhook", role, transport)
+				contact.Webhooks[transport] = ""
+			}
+		}
 	}
 }
 
@@ -1544,6 +1925,152 @@ type AllowlistEntry struct {
 	Description string `yaml:"description" json:"description"`
 }
 
+func seedConnectionEnvironment(configPath string, cfg *Config, firstRun bool) error {
+	databaseEnv := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	cacheEnv := strings.TrimSpace(os.Getenv("CACHE_URL"))
+	driverEnv := strings.TrimSpace(os.Getenv("DATABASE_DRIVER"))
+	if firstRun {
+		if databaseEnv != "" {
+			cfg.Server.Database.URL = databaseEnv
+			switch connectionURLScheme(databaseEnv) {
+			case "libsql", "https", "http":
+				cfg.Server.Database.Driver = "libsql"
+				if driverEnv != "" && normalizeConfiguredDatabaseDriver(driverEnv) != "libsql" {
+					log.Print("WARN: DATABASE_DRIVER disagrees with DATABASE_URL scheme; the URL scheme wins")
+				}
+			case "file", "":
+				cfg.Server.Database.Driver = "sqlite"
+				if driverEnv != "" && normalizeConfiguredDatabaseDriver(driverEnv) != "sqlite" {
+					log.Print("WARN: DATABASE_DRIVER disagrees with DATABASE_URL scheme; the URL scheme wins")
+				}
+			}
+			if err := persistConnectionSeed(configPath, "server.database.url", databaseEnv, connectionURLHasCredentials(databaseEnv)); err != nil {
+				return err
+			}
+			if err := persistConnectionSeed(configPath, "server.database.driver", cfg.Server.Database.Driver, false); err != nil {
+				return err
+			}
+		} else if driverEnv != "" {
+			cfg.Server.Database.Driver = normalizeConfiguredDatabaseDriver(driverEnv)
+			if err := persistConnectionSeed(configPath, "server.database.driver", cfg.Server.Database.Driver, false); err != nil {
+				return err
+			}
+		}
+		if cacheEnv != "" {
+			cfg.Server.Cache.URL = cacheEnv
+			switch connectionURLScheme(cacheEnv) {
+			case "valkey", "valkeys":
+				cfg.Server.Cache.Type = "valkey"
+			case "redis", "rediss":
+				cfg.Server.Cache.Type = "redis"
+			}
+			if err := persistConnectionSeed(configPath, "server.cache.url", cacheEnv, connectionURLHasCredentials(cacheEnv)); err != nil {
+				return err
+			}
+			if err := persistConnectionSeed(configPath, "server.cache.type", cfg.Server.Cache.Type, false); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if databaseEnv != "" && databaseEnv != cfg.Server.Database.URL {
+		log.Print("WARN: DATABASE_URL is init-only and differs from the saved connection; ignoring it")
+	}
+	if cacheEnv != "" && cacheEnv != cfg.Server.Cache.URL {
+		log.Print("WARN: CACHE_URL is init-only and differs from the saved connection; ignoring it")
+	}
+	if driverEnv != "" && normalizeConfiguredDatabaseDriver(driverEnv) != normalizeConfiguredDatabaseDriver(cfg.Server.Database.Driver) {
+		log.Print("WARN: DATABASE_DRIVER is init-only and differs from the saved driver; ignoring it")
+	}
+	return nil
+}
+
+func normalizeConfiguredDatabaseDriver(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "sqlite", "sqlite2", "sqlite3":
+		return "sqlite"
+	case "libsql", "turso":
+		return "libsql"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func connectionURLScheme(value string) string {
+	separator := strings.Index(value, "://")
+	if separator >= 0 {
+		return strings.ToLower(value[:separator])
+	}
+	if strings.HasPrefix(strings.ToLower(value), "file:") {
+		return "file"
+	}
+	return ""
+}
+
+func connectionURLHasCredentials(value string) bool {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return strings.Contains(value, "@") || strings.Contains(strings.ToLower(value), "token=") || strings.Contains(strings.ToLower(value), "password=")
+	}
+	if parsed.User != nil {
+		return true
+	}
+	for name, values := range parsed.Query() {
+		if isConnectionSecretKey(name) && len(values) > 0 && values[0] != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func persistConnectionSeed(configPath, key, value string, secret bool) error {
+	if secret {
+		secretPath := filepath.Join(filepath.Dir(configPath), "secrets.yml")
+		values := map[string]interface{}{}
+		if data, err := os.ReadFile(secretPath); err == nil {
+			if err := yaml.Unmarshal(data, &values); err != nil {
+				return err
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		parts := strings.Split(key, ".")
+		current := values
+		for _, part := range parts[:len(parts)-1] {
+			next, _ := current[part].(map[string]interface{})
+			if next == nil {
+				next = map[string]interface{}{}
+				current[part] = next
+			}
+			current = next
+		}
+		current[parts[len(parts)-1]] = value
+		encoded, err := yaml.Marshal(values)
+		if err != nil {
+			return err
+		}
+		return writeAtomicPrivateFile(secretPath, encoded)
+	}
+	return persistNodeConfigValue(configPath, key, value)
+}
+
+func persistNodeConfigValue(configPath, key, value string) error {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil || len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
+		return errors.New("server.yml must contain a YAML mapping")
+	}
+	setYAMLConfigPath(document.Content[0], key, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
+	encoded, err := yaml.Marshal(&document)
+	if err != nil {
+		return err
+	}
+	return writeAtomicPrivateFile(configPath, encoded)
+}
+
 func loadSecretSettings(configPath string, cfg *Config) error {
 	path := filepath.Join(filepath.Dir(configPath), "secrets.yml")
 	values := map[string]interface{}{}
@@ -1587,6 +2114,22 @@ func loadSecretSettings(configPath string, cfg *Config) error {
 	}
 	server["token"] = operatorToken
 	cfg.Server.Token = operatorToken
+	databaseSettings, _ := server["database"].(map[string]interface{})
+	if token, ok := databaseSettings["token"].(string); ok {
+		cfg.Server.Database.Token = token
+	}
+	if databaseURL, ok := databaseSettings["url"].(string); ok {
+		cfg.Server.Database.URL = databaseURL
+	}
+	cacheSettings, _ := server["cache"].(map[string]interface{})
+	if cacheSettings != nil {
+		if password, ok := cacheSettings["password"].(string); ok {
+			cfg.Server.Cache.Password = password
+		}
+		if cacheURL, ok := cacheSettings["url"].(string); ok {
+			cfg.Server.Cache.URL = cacheURL
+		}
+	}
 	backupSettings, _ := server["backup"].(map[string]interface{})
 	if backupSettings == nil {
 		backupSettings = map[string]interface{}{}
@@ -1756,6 +2299,59 @@ func loadSecretSettings(configPath string, cfg *Config) error {
 		return fmt.Errorf("generate Loki metrics token: %w", err)
 	}
 	cfg.Server.Metrics.Auth.Tokens = MetricsAuthTokens{Prometheus: prometheusToken, Grafana: grafanaToken, Loki: lokiToken}
+	contact, _ = server["contact"].(map[string]interface{})
+	if contact == nil {
+		contact = map[string]interface{}{}
+		server["contact"] = contact
+	}
+	for role, destination := range map[string]*PublicContactConfig{
+		"admin": &cfg.Server.Contact.Admin, "security": &cfg.Server.Contact.Security,
+		"abuse": &cfg.Server.Contact.Abuse, "general": &cfg.Server.Contact.General,
+	} {
+		roleValues, _ := contact[role].(map[string]interface{})
+		if roleValues == nil {
+			roleValues = map[string]interface{}{}
+			contact[role] = roleValues
+		}
+		webhooks, _ := roleValues["webhooks"].(map[string]interface{})
+		if webhooks == nil {
+			webhooks = map[string]interface{}{}
+			roleValues["webhooks"] = webhooks
+		}
+		destination.WebhookSecrets = map[string]string{}
+		prefix := "contact." + role + ".webhooks."
+		for key, value := range configNode {
+			if strings.HasPrefix(key, prefix) {
+				name := strings.TrimPrefix(key, prefix)
+				if strings.HasSuffix(name, "_secret") {
+					webhooks[name] = value
+				} else if destination.Webhooks[name] == "" {
+					destination.Webhooks[name] = value
+					webhooks[name] = value
+				}
+			}
+		}
+		for transport, endpoint := range destination.Webhooks {
+			if strings.TrimSpace(endpoint) == "" || strings.HasSuffix(transport, "_secret") {
+				continue
+			}
+			secretKey := transport + "_secret"
+			if webhooks[transport] == nil {
+				webhooks[transport] = endpoint
+			}
+			secret, _ := webhooks[secretKey].(string)
+			if secret == "" {
+				secretBytes := make([]byte, 32)
+				if _, err := rand.Read(secretBytes); err != nil {
+					return fmt.Errorf("generate %s webhook secret: %w", role, err)
+				}
+				secret = base64.StdEncoding.EncodeToString(secretBytes)
+				webhooks[secretKey] = secret
+				cfg.GeneratedSecrets = append(cfg.GeneratedSecrets, "server.contact."+role+".webhooks."+secretKey)
+			}
+			destination.WebhookSecrets[transport] = secret
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -1786,6 +2382,45 @@ func loadPreviousEncryptionKey(configPath string, cfg *Config, currentKey []byte
 	if override := strings.TrimSpace(os.Getenv("DATA_DIR")); override != "" {
 		dataDir = override
 	}
+	databaseDriver := strings.ToLower(strings.TrimSpace(cfg.Server.Database.Driver))
+	databaseScheme := strings.ToLower(strings.SplitN(databaseURL, "://", 2)[0])
+	remoteDatabase := databaseDriver == "libsql" || databaseDriver == "turso" || databaseScheme == "libsql" || databaseScheme == "https" || databaseScheme == "http"
+	if remoteDatabase {
+		maxLifetime, _ := time.ParseDuration(cfg.Server.Database.Pool.MaxLifetime)
+		maxIdleTime, _ := time.ParseDuration(cfg.Server.Database.Pool.MaxIdleTime)
+		db, err := database.OpenConfigured(database.DatabaseOptions{Driver: cfg.Server.Database.Driver, URL: databaseURL, Token: cfg.Server.Database.Token, DataDir: dataDir, Pool: database.PoolOptions{MaxOpen: cfg.Server.Database.Pool.MaxOpen, MaxIdle: cfg.Server.Database.Pool.MaxIdle, MaxLifetime: maxLifetime, MaxIdleTime: maxIdleTime}})
+		if err != nil {
+			return nil, false, fmt.Errorf("open remote database for previous encryption key: %w", err)
+		}
+		defer func() { _ = database.Close(db) }()
+		encoded, found, err := database.GetAppSecret(context.Background(), db, "encryption_key_previous")
+		if err != nil || !found {
+			return nil, found, err
+		}
+		expires, expiresFound, err := database.GetAppSecret(context.Background(), db, "encryption_key_previous_until")
+		if err != nil {
+			return nil, false, err
+		}
+		if !expiresFound {
+			return nil, false, errors.New("previous encryption key has no expiry")
+		}
+		until, err := time.Parse(time.RFC3339Nano, expires)
+		if err != nil {
+			return nil, false, errors.New("previous encryption key has an invalid expiry")
+		}
+		if time.Now().UTC().After(until) {
+			return nil, false, nil
+		}
+		wrapped, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return nil, false, err
+		}
+		previous, err := unwrapPreviousEncryptionKey(currentKey, wrapped)
+		if err != nil {
+			return nil, false, fmt.Errorf("unwrap previous encryption key: %w", err)
+		}
+		return previous, true, nil
+	}
 	databasePath := strings.ReplaceAll(databaseURL, "{data_dir}", dataDir)
 	if databaseURL == "" || databaseURL == "{data_dir}/db/server.db" {
 		databasePath = filepath.Join(paths.GetDatabaseDir(dataDir), "server.db")
@@ -1802,7 +2437,7 @@ func loadPreviousEncryptionKey(configPath string, cfg *Config, currentKey []byte
 	if err != nil {
 		return nil, false, fmt.Errorf("open database for previous encryption key: %w", err)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() { _ = database.Close(db) }()
 	encoded, found, err := database.GetAppSecret(context.Background(), db, "encryption_key_previous")
 	if err != nil || !found {
 		return nil, found, err
@@ -2060,6 +2695,35 @@ func extractMetricsTokens(configPath string) (map[string]string, []byte, error) 
 		removeMappingNodeValue(letsencrypt, "dns_credentials")
 		changed = true
 	}
+	contact := mappingNodeValue(server, "contact")
+	if contact != nil && contact.Kind == yaml.MappingNode {
+		for index := 0; index+1 < len(contact.Content); index += 2 {
+			roleNode := contact.Content[index]
+			webhooks := mappingNodeValue(contact.Content[index+1], "webhooks")
+			if webhooks == nil {
+				continue
+			}
+			if webhooks.Tag == "!!null" {
+				removeMappingNodeValue(contact.Content[index+1], "webhooks")
+				changed = true
+				continue
+			}
+			if webhooks.Kind != yaml.MappingNode {
+				return nil, nil, fmt.Errorf("server.contact.%s.webhooks must be a mapping", roleNode.Value)
+			}
+			for hookIndex := 0; hookIndex+1 < len(webhooks.Content); hookIndex += 2 {
+				key, value := webhooks.Content[hookIndex], webhooks.Content[hookIndex+1]
+				if key.Kind != yaml.ScalarNode || value.Kind != yaml.ScalarNode || value.Tag != "!!str" && value.Tag != "!!null" {
+					return nil, nil, fmt.Errorf("server.contact.%s.webhooks values must be strings", roleNode.Value)
+				}
+				if value.Tag != "!!null" {
+					values["contact."+roleNode.Value+".webhooks."+key.Value] = value.Value
+				}
+			}
+			removeMappingNodeValue(contact.Content[index+1], "webhooks")
+			changed = true
+		}
+	}
 	metrics := mappingNodeValue(server, "metrics")
 	auth := mappingNodeValue(metrics, "auth")
 	tokens := mappingNodeValue(auth, "tokens")
@@ -2215,6 +2879,25 @@ func validateNotificationConfig(cfg *Config) error {
 		return fmt.Errorf("server.notifications.webui toast durations cannot be negative")
 	}
 	disk := &notifications.DiskLow
+	databaseError := &notifications.DatabaseError
+	if databaseError.Failures < 1 {
+		log.Printf("Warning: invalid server.notifications.database_error.failures; using 3")
+		databaseError.Failures = 3
+	}
+	if duration, err := time.ParseDuration(databaseError.CheckInterval); err != nil || duration < time.Second {
+		log.Printf("Warning: invalid server.notifications.database_error.check_interval; using 1m")
+		databaseError.CheckInterval = "1m"
+	}
+	if duration, err := time.ParseDuration(databaseError.CheckInterval); err == nil && duration >= time.Second {
+		if task, exists := cfg.Server.Scheduler.Tasks["database_check"]; exists {
+			task.Schedule = "@every " + strings.TrimSpace(databaseError.CheckInterval)
+			cfg.Server.Scheduler.Tasks["database_check"] = task
+		}
+	}
+	if duration, err := time.ParseDuration(databaseError.Repeat); err != nil || duration <= 0 {
+		log.Printf("Warning: invalid server.notifications.database_error.repeat; using 24h")
+		databaseError.Repeat = "24h"
+	}
 	if disk.ThresholdPercent < 1 || disk.ThresholdPercent > 100 {
 		return fmt.Errorf("server.notifications.disk_low.threshold_percent must be between 1 and 100")
 	}
@@ -2486,7 +3169,7 @@ func isSchedulerScheduleValid(schedule string, location *time.Location) bool {
 
 func schedulerTaskMayBeDisabled(name string) bool {
 	switch name {
-	case "geoip_update", "blocklist_update", "cve_update", "update_check", "backup_daily", "backup_hourly", "disk_check":
+	case "geoip_update", "blocklist_update", "cve_update", "update_check", "backup_daily", "backup_hourly", "disk_check", "database_check":
 		return true
 	default:
 		return false

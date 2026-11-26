@@ -15,6 +15,7 @@ import (
 	"github.com/apimgr/countries/src/common/api"
 	"github.com/apimgr/countries/src/paths"
 	tea "github.com/charmbracelet/bubbletea"
+	"gopkg.in/yaml.v3"
 )
 
 func TestRunRemoteCommands(t *testing.T) {
@@ -128,7 +129,7 @@ func TestClientRequestCommandSendsVersionedAPIRequest(t *testing.T) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/countries/search" || r.URL.Query().Get("q") != "Example" {
 			t.Errorf("request = %s %s, want POST /api/v1/countries/search?q=Example", r.Method, r.URL.String())
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer request-test-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer own_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
 			t.Errorf("Authorization = %q", got)
 		}
 		if got := r.Header.Get("Accept-Language"); got != "fr" {
@@ -147,7 +148,7 @@ func TestClientRequestCommandSendsVersionedAPIRequest(t *testing.T) {
 	}))
 	defer server.Close()
 	var stdout, stderr strings.Builder
-	err := run([]string{"--server", server.URL, "--token", "request-test-token", "--lang", "fr", "request", "POST", "/api/v1/countries/search?q=Example", `{"query":"two words"}`}, &stdout, &stderr)
+	err := run([]string{"--server", server.URL, "--token", "own_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--lang", "fr", "request", "POST", "/api/v1/countries/search?q=Example", `{"query":"two words"}`}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("request command: %v; stderr=%s", err, stderr.String())
 	}
@@ -347,16 +348,51 @@ func TestSaveConfigUsesOwnerOnlyPermissions(t *testing.T) {
 	}
 }
 
+func TestPersistClientSettingsPreservesUnrelatedValues(t *testing.T) {
+	configRoot := testutil.TempDir(t)
+	path := filepath.Join(configRoot, "cli.yml")
+	if err := os.WriteFile(path, []byte("server:\n  primary: invalid\n  timeout: 45s\nauth:\n  token: invalid\n  token_file: /tmp/token\ndisplay:\n  mode: tui\nfuture:\n  retained: true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := "https://countries.example.test"
+	token := "own_abcdefghijklmnopqrstuvwxyz123456"
+	if err := persistClientSettings(path, &server, &token); err != nil {
+		t.Fatal(err)
+	}
+	var values map[string]any
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(data, &values); err != nil {
+		t.Fatal(err)
+	}
+	serverValues := values["server"].(map[string]any)
+	authValues := values["auth"].(map[string]any)
+	displayValues := values["display"].(map[string]any)
+	futureValues := values["future"].(map[string]any)
+	if serverValues["primary"] != server || serverValues["timeout"] != "45s" || authValues["token"] != token || authValues["token_file"] != "/tmp/token" || displayValues["mode"] != "tui" || futureValues["retained"] != true {
+		t.Fatalf("persisted settings lost or changed unrelated values: %#v", values)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("config mode = %v; want 0600", info.Mode().Perm())
+	}
+}
+
 func TestClientSendsConfiguredBearerToken(t *testing.T) {
 	configRoot := testutil.TempDir(t)
 	t.Setenv("XDG_CONFIG_HOME", configRoot)
 	var cfg cliConfig
-	cfg.Server.Token = "owner-test-token"
+	cfg.Server.Token = "own_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	if err := saveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer owner-test-token" {
+		if got := r.Header.Get("Authorization"); got != "Bearer own_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" {
 			t.Errorf("Authorization = %q, want configured bearer token", got)
 		}
 		_, _ = io.WriteString(w, `{"ok":true,"data":{"count":1}}`)

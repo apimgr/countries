@@ -20,6 +20,24 @@ type languageOption struct {
 	NativeName string
 }
 
+func (s *Server) languagePreferenceConsentMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiPath := strings.TrimSuffix(s.requestURLPrefix(r), "/") + "/api/"
+		if r.Method == http.MethodGet && r.URL.Query().Has("lang") &&
+			!strings.HasPrefix(r.URL.Path, apiPath) && !s.preferencesConsentAccepted(r) {
+			query := r.URL.Query()
+			query.Del("lang")
+			query.Set("consent_required", "1")
+			redirect := *r.URL
+			redirect.RawQuery = query.Encode()
+			w.Header().Set("Cache-Control", "no-store")
+			http.Redirect(w, r, redirect.RequestURI(), http.StatusSeeOther)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func nextTheme(theme string) string {
 	switch theme {
 	case "dark":
@@ -32,6 +50,9 @@ func nextTheme(theme string) string {
 }
 
 func languagePreference(r *http.Request) string {
+	if requestPrivacySignal(r) != "" {
+		return "auto"
+	}
 	if cookie, err := r.Cookie("lang"); err == nil && i18n.IsSupported(cookie.Value) {
 		return strings.ToLower(cookie.Value)
 	}
@@ -46,6 +67,7 @@ func (s *Server) pageContext(w http.ResponseWriter, r *http.Request, path string
 		"Lang":    lang, "Dir": i18n.Direction(lang), "Languages": languageOptions(),
 		"Theme": s.themeForRequest(r), "Path": path, "URLPrefix": s.requestURLPrefix(r), "APIBasePath": s.requestURLPrefix(r) + api.APIBasePath(), "CSRFToken": csrf, "Request": r,
 		"HasConsentCookie":   s.hasConsentCookie(r),
+		"ConsentRequired":    r.URL.Query().Get("consent_required") == "1",
 		"LanguagePreference": languagePreference(r), "DetectedLanguageName": i18n.NativeName(lang),
 	}
 }
@@ -66,7 +88,7 @@ func (s *Server) hasConsentCookie(r *http.Request) bool {
 		Essential bool  `json:"essential"`
 		Timestamp int64 `json:"timestamp"`
 	}
-	value, err := url.QueryUnescape(cookie.Value)
+	value, err := url.PathUnescape(cookie.Value)
 	if err != nil || json.Unmarshal([]byte(value), &consent) != nil {
 		return false
 	}
@@ -109,14 +131,18 @@ func (s *Server) languageForRequest(w http.ResponseWriter, r *http.Request) stri
 		if !i18n.IsSupported(lang) {
 			return "en"
 		}
-		http.SetCookie(w, &http.Cookie{
-			Name: "lang", Value: lang, Path: "/", MaxAge: 365 * 24 * 60 * 60,
-			Secure: r.TLS != nil || (s.isTrustedPeer(r) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")), SameSite: http.SameSiteLaxMode,
-		})
+		if s.preferencesConsentAccepted(r) && requestPrivacySignal(r) == "" {
+			http.SetCookie(w, &http.Cookie{
+				Name: "lang", Value: lang, Path: "/", MaxAge: 365 * 24 * 60 * 60,
+				Secure: r.TLS != nil || (s.isTrustedPeer(r) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")), SameSite: http.SameSiteLaxMode,
+			})
+		}
 		return lang
 	}
-	if cookie, err := r.Cookie("lang"); err == nil && i18n.IsSupported(cookie.Value) {
+	if requestPrivacySignal(r) == "" {
+		if cookie, err := r.Cookie("lang"); err == nil && i18n.IsSupported(cookie.Value) {
 		return strings.ToLower(cookie.Value)
+		}
 	}
 	for _, lang := range acceptedLanguages(r.Header.Get("Accept-Language")) {
 		if len(lang) > 2 {

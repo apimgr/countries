@@ -357,14 +357,30 @@ func (m *Manager) startTor(ctx context.Context) {
 		m.setTor(TorStatus{Enabled: true, Status: "unavailable"})
 		return
 	}
-	m.backend = &proxyproto.Listener{Listener: ln, ConnPolicy: func(proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) { return proxyproto.REQUIRE, nil }, ReadHeaderTimeout: 5 * time.Second}
+	backend := &proxyproto.Listener{Listener: ln, ConnPolicy: func(proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) { return proxyproto.REQUIRE, nil }, ReadHeaderTimeout: 5 * time.Second}
 	torHandler := m.opts.TorHandler
 	if torHandler == nil {
 		torHandler = m.opts.Handler
 	}
-	m.server = &http.Server{Handler: torHandler, ReadHeaderTimeout: 15 * time.Second}
+	server := &http.Server{Handler: torHandler, ReadHeaderTimeout: 15 * time.Second}
+	m.mu.Lock()
+	m.backend, m.server = backend, server
+	m.mu.Unlock()
+	backendDone := make(chan struct{})
+	runtimeRetained := false
+	defer func() {
+		if !runtimeRetained {
+			m.stopTorRuntime()
+			select {
+			case <-backendDone:
+			case <-time.After(5 * time.Second):
+				log.Print("Tor backend did not stop before cleanup deadline")
+			}
+		}
+	}()
 	go func() {
-		if err := m.server.Serve(m.backend); err != nil && err != http.ErrServerClosed {
+		defer close(backendDone)
+		if err := server.Serve(backend); err != nil && err != http.ErrServerClosed {
 			log.Printf("Tor backend stopped: %v", err)
 		}
 	}()
@@ -372,7 +388,11 @@ func (m *Manager) startTor(ctx context.Context) {
 	dataDir := filepath.Join(m.opts.DataDir, "tor")
 	hsDir := filepath.Join(dataDir, "site")
 	controlFile := filepath.Join(dataDir, "control_port")
-	_ = os.Remove(controlFile)
+	if err := removeStaleControlFile(controlFile); err != nil {
+		log.Printf("Tor unavailable: remove stale control-port file: %v", err)
+		m.setTor(TorStatus{Enabled: true, Status: "unavailable"})
+		return
+	}
 	torrc := strings.Join([]string{
 		"DataDirectory " + dataDir,
 		"ControlPort 127.0.0.1:auto",
@@ -413,8 +433,11 @@ func (m *Manager) startTor(ctx context.Context) {
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
-		log.Printf("Tor unavailable: start: %v", err)
+		if closeErr := logFile.Close(); closeErr != nil {
+			log.Printf("Tor unavailable: start: %v; close Tor log: %v", err, closeErr)
+		} else {
+			log.Printf("Tor unavailable: start: %v", err)
+		}
 		m.setTor(TorStatus{Enabled: true, Status: "unavailable"})
 		return
 	}
@@ -426,58 +449,44 @@ func (m *Manager) startTor(ctx context.Context) {
 	m.mu.Unlock()
 	m.setTor(TorStatus{Enabled: true, Status: "starting"})
 	go func() {
-		_ = cmd.Wait()
+		waitErr := cmd.Wait()
 		close(processDone)
-		_ = logFile.Close()
+		if closeErr := logFile.Close(); closeErr != nil {
+			log.Printf("Close Tor log file: %v", closeErr)
+		}
 		if ctx.Err() == nil {
-			log.Printf("Tor process exited")
+			if waitErr != nil {
+				log.Printf("Tor process exited: %v", waitErr)
+			} else {
+				log.Printf("Tor process exited")
+			}
 			m.setTor(TorStatus{Enabled: true, Status: "unavailable"})
 		}
 	}()
 	startup := time.Duration(valueOr(cfg.StartupTimeout, 60)) * time.Second
-	deadline := time.Now().Add(startup)
-	var address string
-	hostnameLogged := false
-	for time.Now().Before(deadline) && ctx.Err() == nil {
-		if b, e := os.ReadFile(filepath.Join(hsDir, "hostname")); e == nil {
-			host := strings.TrimSpace(string(b))
-			if validOnion(host) {
-				s := m.TorStatus()
-				s.Enabled = true
-				s.Status = "starting"
-				s.Hostname = host
-				m.setTor(s)
-				if !hostnameLogged {
-					log.Printf("Tor hidden service address available: %s", host)
-					hostnameLogged = true
-				}
-			}
-		}
-		if b, e := os.ReadFile(controlFile); e == nil {
-			if match := controlPortLine.FindSubmatch(b); match != nil {
-				if _, p, e := net.SplitHostPort(string(match[1])); e == nil {
-					number, parseErr := strconv.Atoi(p)
-					if parseErr == nil && number >= 1 && number <= 65535 {
-						address = string(match[1])
-						break
-					}
-				}
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-m.processDone:
-			log.Printf("Tor process exited before its control port opened: status=%v diagnostics=%q", cmd.ProcessState, sanitizedProcessTail(torLogPath))
-			m.setTor(TorStatus{Enabled: true, Status: "unavailable"})
-			return
-		case <-time.After(250 * time.Millisecond):
-		}
+	address, waitErr := waitForTorControlPort(ctx, controlFile, startup, processDone)
+	if ctx.Err() != nil {
+		return
 	}
-	if address == "" {
-		log.Printf("Tor control port did not become available: diagnostics=%q", sanitizedProcessTail(torLogPath))
+	if waitErr != nil {
+		if waitErr == errTorExitedBeforeControlPort {
+			log.Printf("Tor process exited before its control port opened: status=%v diagnostics=%q", cmd.ProcessState, sanitizedProcessTail(torLogPath))
+		} else {
+			log.Printf("Tor control port did not become available: %v diagnostics=%q", waitErr, sanitizedProcessTail(torLogPath))
+		}
 		m.setTor(TorStatus{Enabled: true, Status: "unavailable"})
 		return
+	}
+	hostnameLogged := false
+	if b, err := os.ReadFile(filepath.Join(hsDir, "hostname")); err == nil {
+		host := strings.TrimSpace(string(b))
+		if validOnion(host) {
+			status := m.TorStatus()
+			status.Enabled, status.Status, status.Hostname = true, "starting", host
+			m.setTor(status)
+			log.Printf("Tor hidden service address available: %s", host)
+			hostnameLogged = true
+		}
 	}
 	conn, err := net.DialTimeout("tcp", address, 10*time.Second)
 	if err != nil {
@@ -540,7 +549,7 @@ func (m *Manager) startTor(ctx context.Context) {
 		return
 	}
 	bootstrap := time.Duration(valueOr(cfg.BootstrapTimeout, 180)) * time.Second
-	deadline = time.Now().Add(bootstrap)
+	deadline := time.Now().Add(bootstrap)
 	bootstrapped := false
 	for time.Now().Before(deadline) && ctx.Err() == nil {
 		if phase, phaseErr := ctrl.GetInfo("status/bootstrap-phase"); phaseErr == nil && len(phase) > 0 && strings.Contains(phase[0].Val, "PROGRESS=100") {
@@ -560,6 +569,7 @@ func (m *Manager) startTor(ctx context.Context) {
 					m.cookieRecoveryUsed = false
 					m.mu.Unlock()
 					m.setTor(TorStatus{Enabled: true, Running: true, Status: "healthy", Hostname: candidate})
+					runtimeRetained = true
 					if !hostnameLogged {
 						log.Printf("Tor hidden service: %s", candidate)
 					}
@@ -613,6 +623,51 @@ func (m *Manager) recoverTorCookie(dataDir, logPath string, authErr error) bool 
 	default:
 	}
 	return true
+}
+
+func removeStaleControlFile(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale tor control-port file: %w", err)
+	}
+	return nil
+}
+
+var errTorExitedBeforeControlPort = fmt.Errorf("tor process exited before its control port became available")
+
+func waitForTorControlPort(ctx context.Context, path string, timeout time.Duration, processDone <-chan struct{}) (string, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(path); err == nil {
+			if address, ok := parseTorControlPortFile(data); ok {
+				return address, nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-processDone:
+			return "", errTorExitedBeforeControlPort
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	return "", fmt.Errorf("control port file not ready after %s", timeout)
+}
+
+func parseTorControlPortFile(data []byte) (string, bool) {
+	match := controlPortLine.FindSubmatch(data)
+	if match == nil {
+		return "", false
+	}
+	address := string(match[1])
+	_, portText, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", false
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return "", false
+	}
+	return address, true
 }
 
 func sanitizedProcessTail(path string) string {

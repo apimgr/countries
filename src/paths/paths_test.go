@@ -3,6 +3,7 @@ package paths
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -76,6 +77,60 @@ func TestGetDatabaseDirEnvOverride(t *testing.T) {
 	t.Setenv("DATABASE_DIR", "/custom/database")
 	if got := GetDatabaseDir("/data"); got != "/custom/database" {
 		t.Errorf("GetDatabaseDir() = %q, want /custom/database", got)
+	}
+}
+
+func TestGetPIDFilePathRespectsStartupMode(t *testing.T) {
+	t.Setenv("INVOCATION_ID", "test")
+	t.Setenv("RC_SVCNAME", "")
+	t.Setenv("container", "")
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	if runtime.GOOS == "windows" {
+		if got := GetPIDFilePath("countries", "/data/countries", false); got != "" {
+			t.Fatalf("user-mode PID path = %q, want empty on Windows", got)
+		}
+		return
+	}
+	if got, want := GetPIDFilePath("countries", "/data/countries", false), filepath.Join("/data/countries", "countries.pid"); got != want {
+		t.Errorf("user-mode PID path = %q, want %q", got, want)
+	}
+	if got, want := GetPIDFilePath("countries", "/data/countries", true), filepath.Join("/var/run", "apimgr", "countries", "countries.pid"); got != want {
+		t.Errorf("system-mode PID path = %q, want %q", got, want)
+	}
+}
+
+func TestGetBackupDirEnvironmentOverride(t *testing.T) {
+	t.Setenv("BACKUP_DIR", "/custom/backups")
+	if got := GetBackupDir("countries"); got != "/custom/backups" {
+		t.Fatalf("GetBackupDir() = %q, want /custom/backups", got)
+	}
+}
+
+func TestGetServiceAccountMarkerPath(t *testing.T) {
+	got := GetServiceAccountMarkerPath("countries")
+	if runtime.GOOS == "windows" {
+		if got != "" {
+			t.Fatalf("Windows marker path = %q, want empty", got)
+		}
+		return
+	}
+	if !filepath.IsAbs(got) || !strings.Contains(got, ".countries-service-account-created") {
+		t.Fatalf("service account marker path = %q, want absolute marker path", got)
+	}
+}
+
+func TestWritableOrCreatable(t *testing.T) {
+	base := testTempDir(t)
+	backupPath := filepath.Join(base, "nested", "backups", "countries")
+	if !writableOrCreatable(backupPath) {
+		t.Fatal("writableOrCreatable() rejected a path with a writable parent")
+	}
+	entries, err := os.ReadDir(filepath.Dir(backupPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("writableOrCreatable() left probe artifacts: %v", entries)
 	}
 }
 

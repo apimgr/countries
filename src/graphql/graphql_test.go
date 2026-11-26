@@ -2,6 +2,7 @@ package graphql
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -50,10 +51,11 @@ func TestHandlerRejectsInvalidRequests(t *testing.T) {
 		name, method, contentType, body string
 		status                          int
 	}{
-		{"method", http.MethodGet, "", "", http.StatusMethodNotAllowed},
+		{"method", http.MethodPut, "", "", http.StatusMethodNotAllowed},
 		{"media type", http.MethodPost, "text/plain", `{}`, http.StatusUnsupportedMediaType},
 		{"empty body", http.MethodPost, "application/json", "", http.StatusBadRequest},
 		{"invalid JSON", http.MethodPost, "application/json", `{`, http.StatusBadRequest},
+		{"trailing JSON", http.MethodPost, "application/json", `{"query":"{ countries { cca2 } }"} {}`, http.StatusBadRequest},
 		{"empty query", http.MethodPost, "application/json", `{"query":"  "}`, http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -65,6 +67,85 @@ func TestHandlerRejectsInvalidRequests(t *testing.T) {
 				t.Fatalf("status = %d body=%s, want %d", response.Code, response.Body.String(), tc.status)
 			}
 		})
+	}
+}
+
+func TestGraphQLExecutionErrorsUseGraphQLShape(t *testing.T) {
+	handler := testHandler(t)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/server/graphql", strings.NewReader(`{"query":`+quoteJSONString(`{ missingField }`)+`}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("execution error status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Data   json.RawMessage `json:"data"`
+		Errors []struct {
+			Message    string         `json:"message"`
+			Extensions map[string]any `json:"extensions"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode GraphQL error response: %v", err)
+	}
+	if string(result.Data) != "null" || len(result.Errors) == 0 || result.Errors[0].Extensions["code"] == nil {
+		t.Fatalf("GraphQL execution error shape = %#v", result)
+	}
+}
+
+func TestGraphQLGetQuery(t *testing.T) {
+	handler := testHandler(t)
+	request := httptest.NewRequest(http.MethodGet, "/api/graphql?query=%7B%20countries%20%7B%20cca2%20%7D%20%7D", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"cca2": "TL"`) {
+		t.Fatalf("GET query status=%d body=%s", response.Code, response.Body.String())
+	}
+	if !strings.HasSuffix(response.Body.String(), "\n") {
+		t.Fatal("GraphQL JSON response must end with one newline")
+	}
+
+	usage := httptest.NewRecorder()
+	handler.ServeHTTP(usage, httptest.NewRequest(http.MethodGet, "/api/graphql", nil))
+	if usage.Code != http.StatusOK || usage.Header().Get("Content-Type") != "text/plain; charset=utf-8" || !strings.Contains(usage.Body.String(), "GraphQL usage:") || !strings.HasSuffix(usage.Body.String(), "\n") {
+		t.Fatalf("GET usage response status=%d content-type=%q body=%q", usage.Code, usage.Header().Get("Content-Type"), usage.Body.String())
+	}
+
+	invalid := httptest.NewRequest(http.MethodGet, "/api/graphql?query=%7B%20countries%20%7B%20cca2%20%7D%20%7D&variables=%7B", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, invalid)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid GET variables status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestGraphQLReadBridgePreservesRequestAndReturnsJSON(t *testing.T) {
+	handler := testHandler(t)
+	var gotPath, gotAuthorization string
+	handler.SetAPIReader(func(_ context.Context, request *http.Request, path string) (json.RawMessage, error) {
+		gotPath = path
+		gotAuthorization = request.Header.Get("Authorization")
+		return json.RawMessage(`{"ok":true,"data":{"title":"About"}}`), nil
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/server/graphql", strings.NewReader(`{"query":`+quoteJSONString(`{ read(path: "/api/v1/server/about") }`)+`}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer preserved-token")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"title": "About"`) {
+		t.Fatalf("read bridge response status=%d body=%s", response.Code, response.Body.String())
+	}
+	if gotPath != "/api/v1/server/about" || gotAuthorization != "Bearer preserved-token" {
+		t.Fatalf("read bridge request = path %q, authorization %q", gotPath, gotAuthorization)
+	}
+}
+
+func TestGraphQLReadBridgeRejectsStateChangingAndInternalPaths(t *testing.T) {
+	for _, path := range []string{"/api/v1/server/preferences/sync/import", "/api/v1/server/graphql", "/api/v1/server/swagger", "/api/v1/server/count.txt", "/api/v1/server/metrics/prometheus", "/api/v1/countries?token=secret"} {
+		if _, err := validateReadPath(path); err == nil {
+			t.Errorf("validateReadPath(%q) unexpectedly allowed path", path)
+		}
 	}
 }
 

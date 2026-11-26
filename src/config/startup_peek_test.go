@@ -50,6 +50,18 @@ func TestPeekStartupSettingsPIDFileDefaultsAndOverrides(t *testing.T) {
 	}
 }
 
+func TestPeekStartupSettingsReadsLegacyYAMLFile(t *testing.T) {
+	directory := t.TempDir()
+	legacyPath := filepath.Join(directory, "server.yaml")
+	if err := os.WriteFile(legacyPath, []byte("server:\n  port: '8124'\n  address: 127.0.0.1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	settings := PeekStartupSettings(filepath.Join(directory, "server.yml"))
+	if settings.Port != "8124" || settings.Address != "127.0.0.1" {
+		t.Fatalf("legacy startup settings = %+v, want port 8124 and address 127.0.0.1", settings)
+	}
+}
+
 func TestPeekStartupSettingsDoesNotCreateOrChangeFiles(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "missing")
 	configPath := filepath.Join(directory, "server.yml")

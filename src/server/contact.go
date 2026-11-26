@@ -37,6 +37,7 @@ import (
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/apimgr/countries/src/common/i18n"
 	"github.com/apimgr/countries/src/config"
+	"github.com/apimgr/countries/src/database"
 	"github.com/apimgr/countries/src/notifications"
 	"github.com/go-chi/chi/v5"
 )
@@ -90,7 +91,10 @@ func loadContactKey(db *sql.DB) []byte {
 		}
 		if _, err := rand.Read(key); err == nil {
 			encoded = base64.StdEncoding.EncodeToString(key)
-			_, _ = db.Exec(`INSERT INTO app_secrets(name,value,updated_at) VALUES('installation_secret',?,?) ON CONFLICT(name) DO NOTHING`, encoded, time.Now().UTC().Format(time.RFC3339Nano))
+			_ = database.Write(context.Background(), db, func(tx *sql.Tx) error {
+				_, err := tx.Exec(`INSERT INTO app_secrets(name,value,updated_at) VALUES('installation_secret',?,?) ON CONFLICT(name) DO NOTHING`, encoded, time.Now().UTC().Format(time.RFC3339Nano))
+				return err
+			})
 			var stored string
 			if db.QueryRow(`SELECT value FROM app_secrets WHERE name='installation_secret'`).Scan(&stored) == nil {
 				if decoded, e := base64.StdEncoding.DecodeString(stored); e == nil && len(decoded) >= 32 {
@@ -143,10 +147,26 @@ func (s *Server) abuseContactEmail() string {
 	return ""
 }
 
+func (s *Server) abuseContactEmailForRequest(r *http.Request) string {
+	if torRequest(r) || strings.HasSuffix(strings.ToLower(r.Host), ".onion") {
+		candidate := strings.TrimSpace(s.config.Server.Tor.ContactEmail)
+		if address, err := mail.ParseAddress(candidate); err == nil && address.Address == candidate {
+			return candidate
+		}
+		return ""
+	}
+	return s.abuseContactEmail()
+}
+
 func (s *Server) contactRecipient(kind string) string {
-	addresses := []string{s.config.Server.Contact.Abuse.Email, s.config.Server.Contact.General.Email, s.config.Server.Contact.Admin.Email}
-	if kind == "privacy" {
+	var addresses []string
+	switch kind {
+	case "security":
+		addresses = []string{s.config.Server.Contact.Security.Email, s.config.Server.Contact.Admin.Email}
+	case "privacy":
 		addresses = []string{s.config.Server.Contact.DPO.Email, s.config.Server.Contact.General.Email, s.config.Server.Contact.Admin.Email}
+	default:
+		addresses = []string{s.config.Server.Contact.Abuse.Email, s.config.Server.Contact.General.Email, s.config.Server.Contact.Admin.Email}
 	}
 	for _, candidate := range addresses {
 		candidate = strings.TrimSpace(candidate)
@@ -155,6 +175,16 @@ func (s *Server) contactRecipient(kind string) string {
 		}
 	}
 	return ""
+}
+
+func (s *Server) notifyReportWebhooks(r *http.Request, role, event string, values map[string]string) {
+	if s.notificationManager == nil {
+		return
+	}
+	values["app_url"] = s.reportOrigin(r)
+	if err := s.notificationManager.NotifyRoleWebhooks(role, event, values); err != nil {
+		log.Printf("Could not queue %s webhook notification: %v", event, err)
+	}
 }
 
 func offeredContactTypes(r *http.Request) []string {
@@ -229,7 +259,10 @@ func (s *Server) issueSimpleCaptcha() (string, string, error) {
 	}
 	if s.db != nil {
 		hash := sha256.Sum256([]byte(id + "|" + fmt.Sprint(answer)))
-		if _, err := s.db.Exec(`INSERT INTO captcha_challenges(id,answer_hash,expires_at) VALUES(?,?,?)`, id, hex.EncodeToString(hash[:]), time.Now().Add(10*time.Minute)); err != nil {
+		if err := database.Write(context.Background(), s.db, func(tx *sql.Tx) error {
+			_, err := tx.Exec(`INSERT INTO captcha_challenges(id,answer_hash,expires_at) VALUES(?,?,?)`, id, hex.EncodeToString(hash[:]), time.Now().Add(10*time.Minute))
+			return err
+		}); err != nil {
 			return "", "", err
 		}
 	} else {
@@ -319,9 +352,15 @@ func (s *Server) verifySimpleCaptcha(id, submitted string) bool {
 	}
 	if s.db != nil {
 		var expected string
-		err := s.db.QueryRow(`SELECT answer_hash FROM captcha_challenges WHERE id=? AND expires_at>?`, id, time.Now()).Scan(&expected)
-		_, _ = s.db.Exec(`DELETE FROM captcha_challenges WHERE id=?`, id)
-		if err != nil {
+		var queryErr error
+		writeErr := database.Write(context.Background(), s.db, func(tx *sql.Tx) error {
+			queryErr = tx.QueryRow(`SELECT answer_hash FROM captcha_challenges WHERE id=? AND expires_at>?`, id, time.Now()).Scan(&expected)
+			if _, deleteErr := tx.Exec(`DELETE FROM captcha_challenges WHERE id=?`, id); deleteErr != nil {
+				return deleteErr
+			}
+			return nil
+		})
+		if writeErr != nil || queryErr != nil {
 			return false
 		}
 		got := sha256.Sum256([]byte(id + "|" + submitted))
@@ -353,7 +392,7 @@ func (s *Server) handleContactPage(w http.ResponseWriter, r *http.Request) {
 	if suppliedSecurityID != "" && !securityMode {
 		logInvalidSecurityID(r, suppliedSecurityID)
 	}
-	data := contactPageData{Request: r, AppName: s.appName(), Lang: lang, Dir: i18n.Direction(lang), Theme: s.themeForRequest(r), Title: "Contact and reports", Description: "This form is only for security reports, terms violations at a URL on this site, DMCA notices and privacy requests. It cannot be used for support, bug reports, feature requests or general questions.", Type: typeName, Types: offeredContactTypes(r), SecurityURL: "/server/security", FQDN: contactRequestFQDN(s, r), Values: map[string]string{}, CSRFToken: csrfToken(w, r, strings.HasPrefix(s.reportOrigin(r), "https://")), AbuseEmail: s.abuseContactEmail(), SecurityMode: securityMode, Path: r.URL.Path, URLPrefix: s.requestURLPrefix(r), HasConsentCookie: s.hasConsentCookie(r)}
+	data := contactPageData{Request: r, AppName: s.appName(), Lang: lang, Dir: i18n.Direction(lang), Theme: s.themeForRequest(r), Title: "Contact and reports", Description: "This form is only for security reports, terms violations at a URL on this site, DMCA notices and privacy requests. It cannot be used for support, bug reports, feature requests or general questions.", Type: typeName, Types: offeredContactTypes(r), SecurityURL: "/server/security", FQDN: contactRequestFQDN(s, r), Values: map[string]string{}, CSRFToken: csrfToken(w, r, strings.HasPrefix(s.reportOrigin(r), "https://")), AbuseEmail: s.abuseContactEmailForRequest(r), SecurityMode: securityMode, Path: r.URL.Path, URLPrefix: s.requestURLPrefix(r), HasConsentCookie: s.hasConsentCookie(r)}
 	if r.URL.Query().Get("sent") == "1" {
 		data.Success = s.config.Server.Pages.Contact.SuccessMessage
 		data.Type = ""
@@ -393,7 +432,7 @@ func (s *Server) contactEditData(w http.ResponseWriter, r *http.Request, kind st
 	values["form_token"] = fmt.Sprintf("%d.%s.%s", issued, nonce, hex.EncodeToString(hmacBytes(s.contactKey, "contact-form|"+payload)))
 	values["captcha_id"] = id
 	values["captcha_answer"] = ""
-	return contactPageData{Request: r, AppName: s.appName(), Lang: lang, Dir: i18n.Direction(lang), Theme: s.themeForRequest(r), Title: "Contact and reports", Description: "This form is only for security reports, terms violations at a URL on this site, DMCA notices and privacy requests. It cannot be used for support, bug reports, feature requests or general questions.", Type: kind, Values: values, SecurityID: values["security_id"], SecurityMode: kind == "security", FQDN: contactRequestFQDN(s, r), AbuseEmail: s.abuseContactEmail(), CSRFToken: csrfToken(w, r, strings.HasPrefix(s.reportOrigin(r), "https://")), Token: values["form_token"], Challenge: question, CaptchaProvider: s.contactCaptchaProvider(r), CaptchaSiteKey: s.config.Server.Pages.Contact.CaptchaSiteKey, Path: r.URL.Path, URLPrefix: s.requestURLPrefix(r), HasConsentCookie: s.hasConsentCookie(r)}, nil
+	return contactPageData{Request: r, AppName: s.appName(), Lang: lang, Dir: i18n.Direction(lang), Theme: s.themeForRequest(r), Title: "Contact and reports", Description: "This form is only for security reports, terms violations at a URL on this site, DMCA notices and privacy requests. It cannot be used for support, bug reports, feature requests or general questions.", Type: kind, Values: values, SecurityID: values["security_id"], SecurityMode: kind == "security", FQDN: contactRequestFQDN(s, r), AbuseEmail: s.abuseContactEmailForRequest(r), CSRFToken: csrfToken(w, r, strings.HasPrefix(s.reportOrigin(r), "https://")), Token: values["form_token"], Challenge: question, CaptchaProvider: s.contactCaptchaProvider(r), CaptchaSiteKey: s.config.Server.Pages.Contact.CaptchaSiteKey, Path: r.URL.Path, URLPrefix: s.requestURLPrefix(r), HasConsentCookie: s.hasConsentCookie(r)}, nil
 }
 
 func randomContactNonce() string {
@@ -945,36 +984,35 @@ func (s *Server) storeSecurityReport(values map[string]string) (string, string, 
 	}
 	// Reserve the SQLite writer before reading the public key so key rotation
 	// cannot switch keys between encryption and report insertion.
-	tx, err := s.db.Begin()
-	if err != nil {
-		return "", "", nil, "", err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`UPDATE app_secrets SET updated_at = updated_at WHERE name = 'installation_secret'`); err != nil {
-		return "", "", nil, "", err
-	}
-	bodyEnc, bodyAlg, err := s.encryptSecurityReportBody(plain)
-	if err != nil {
-		return "", "", nil, "", err
-	}
-	contactData, err := json.Marshal(map[string]string{"email": values["email"], "researcher_gpg": values["researcher_gpg"]})
-	if err != nil {
-		return "", "", nil, "", err
-	}
-	contactEnc, err := s.encryptSecurityData(contactData)
-	if err != nil {
-		return "", "", nil, "", err
-	}
+	var trackingID, statusToken, bodyAlg string
+	var bodyEnc []byte
+	err = database.Write(context.Background(), s.db, func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`UPDATE app_secrets SET updated_at = updated_at WHERE name = 'installation_secret'`); err != nil {
+			return err
+		}
+		var err error
+		bodyEnc, bodyAlg, err = s.encryptSecurityReportBody(plain)
+		if err != nil {
+			return err
+		}
+		contactData, err := json.Marshal(map[string]string{"email": values["email"], "researcher_gpg": values["researcher_gpg"]})
+		if err != nil {
+			return err
+		}
+		contactEnc, err := s.encryptSecurityData(contactData)
+		if err != nil {
+			return err
+		}
 	randomID := make([]byte, 8)
 	if _, err := rand.Read(randomID); err != nil {
-		return "", "", nil, "", err
+		return err
 	}
-	trackingID := "sec_" + hex.EncodeToString(randomID)
+	trackingID = "sec_" + hex.EncodeToString(randomID)
 	token := make([]byte, 32)
 	if _, err := rand.Read(token); err != nil {
-		return "", "", nil, "", err
+		return err
 	}
-	statusToken := base64.RawURLEncoding.EncodeToString(token)
+	statusToken = base64.RawURLEncoding.EncodeToString(token)
 	tokenHash := sha256.Sum256([]byte(statusToken))
 	credit := values["credit_preference"]
 	creditName := values["credit_handle"]
@@ -991,20 +1029,19 @@ func (s *Server) storeSecurityReport(values map[string]string) (string, string, 
 	if raw := values["disclosure_days"]; raw != "" {
 		parsed, e := strconv.Atoi(raw)
 		if e != nil || parsed < 0 {
-			return "", "", nil, "", fmt.Errorf("invalid disclosure timeline")
+			return fmt.Errorf("invalid disclosure timeline")
 		}
 		disclosureDays = parsed
 	}
 	disclosureDate := time.Now().UTC().AddDate(0, 0, disclosureDays).Format("2006-01-02")
 	idWindow, valid := s.securityIDWindow(values["security_id"], time.Now())
 	if !valid {
-		return "", "", nil, "", fmt.Errorf("invalid or expired security report identifier")
+		return fmt.Errorf("invalid or expired security report identifier")
 	}
-	_, err = tx.Exec(`INSERT INTO security_reports(tracking_id,id_window,severity,component,body_enc,body_alg,contact_enc,credit_pref,credit_name,disclosure_date,cve_requested,token_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, trackingID, idWindow, values["severity"], values["component"], bodyEnc, bodyAlg, contactEnc, credit, creditName, disclosureDate, values["cve_requested"] == "on", hex.EncodeToString(tokenHash[:]))
+		_, err = tx.Exec(`INSERT INTO security_reports(tracking_id,id_window,severity,component,body_enc,body_alg,contact_enc,credit_pref,credit_name,disclosure_date,cve_requested,token_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, trackingID, idWindow, values["severity"], values["component"], bodyEnc, bodyAlg, contactEnc, credit, creditName, disclosureDate, values["cve_requested"] == "on", hex.EncodeToString(tokenHash[:]))
+		return err
+	})
 	if err != nil {
-		return "", "", nil, "", err
-	}
-	if err := tx.Commit(); err != nil {
 		return "", "", nil, "", err
 	}
 	return trackingID, statusToken, bodyEnc, bodyAlg, nil
@@ -1043,7 +1080,12 @@ func (s *Server) handleSecurityReportStatus(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	result, err := s.db.Exec(`UPDATE security_reports SET token_last_used=? WHERE tracking_id=? AND token_hash=? AND (token_last_used IS NULL OR token_last_used < ?)`, today, id, hashText, today)
+	var result sql.Result
+	err = database.Write(r.Context(), s.db, func(tx *sql.Tx) error {
+		var err error
+		result, err = tx.ExecContext(r.Context(), `UPDATE security_reports SET token_last_used=? WHERE tracking_id=? AND token_hash=? AND (token_last_used IS NULL OR token_last_used < ?)`, today, id, hashText, today)
+		return err
+	})
 	if err != nil {
 		s.errorResponse(w, r, "Page not found", http.StatusNotFound)
 		return
@@ -1285,16 +1327,32 @@ func (s *Server) handleContactSubmit(w http.ResponseWriter, r *http.Request) {
 			component = string([]rune(component)[:255])
 		}
 		log.Printf("security.report_received tracking_id=%q severity=%q component=%q", trackingID, values["severity"], component)
-		recipient := s.config.Server.Contact.Security.Email
-		if recipient == "" {
-			recipient = s.config.Server.Contact.Admin.Email
+		webhookSeverity := "info"
+		switch values["severity"] {
+		case "critical", "high":
+			webhookSeverity = "critical"
+		case "medium":
+			webhookSeverity = "warning"
 		}
+		webhookValues := map[string]string{"tracking_id": trackingID, "severity": webhookSeverity, "component": component}
+		s.notifyReportWebhooks(r, "security", "security.report_received", webhookValues)
+		s.notifyReportWebhooks(r, "admin", "security.report_received", webhookValues)
+		recipient := s.contactRecipient("security")
 		if recipient != "" {
 			kind := "security_encrypted"
 			if bodyAlg == "pgp" {
 				kind = "security_pgp"
 			}
-			_ = s.sendContactEmail(recipient, recipient, kind, "Report "+trackingID, base64.StdEncoding.EncodeToString(encryptedBody))
+			if err := s.sendContactEmail(recipient, recipient, kind, "Report "+trackingID, base64.StdEncoding.EncodeToString(encryptedBody)); err != nil {
+				log.Printf("Could not send encrypted security report notification tracking_id=%q", trackingID)
+			}
+		}
+		adminRecipient := strings.TrimSpace(s.config.Server.Contact.Admin.Email)
+		if adminRecipient != "" && adminRecipient != recipient {
+			adminSummary := fmt.Sprintf("Tracking ID: %s\nSeverity: %s\nComponent: %s\n", trackingID, webhookSeverity, component)
+			if err := s.sendContactEmail(adminRecipient, adminRecipient, "security_summary", "Security report received", adminSummary); err != nil {
+				log.Printf("Could not send admin security report summary tracking_id=%q", trackingID)
+			}
 		}
 		ackSent := false
 		if statusToken != "" {
@@ -1334,6 +1392,17 @@ func (s *Server) handleContactSubmit(w http.ResponseWriter, r *http.Request) {
 		s.errorResponse(w, r, "Report delivery is unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	role := "abuse"
+	severity := "warning"
+	component := values["reason"]
+	if kind == "privacy" {
+		role = "general"
+		severity = "info"
+		component = values["request_kind"]
+	}
+	s.notifyReportWebhooks(r, role, "contact."+kind+"_received", map[string]string{
+		"subject": values["subject"], "severity": severity, "component": component,
+	})
 	s.rememberContactDuplicate(values)
 	returnContactSuccess(w, r, s, values["form_token"])
 }
@@ -1412,7 +1481,7 @@ func (s *Server) handleContactAPI(w http.ResponseWriter, r *http.Request) {
 	if s.validSecurityID(r.URL.Query().Get("security_id"), time.Now()) {
 		types = []string{"security"}
 	}
-	data := map[string]interface{}{"types": types, "security_url": "/server/security", "abuse_email": s.abuseContactEmail(), "form_token": token, "captcha": captcha, "fields": contactFieldDescriptors(types)}
+	data := map[string]interface{}{"types": types, "security_url": "/server/security", "abuse_email": s.abuseContactEmailForRequest(r), "form_token": token, "captcha": captcha, "fields": contactFieldDescriptors(types)}
 	if containsString(types, "security") {
 		data["hidden_fields"] = map[string]string{"security_id": r.URL.Query().Get("security_id"), "app_version": s.version, "commit_hash": s.commit, "timestamp": time.Now().UTC().Format(time.RFC3339), "request_user_agent": r.UserAgent()}
 	}

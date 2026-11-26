@@ -16,6 +16,9 @@ func TestSpecIncludesVersionAndCoreRoutes(t *testing.T) {
 			continue
 		}
 		if route == "/api/v1/server/graphql" || route == "/api/v1/server/reports/{report}" || route == "/api/graphql" {
+			if route == "/api/v1/server/graphql" || route == "/api/graphql" {
+				router.Get(route, http.NotFound)
+			}
 			router.Post(route, http.NotFound)
 			continue
 		}
@@ -40,6 +43,14 @@ func TestSpecIncludesVersionAndCoreRoutes(t *testing.T) {
 		if _, exists := paths[route]; !exists {
 			t.Errorf("OpenAPI route %q is missing", route)
 		}
+	}
+	graphqlPath := paths["/api/v1/server/graphql"].(map[string]interface{})
+	if graphqlPath["get"] == nil || graphqlPath["post"] == nil {
+		t.Fatalf("GraphQL operations = %#v, want GET and POST", graphqlPath)
+	}
+	graphqlAlias := paths["/api/graphql"].(map[string]interface{})
+	if graphqlAlias["get"] == nil || graphqlAlias["post"] == nil {
+		t.Fatalf("GraphQL alias operations = %#v, want GET and POST", graphqlAlias)
 	}
 }
 
@@ -79,8 +90,6 @@ func TestSpecPathsComeFromRegisteredRoutes(t *testing.T) {
 	router.Handle("/mcp", http.HandlerFunc(http.NotFound))
 	router.Get("/api/v1/server/metrics/prometheus", http.NotFound)
 	router.Get("/api/metrics/prometheus", http.NotFound)
-	router.Get("/api/v1/debug/pprof/heap", http.NotFound)
-	router.Get("/api/debug/pprof/heap", http.NotFound)
 	spec, err := Spec("1.2.3", router)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +98,7 @@ func TestSpecPathsComeFromRegisteredRoutes(t *testing.T) {
 	if !ok {
 		t.Fatalf("paths has type %T", spec["paths"])
 	}
-	for _, route := range []string{"/api/v1/countries", "/api/v1/countries.txt", "/api/v1/coordinates", "/api/healthz", "/mcp", "/api/v1/server/metrics/prometheus", "/api/metrics/prometheus", "/api/v1/debug/pprof/heap", "/api/debug/pprof/heap"} {
+	for _, route := range []string{"/api/v1/countries", "/api/v1/countries.txt", "/api/v1/coordinates", "/api/healthz", "/mcp", "/api/v1/server/metrics/prometheus", "/api/metrics/prometheus"} {
 		if _, exists := paths[route]; !exists {
 			t.Errorf("registered route %q is missing from generated OpenAPI", route)
 		}
@@ -108,7 +117,7 @@ func TestSpecPathsComeFromRegisteredRoutes(t *testing.T) {
 	if _, exists := countries["post"]; exists {
 		t.Fatal("unregistered POST operation was generated")
 	}
-	for _, route := range []string{"/api/v1/server/metrics/prometheus", "/api/metrics/prometheus", "/api/v1/debug/pprof/heap", "/api/debug/pprof/heap"} {
+	for _, route := range []string{"/api/v1/server/metrics/prometheus", "/api/metrics/prometheus"} {
 		item := paths[route].(map[string]interface{})
 		operation := item["get"].(map[string]interface{})
 		if len(operation["security"].([]interface{})) == 0 {

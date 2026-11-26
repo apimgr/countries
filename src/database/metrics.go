@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	appmode "github.com/apimgr/countries/src/mode"
@@ -20,9 +21,33 @@ type MetricsObserver interface {
 	ObserveDB(operation, table string, duration time.Duration, errorType string)
 }
 
+type databaseBusyMetrics interface { RecordDatabaseBusyRetry() }
+type databaseWriteWaitMetrics interface { ObserveDatabaseWriteWait(time.Duration) }
+
+func recordBusyRetry() {
+	observerState.RLock(); observer := observerState.observer; observerState.RUnlock()
+	if metrics, ok := observer.(databaseBusyMetrics); ok { metrics.RecordDatabaseBusyRetry() }
+}
+
+func recordWriteWait(duration time.Duration) {
+	observerState.RLock(); observer := observerState.observer; observerState.RUnlock()
+	if metrics, ok := observer.(databaseWriteWaitMetrics); ok { metrics.ObserveDatabaseWriteWait(duration) }
+}
+
 var observerState struct {
 	sync.RWMutex
 	observer MetricsObserver
+}
+
+var debugQueryLogging atomic.Bool
+
+func init() {
+	debugQueryLogging.Store(true)
+}
+
+// SetDebugQueryLogging enables or disables SQL query logs while debug mode is active.
+func SetDebugQueryLogging(enabled bool) {
+	debugQueryLogging.Store(enabled)
 }
 
 // SetMetricsObserver installs the process-wide observer used by new and
@@ -34,7 +59,9 @@ func SetMetricsObserver(observer MetricsObserver) {
 }
 
 type instrumentedDriver struct {
-	base driver.Driver
+	base    driver.Driver
+	rewrite bool
+	replica *ReadReplica
 }
 
 func (d *instrumentedDriver) Open(name string) (driver.Conn, error) {
@@ -42,15 +69,36 @@ func (d *instrumentedDriver) Open(name string) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return instrumentedConn{Conn: connection}, nil
+	return instrumentedConn{Conn: connection, rewrite: d.rewrite, replica: d.replica, txActive: new(atomic.Bool)}, nil
+}
+
+type instrumentedConnector struct {
+	base    driver.Connector
+	rewrite bool
+	replica *ReadReplica
+}
+
+func (c instrumentedConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	connection, err := c.base.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return instrumentedConn{Conn: connection, rewrite: c.rewrite, replica: c.replica, txActive: new(atomic.Bool)}, nil
+}
+
+func (c instrumentedConnector) Driver() driver.Driver {
+	return &instrumentedDriver{base: c.base.Driver(), rewrite: c.rewrite, replica: c.replica}
 }
 
 type instrumentedConn struct {
 	driver.Conn
+	rewrite bool
+	replica *ReadReplica
+	txActive *atomic.Bool
 }
 
 func (c instrumentedConn) Prepare(query string) (driver.Stmt, error) {
-	statement, err := c.Conn.Prepare(query)
+	statement, err := c.Conn.Prepare(c.rewriteQuery(query))
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +107,7 @@ func (c instrumentedConn) Prepare(query string) (driver.Stmt, error) {
 
 func (c instrumentedConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
 	if connection, ok := c.Conn.(driver.ConnPrepareContext); ok {
-		statement, err := connection.PrepareContext(ctx, query)
+		statement, err := connection.PrepareContext(ctx, c.rewriteQuery(query))
 		if err != nil {
 			return nil, err
 		}
@@ -74,29 +122,68 @@ func (c instrumentedConn) ExecContext(ctx context.Context, query string, args []
 		return nil, driver.ErrSkip
 	}
 	started := time.Now()
-	result, err := connection.ExecContext(ctx, query, args)
+	result, err := connection.ExecContext(ctx, c.rewriteQuery(query), args)
 	recordDatabaseOperation(query, started, err)
 	return result, err
 }
 
 func (c instrumentedConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	if c.replica != nil && (c.txActive == nil || !c.txActive.Load()) {
+		table := replicaTableForQuery(query)
+		if table != "" {
+			started := time.Now()
+			values := namedValues(args)
+			rows, err := c.replica.query(ctx, query, values, table, func() (driverRows, error) {
+				connection, ok := c.Conn.(driver.QueryerContext)
+				if !ok { return nil, driver.ErrSkip }
+				return connection.QueryContext(ctx, c.rewriteQuery(query), args)
+			})
+			if err == nil {
+				// Cache hits and remote reads are both observable database reads;
+				// the cache observer records its own hit/miss separately.
+				recordDatabaseOperation(query, started, nil)
+				return rows, nil
+			}
+			if !errors.Is(err, driver.ErrSkip) {
+				recordDatabaseOperation(query, started, err)
+				return nil, err
+			}
+		}
+	}
 	connection, ok := c.Conn.(driver.QueryerContext)
 	if !ok {
 		return nil, driver.ErrSkip
 	}
 	started := time.Now()
-	rows, err := connection.QueryContext(ctx, query, args)
+	rows, err := connection.QueryContext(ctx, c.rewriteQuery(query), args)
 	recordDatabaseOperation(query, started, err)
 	return rows, err
 }
 
+func (c instrumentedConn) rewriteQuery(query string) string {
+	if !c.rewrite {
+		return query
+	}
+	return rewriteRemoteSQL(query)
+}
+
 func (c instrumentedConn) BeginTx(ctx context.Context, options driver.TxOptions) (driver.Tx, error) {
 	if connection, ok := c.Conn.(driver.ConnBeginTx); ok {
-		return connection.BeginTx(ctx, options)
+		tx, err := connection.BeginTx(ctx, options)
+		if err != nil { return nil, err }
+		if c.txActive != nil { c.txActive.Store(true) }
+		return instrumentedTx{Tx: tx, active: c.txActive}, nil
 	}
 	//lint:ignore SA1019 Legacy-driver fallback; the driver lacks ConnBeginTx.
-	return c.Conn.Begin() //nolint:staticcheck
+	tx, err := c.Conn.Begin() //nolint:staticcheck
+	if err != nil { return nil, err }
+	if c.txActive != nil { c.txActive.Store(true) }
+	return instrumentedTx{Tx: tx, active: c.txActive}, nil
 }
+
+type instrumentedTx struct { driver.Tx; active *atomic.Bool }
+func (tx instrumentedTx) Commit() error { err := tx.Tx.Commit(); if tx.active != nil { tx.active.Store(false) }; return err }
+func (tx instrumentedTx) Rollback() error { err := tx.Tx.Rollback(); if tx.active != nil { tx.active.Store(false) }; return err }
 
 type instrumentedStmt struct {
 	driver.Stmt
@@ -146,7 +233,7 @@ func recordDatabaseOperation(query string, started time.Time, err error) {
 	if err != nil {
 		errorType = classifyDatabaseError(err)
 	}
-	if appmode.DebugEnabled() {
+	if appmode.DebugEnabled() && debugQueryLogging.Load() {
 		slog.Debug("db query", "query", query, "operation", operation, "table", table, "duration_ms", duration.Milliseconds(), "error_type", errorType)
 	}
 	observerState.RLock()

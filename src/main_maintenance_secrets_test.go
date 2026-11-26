@@ -6,11 +6,16 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/apimgr/countries/src/config"
 	"github.com/apimgr/countries/src/database"
+	"github.com/apimgr/countries/src/paths"
+	"github.com/apimgr/countries/src/securitykey"
 	"github.com/apimgr/countries/src/testutil"
+	"gopkg.in/yaml.v3"
 )
 
 func TestSecretRotationAESHelpers(t *testing.T) {
@@ -279,4 +284,269 @@ func TestSecretRotationReencryptsStoredValues(t *testing.T) {
 	if err := reencryptDatabaseValues(ctx, db, previous, current, "", time.Now().UTC()); err != nil {
 		t.Fatalf("second re-encryption pass: %v", err)
 	}
+}
+
+func TestSecretRotationWorkflows(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	t.Run("installation secret", func(t *testing.T) {
+		db, root := maintenanceTestDB(t)
+		oldSecret := bytes.Repeat([]byte{6}, 32)
+		oldText := base64.StdEncoding.EncodeToString(oldSecret)
+		if err := database.SetAppSecret(ctx, db, "installation_secret", oldText, now); err != nil {
+			t.Fatal(err)
+		}
+		configDir := filepath.Join(root, "config")
+		if err := rotateInstallationSecret(ctx, db, configDir, now); err != nil {
+			t.Fatalf("rotateInstallationSecret(): %v", err)
+		}
+		newText, found, err := database.GetAppSecret(ctx, db, "installation_secret")
+		if err != nil || !found || newText == oldText {
+			t.Fatalf("new installation secret = (%q, %t, %v)", newText, found, err)
+		}
+		newSecret, err := base64.StdEncoding.DecodeString(newText)
+		if err != nil || len(newSecret) != 32 {
+			t.Fatalf("decode new installation secret: %v", err)
+		}
+		if got, found, err := database.GetAppSecret(ctx, db, "installation_secret_previous"); err != nil || !found || got != oldText {
+			t.Fatalf("previous installation secret = (%q, %t, %v)", got, found, err)
+		}
+		if err := recoverInstallationSecret(ctx, db, configDir, filepath.Join(root, "logs"), now); err != nil {
+			t.Fatalf("recoverInstallationSecret() without optional PGP key: %v", err)
+		}
+	})
+
+	t.Run("encryption key", func(t *testing.T) {
+		db, root := maintenanceTestDB(t)
+		oldKey := bytes.Repeat([]byte{8}, 32)
+		cfg := config.DefaultConfig()
+		cfg.Server.Security.EncryptionKey = base64.StdEncoding.EncodeToString(oldKey)
+		configDir := filepath.Join(root, "config")
+		if err := rotateEncryptionKey(ctx, db, cfg, configDir, filepath.Join(configDir, "server.yml"), filepath.Join(root, "logs"), now); err != nil {
+			t.Fatalf("rotateEncryptionKey(): %v", err)
+		}
+		secretsYAML, err := os.ReadFile(filepath.Join(configDir, "secrets.yml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var secrets struct {
+			Server struct {
+				Security struct {
+					EncryptionKey string `yaml:"encryption_key"`
+				} `yaml:"security"`
+			} `yaml:"server"`
+		}
+		if err := yaml.Unmarshal(secretsYAML, &secrets); err != nil {
+			t.Fatal(err)
+		}
+		cfg.Server.Security.EncryptionKey = secrets.Server.Security.EncryptionKey
+		newKey, err := base64.StdEncoding.DecodeString(cfg.Server.Security.EncryptionKey)
+		if err != nil || len(newKey) != 32 || bytes.Equal(newKey, oldKey) {
+			t.Fatalf("new encryption key is invalid or unchanged: %v", err)
+		}
+		for _, name := range []string{"encryption_key_previous", "encryption_key_previous_until"} {
+			if _, found, err := database.GetAppSecret(ctx, db, name); err != nil || !found {
+				t.Fatalf("rotation state %q missing: found=%t err=%v", name, found, err)
+			}
+		}
+		if _, found, err := database.GetAppSecret(ctx, db, "encryption_key_pending"); err != nil || found {
+			t.Fatalf("completed rotation retained pending state: found=%t err=%v", found, err)
+		}
+		if err := recoverEncryptionKey(ctx, db, cfg, configDir, filepath.Join(root, "logs"), now); err != nil {
+			t.Fatalf("recoverEncryptionKey(): %v", err)
+		}
+		if err := CleanupExpiredSecretRotationRows(ctx, db, filepath.Join(root, "logs"), now.Add(31*24*time.Hour)); err != nil {
+			t.Fatalf("CleanupExpiredSecretRotationRows(): %v", err)
+		}
+		if _, found, err := database.GetAppSecret(ctx, db, "encryption_key_previous"); err != nil || found {
+			t.Fatalf("expired previous encryption key remains: found=%t err=%v", found, err)
+		}
+	})
+}
+
+func TestRecoverPendingSecretRotations(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+
+	t.Run("installation key rewraps PGP private material", func(t *testing.T) {
+		db, root := maintenanceTestDB(t)
+		oldSecret := bytes.Repeat([]byte{3}, 32)
+		currentSecret := bytes.Repeat([]byte{4}, 32)
+		oldText := base64.StdEncoding.EncodeToString(oldSecret)
+		currentText := base64.StdEncoding.EncodeToString(currentSecret)
+		if err := database.SetAppSecret(ctx, db, "installation_secret", currentText, now); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.SetAppSecret(ctx, db, "installation_secret_previous", oldText, now); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.SetAppSecret(ctx, db, "installation_secret_previous_until", now.Add(24*time.Hour).Format(time.RFC3339Nano), now); err != nil {
+			t.Fatal(err)
+		}
+		pair, err := securitykey.Generate("Countries Test", "security@example.test", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sealed, err := securitykey.SealPrivate(oldSecret, pair.Private)
+		if err != nil {
+			t.Fatal(err)
+		}
+		privatePath := filepath.Join(root, "config", "security", "pgp.priv.asc.enc")
+		if err := writePrivateAtomic(privatePath, sealed); err != nil {
+			t.Fatal(err)
+		}
+		if err := recoverInstallationSecret(ctx, db, filepath.Dir(filepath.Dir(privatePath)), filepath.Join(root, "logs"), now); err != nil {
+			t.Fatalf("recoverInstallationSecret(): %v", err)
+		}
+		updated, err := os.ReadFile(privatePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		opened, err := securitykey.OpenPrivate(currentSecret, updated)
+		if err != nil || !bytes.Equal(opened, pair.Private) {
+			t.Fatalf("recovered private key = (%q, %v)", opened, err)
+		}
+	})
+
+	t.Run("staged encryption key activates after restart", func(t *testing.T) {
+		db, root := maintenanceTestDB(t)
+		oldKey := bytes.Repeat([]byte{5}, 32)
+		newKey := bytes.Repeat([]byte{6}, 32)
+		cfg := config.DefaultConfig()
+		cfg.Server.Security.EncryptionKey = base64.StdEncoding.EncodeToString(oldKey)
+		if err := database.SetAppSecret(ctx, db, "installation_secret", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)), now); err != nil {
+			t.Fatal(err)
+		}
+		pending, err := sealAESValueAAD(oldKey, newKey, []byte("countries-encryption-key-pending-v1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		wrappedPrevious, err := sealPreviousEncryptionKey(newKey, oldKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, value := range map[string]string{
+			"encryption_key_pending":        base64.StdEncoding.EncodeToString(pending),
+			"encryption_key_previous":       base64.StdEncoding.EncodeToString(wrappedPrevious),
+			"encryption_key_previous_until": now.Add(30 * 24 * time.Hour).Format(time.RFC3339Nano),
+		} {
+			if err := database.SetAppSecret(ctx, db, name, value, now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		configDir := filepath.Join(root, "config")
+		if err := recoverPendingSecretRotations(ctx, db, cfg, configDir, filepath.Join(root, "logs"), now); err != nil {
+			t.Fatalf("recoverPendingSecretRotations(): %v", err)
+		}
+		if cfg.Server.Security.EncryptionKey != base64.StdEncoding.EncodeToString(newKey) {
+			t.Fatal("recovery did not activate the staged encryption key in memory")
+		}
+		if _, found, err := database.GetAppSecret(ctx, db, "encryption_key_pending"); err != nil || found {
+			t.Fatalf("recovery retained pending key: found=%t err=%v", found, err)
+		}
+	})
+}
+
+func TestSecretMaintenanceInputAndAuthorization(t *testing.T) {
+	t.Run("rejects malformed maintenance commands before config access", func(t *testing.T) {
+		for _, args := range [][]string{nil, {"rotate"}, {"rotate", "operator_token"}, {"reset", "encryption_key"}} {
+			if err := handleSecretMaintenance(args, "", "", "", filepath.Join(testutil.TempDir(t), "missing.yml")); err == nil {
+				t.Errorf("handleSecretMaintenance(%q) unexpectedly succeeded", args)
+			}
+		}
+	})
+
+	t.Run("requires an interactive terminal even for root", func(t *testing.T) {
+		cfg := config.DefaultConfig()
+		cfg.Server.Token = "test-operator-token"
+		if err := authorizeSecretRotation(cfg); err == nil || !strings.Contains(err.Error(), "interactive terminal") {
+			t.Fatalf("authorizeSecretRotation() = %v, want interactive-terminal error", err)
+		}
+	})
+
+	t.Run("confirmation and reason input", func(t *testing.T) {
+		originalStdin := os.Stdin
+		originalStderr := os.Stderr
+		inputPath := filepath.Join(testutil.TempDir(t), "stdin")
+		input, err := os.Create(inputPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := input.WriteString("ROTATE encryption_key\r\nRoutine key rollover\n"); err != nil {
+			_ = input.Close()
+			t.Fatal(err)
+		}
+		if _, err := input.Seek(0, 0); err != nil {
+			_ = input.Close()
+			t.Fatal(err)
+		}
+		output, err := os.Create(filepath.Join(filepath.Dir(inputPath), "stderr"))
+		if err != nil {
+			_ = input.Close()
+			t.Fatal(err)
+		}
+		os.Stdin, os.Stderr = input, output
+		t.Cleanup(func() {
+			os.Stdin, os.Stderr = originalStdin, originalStderr
+			if err := input.Close(); err != nil {
+				t.Errorf("close test stdin: %v", err)
+			}
+			if err := output.Close(); err != nil {
+				t.Errorf("close test stderr: %v", err)
+			}
+		})
+		if err := confirmSecretRotation("encryption_key"); err != nil {
+			t.Fatalf("confirmSecretRotation(): %v", err)
+		}
+		reason, err := readSecretRotationReason()
+		if err != nil || reason != "Routine key rollover" {
+			t.Fatalf("readSecretRotationReason() = (%q, %v)", reason, err)
+		}
+	})
+
+	t.Run("rejects mismatched confirmation and invalid reason", func(t *testing.T) {
+		originalStdin := os.Stdin
+		originalStderr := os.Stderr
+		dir := testutil.TempDir(t)
+		input, err := os.Create(filepath.Join(dir, "stdin"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := input.WriteString("ROTATE another_key\n\n"); err != nil {
+			_ = input.Close()
+			t.Fatal(err)
+		}
+		if _, err := input.Seek(0, 0); err != nil {
+			_ = input.Close()
+			t.Fatal(err)
+		}
+		output, err := os.Create(filepath.Join(dir, "stderr"))
+		if err != nil {
+			_ = input.Close()
+			t.Fatal(err)
+		}
+		os.Stdin, os.Stderr = input, output
+		t.Cleanup(func() {
+			os.Stdin, os.Stderr = originalStdin, originalStderr
+			_ = input.Close()
+			_ = output.Close()
+		})
+		if err := confirmSecretRotation("encryption_key"); err == nil {
+			t.Fatal("confirmSecretRotation() accepted a mismatched value")
+		}
+		if _, err := readSecretRotationReason(); err == nil {
+			t.Fatal("readSecretRotationReason() accepted an empty reason")
+		}
+	})
+
+	t.Run("database path honors default and explicit URL", func(t *testing.T) {
+		cfg := config.DefaultConfig()
+		if got, want := maintenanceDatabasePath(cfg, "/data/countries"), filepath.Join(paths.GetDatabaseDir("/data/countries"), "server.db"); got != want {
+			t.Errorf("default database path = %q, want %q", got, want)
+		}
+		cfg.Server.Database.URL = "postgres://db/{data_dir}/server"
+		if got, want := maintenanceDatabasePath(cfg, "/data/countries"), "postgres://db//data/countries/server"; got != want {
+			t.Errorf("explicit database URL = %q, want %q", got, want)
+		}
+	})
 }

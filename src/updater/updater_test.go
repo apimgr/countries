@@ -61,6 +61,37 @@ func TestCheckTreatsReleaseNotFoundAsNoUpdate(t *testing.T) {
 	}
 }
 
+func TestReleaseChecksumFetchesTrustedChecksumForExactTag(t *testing.T) {
+	binaryName := BinaryName("countries", "")
+	binary := []byte("staged update")
+	digest := sha256.Sum256(binary)
+	checksum := hex.EncodeToString(digest[:])
+	checksumURL := ""
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/releases":
+			_, _ = fmt.Fprintf(w, `[{"tag_name":"v2.0.0","assets":[{"name":"sha256.txt","browser_download_url":%q}]}]`, checksumURL)
+		case "/sha256.txt":
+			_, _ = fmt.Fprintf(w, "%s  %s\n", checksum, binaryName)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	checksumURL = server.URL + "/sha256.txt"
+
+	got, err := ReleaseChecksum(context.Background(), server.Client(), server.URL+"/releases", "v2.0.0", binaryName)
+	if err != nil || got != checksum {
+		t.Fatalf("ReleaseChecksum() = (%q, %v), want %q", got, err, checksum)
+	}
+	if _, err := ReleaseChecksum(context.Background(), server.Client(), server.URL+"/releases", "v1.0.0", binaryName); err == nil {
+		t.Fatal("ReleaseChecksum() succeeded for missing tag")
+	}
+	if _, err := ReleaseChecksum(context.Background(), server.Client(), "http://example.test/releases", "v2.0.0", binaryName); err == nil {
+		t.Fatal("ReleaseChecksum() accepted a non-HTTPS metadata URL")
+	}
+}
+
 func TestCheckWithDeferSelectsNewestMatureReleaseAndIgnoresDevelDeferral(t *testing.T) {
 	data := `[
 {"tag_name":"v1.2.0","published_at":"2026-09-01T00:00:00Z","assets":[]},

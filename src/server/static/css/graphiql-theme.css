@@ -1,0 +1,10 @@
+#graphiql {
+  min-height: 32rem;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.graphiql-container {
+  min-height: 32rem;
+}

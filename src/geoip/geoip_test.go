@@ -22,6 +22,7 @@ type fakeDatabaseReader struct {
 	lookupErr   error
 	lookupCalls int
 	closed      bool
+	legacyCountryOnly bool
 }
 
 func (r *fakeDatabaseReader) Lookup(_ net.IP, target any) error {
@@ -34,12 +35,37 @@ func (r *fakeDatabaseReader) Lookup(_ net.IP, target any) error {
 		record.ASN = 64512
 		record.Org = "Example Network"
 	case *CountryRecord:
-		record.CountryCode = " us "
+		if r.legacyCountryOnly {
+			record.CountryCode = " ca "
+		} else {
+			record.Country.ISOCode = " us "
+			record.CountryCode = " ca "
+		}
 	case *CityRecord:
 		record.City = "Test City"
 		record.CountryCode = "US"
 	}
 	return nil
+}
+
+func TestLookupCountryPrefersNestedISOCodeAndUsesLegacyFallback(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		reader *fakeDatabaseReader
+		want string
+	}{
+		{name: "nested canonical code", reader: &fakeDatabaseReader{}, want: "US"},
+		{name: "legacy top-level fallback", reader: &fakeDatabaseReader{legacyCountryOnly: true}, want: "CA"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manager := testManager(testutil.TempDir(t), "", nil)
+			manager.readers["country"] = test.reader
+			record, found, err := manager.LookupCountry(net.ParseIP("8.8.8.8"))
+			if err != nil || !found || record.CountryCode != test.want {
+				t.Fatalf("LookupCountry() = %+v, %t, %v; want %s", record, found, err, test.want)
+			}
+		})
+	}
 }
 
 func (r *fakeDatabaseReader) Close() error {
@@ -84,6 +110,31 @@ func TestParseChecksum(t *testing.T) {
 		if _, err := parseChecksum([]byte(input)); err == nil {
 			t.Errorf("parseChecksum(%q) accepted invalid digest", input)
 		}
+	}
+}
+
+func TestLastUpdatedFreshnessMarker(t *testing.T) {
+	manager := testManager(testutil.TempDir(t), "", nil)
+	now := time.Date(2026, time.January, 5, 12, 0, 0, 0, time.UTC)
+	if !manager.IsStale(now, 21*24*time.Hour) {
+		t.Fatal("missing last-updated marker should be stale")
+	}
+	updated := now.Add(-20 * 24 * time.Hour)
+	if err := manager.writeLastUpdated(updated); err != nil {
+		t.Fatalf("writeLastUpdated() error = %v", err)
+	}
+	if got, err := manager.LastUpdated(); err != nil || !got.Equal(updated) {
+		t.Fatalf("LastUpdated() = %v, %v; want %v", got, err, updated)
+	}
+	if manager.IsStale(now, 21*24*time.Hour) {
+		t.Fatal("20-day-old database marker should be fresh")
+	}
+	if !manager.IsStale(now, 19*24*time.Hour) {
+		t.Fatal("20-day-old database marker should be stale against a 19-day limit")
+	}
+	info, err := os.Stat(filepath.Join(manager.directory, lastUpdatedFile))
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("last-updated marker mode = %v, err = %v", info.Mode().Perm(), err)
 	}
 }
 

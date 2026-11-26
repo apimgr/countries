@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -220,6 +221,97 @@ func TestRestoreUsesStoredStateForRegisteredTasks(t *testing.T) {
 	tasks := s.GetTasks()
 	if len(tasks) != 1 || tasks[0].Enabled || tasks[0].RunCount != 7 || tasks[0].LastStatus != StatusSuccess {
 		t.Fatalf("restored tasks = %+v", tasks)
+	}
+}
+
+func TestRestoreMarksRunningTaskInterruptedAndRetriesImmediately(t *testing.T) {
+	store := &memoryStore{tasks: map[string]Task{
+		"running": {ID: "running", Enabled: true, Schedule: "@every 1h", LastStatus: StatusRunning, LastError: "previous failure", LastRun: time.Now().Add(-time.Minute), FailCount: 4},
+	}}
+	s := NewWithOptions(Options{Store: store})
+	if err := s.Register(Task{ID: "running", Name: "running", Schedule: "@every 1h", Enabled: true, Func: func(context.Context) error { return nil }}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Restore(context.Background()); err != nil {
+		t.Fatalf("Restore() error = %v", err)
+	}
+	state := s.GetTasks()[0]
+	if state.LastStatus != StatusInterrupted || state.LastError != "previous failure" || state.FailCount != 4 || state.NextRun.After(time.Now()) {
+		t.Fatalf("recovered interrupted state = %+v", state)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.entries) != 1 || store.entries[0].Status != StatusInterrupted || store.entries[0].Error != "" {
+		t.Fatalf("recovered interrupted history = %+v", store.entries)
+	}
+}
+
+func TestMarkInterruptedDoesNotCountFailureOrReplaceLastError(t *testing.T) {
+	store := &memoryStore{}
+	s := NewWithOptions(Options{Store: store})
+	if err := s.Register(Task{ID: "running", Name: "running", Schedule: "@hourly", Enabled: true, LastError: "kept", FailCount: 2, Func: func(context.Context) error { return nil }}); err != nil {
+		t.Fatal(err)
+	}
+	task := s.tasks["running"]
+	task.running = true
+	task.startedAt = time.Now().Add(-time.Minute)
+	task.LastStatus = StatusRunning
+	s.markInterrupted()
+	state := s.GetTasks()[0]
+	if state.LastStatus != StatusInterrupted || state.LastError != "kept" || state.FailCount != 2 || state.NextRun.After(time.Now()) {
+		t.Fatalf("interrupted state = %+v", state)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.entries) != 1 || store.entries[0].Status != StatusInterrupted || store.entries[0].Error != "" {
+		t.Fatalf("interrupted history = %+v", store.entries)
+	}
+}
+
+func TestDatabaseMonitorThresholdDedupAndRecovery(t *testing.T) {
+	probeErr := fmt.Errorf("database unavailable")
+	var notifications int
+	var logs []string
+	monitor := &DatabaseMonitor{
+		Failures: 2, Repeat: time.Hour,
+		Probe: func(context.Context) error { return probeErr },
+		Notify: func(since time.Time, message string) {
+			notifications++
+			if since.IsZero() || message != probeErr.Error() {
+				t.Errorf("notification since=%v message=%q", since, message)
+			}
+		},
+		Logf: func(level, format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) },
+	}
+	if monitor.Check(context.Background()) == nil || notifications != 0 {
+		t.Fatal("monitor notified before reaching the failure threshold")
+	}
+	if monitor.Check(context.Background()) == nil || notifications != 1 {
+		t.Fatal("monitor did not notify on the failure threshold")
+	}
+	if monitor.Check(context.Background()) == nil || notifications != 1 {
+		t.Fatal("monitor did not deduplicate repeated failures")
+	}
+	monitor.Probe = func(context.Context) error { return nil }
+	if err := monitor.Check(context.Background()); err != nil {
+		t.Fatalf("recovery probe error = %v", err)
+	}
+	if len(logs) != 2 || logs[1] != "Database connection recovered" {
+		t.Fatalf("recovery logs = %v", logs)
+	}
+	monitor.Probe = func(context.Context) error { return probeErr }
+	_ = monitor.Check(context.Background())
+	_ = monitor.Check(context.Background())
+	if notifications != 2 {
+		t.Fatalf("notification count after recovery = %d, want 2", notifications)
+	}
+}
+
+func TestDatabaseErrorSanitizationRemovesConnectionCredentials(t *testing.T) {
+	input := "dial tcp postgres://operator:secret@db.example/places?token=abc failed"
+	got := sanitizeDatabaseError(input)
+	if strings.Contains(got, "operator") || strings.Contains(got, "secret") || strings.Contains(got, "abc") {
+		t.Fatalf("sanitized error contains credentials: %q", got)
 	}
 }
 

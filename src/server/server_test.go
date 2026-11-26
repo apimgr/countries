@@ -16,10 +16,13 @@ import (
 	"testing"
 	"time"
 
+	commontheme "github.com/apimgr/countries/src/common/theme"
 	"github.com/apimgr/countries/src/config"
 	"github.com/apimgr/countries/src/countries"
 	"github.com/apimgr/countries/src/database"
+	graphqlapi "github.com/apimgr/countries/src/graphql"
 	appmode "github.com/apimgr/countries/src/mode"
+	"github.com/apimgr/countries/src/swagger"
 	"github.com/apimgr/countries/src/testutil"
 )
 
@@ -56,10 +59,22 @@ func doRequest(s *Server, method, path string, body []byte) *httptest.ResponseRe
 	}
 	if strings.HasPrefix(path, "/api/") {
 		req.Header.Set("Accept", "application/json")
+	} else {
+		req.Header.Set("Accept", "text/html")
 	}
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 	return rec
+}
+
+func TestGraphQLUnversionedAliasGETMatchesCanonicalRoute(t *testing.T) {
+	server := newTestServer(t)
+	query := url.QueryEscape("{ countries { name { common } } }")
+	canonical := doRequest(server, http.MethodGet, "/api/v1/server/graphql?query="+query, nil)
+	alias := doRequest(server, http.MethodGet, "/api/graphql?query="+query, nil)
+	if canonical.Code != alias.Code || canonical.Header().Get("Content-Type") != alias.Header().Get("Content-Type") || canonical.Body.String() != alias.Body.String() {
+		t.Fatalf("GraphQL alias differs from canonical route: canonical=(%d, %q, %q) alias=(%d, %q, %q)", canonical.Code, canonical.Header().Get("Content-Type"), canonical.Body.String(), alias.Code, alias.Header().Get("Content-Type"), alias.Body.String())
+	}
 }
 
 func TestHandleHealthz(t *testing.T) {
@@ -89,8 +104,11 @@ func TestHandleHealthz(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatalf("%s: invalid JSON body: %v", path, err)
 		}
-		if got.Status != "healthy" || got.Cluster.Enabled || got.Project.Name == "" {
+		if got.Status != "healthy" || got.Project.Name == "" {
 			t.Errorf("%s: health response = %+v, want healthy single-instance response", path, got)
+		}
+		if strings.Contains(rec.Body.String(), `"cluster"`) {
+			t.Errorf("%s: health response exposes unsupported cluster state", path)
 		}
 	}
 }
@@ -108,11 +126,12 @@ func TestDebugEndpointsRequireDebugFlag(t *testing.T) {
 	appmode.SetDebugEnabled(true)
 	cfg := config.DefaultConfig()
 	cfg.Server.Token = "adm_debug_test_token"
+	cfg.Server.Database.URL = "libsql://db.example.test?authToken=database-url-secret"
+	cfg.Server.Cache.URL = "rediss://cache-user:cache-url-secret@cache.example.test:6379/0"
 	withDebug := newTestServerWithConfig(t, cfg)
 	paths := []string{
 		"/debug/vars", "/debug/config", "/debug/routes", "/debug/cache", "/debug/db",
-		"/debug/scheduler", "/debug/memory", "/debug/goroutines",
-		"/api/v1/debug/config", "/api/debug/config",
+		"/debug/scheduler", "/debug/memory", "/debug/goroutines", "/debug/pprof",
 	}
 	for _, path := range paths {
 		if got := doRequest(withDebug, http.MethodGet, path, nil).Code; got != http.StatusUnauthorized {
@@ -127,6 +146,41 @@ func TestDebugEndpointsRequireDebugFlag(t *testing.T) {
 		}
 		if path == "/debug/config" && strings.Contains(response.Body.String(), cfg.Server.Token) {
 			t.Error("debug configuration exposed the operator token")
+		}
+		if path == "/debug/config" && (strings.Contains(response.Body.String(), "database-url-secret") || strings.Contains(response.Body.String(), "cache-url-secret")) {
+			t.Error("debug configuration exposed database or cache URL credentials")
+		}
+	}
+	request := httptest.NewRequest(http.MethodGet, "/debug/error500", nil)
+	request.Header.Set("Authorization", "Bearer "+cfg.Server.Token)
+	response := httptest.NewRecorder()
+	withDebug.router.ServeHTTP(response, request)
+	if response.Code != http.StatusInternalServerError {
+		t.Errorf("debug error renderer status = %d, want 500", response.Code)
+	}
+	for _, path := range []string{"/api/v1/debug/config", "/api/debug/config"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer "+cfg.Server.Token)
+		response := httptest.NewRecorder()
+		withDebug.router.ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Errorf("non-canonical debug route %s status = %d, want 404", path, response.Code)
+		}
+	}
+}
+
+func TestDebugDiagnosticSettingsAreGatedByDebugFlag(t *testing.T) {
+	previous := appmode.DebugEnabled()
+	t.Cleanup(func() { appmode.SetDebugEnabled(previous) })
+	appmode.SetDebugEnabled(true)
+	cfg := config.DefaultConfig()
+	cfg.Server.Token = "adm_debug_settings_test"
+	cfg.Server.Debug.Pprof = false
+	cfg.Server.Debug.RuntimeEndpoints = false
+	s := newTestServerWithConfig(t, cfg)
+	for _, path := range []string{"/debug/pprof", "/debug/vars", "/debug/memory", "/debug/goroutines"} {
+		if got := doRequest(s, http.MethodGet, path, nil).Code; got != http.StatusNotFound {
+			t.Errorf("disabled diagnostic endpoint %s status = %d, want 404", path, got)
 		}
 	}
 }
@@ -186,6 +240,7 @@ func TestServerRootRedirectsToAbout(t *testing.T) {
 func TestBuildStampCookieAndVersionPurge(t *testing.T) {
 	s := newTestServer(t)
 	firstRequest := httptest.NewRequest(http.MethodGet, "/", nil)
+	firstRequest.Header.Set("Accept", "text/html")
 	firstResponse := httptest.NewRecorder()
 	s.router.ServeHTTP(firstResponse, firstRequest)
 	if firstResponse.Code != http.StatusOK || firstResponse.Header().Get("Clear-Site-Data") != "" {
@@ -205,6 +260,7 @@ func TestBuildStampCookieAndVersionPurge(t *testing.T) {
 	}
 
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Accept", "text/html")
 	request.Header.Set("Sec-Fetch-Dest", "document")
 	request.Header.Set("Sec-Fetch-Mode", "navigate")
 	request.AddCookie(&http.Cookie{Name: buildCookieName, Value: "old-build"})
@@ -233,14 +289,14 @@ func TestBuildStampCookieAndVersionPurge(t *testing.T) {
 
 func TestStaticAssetCacheRequiresMatchingBuildStamp(t *testing.T) {
 	s := newTestServer(t)
-	request := httptest.NewRequest(http.MethodGet, "/static/css/main.css", nil)
+	request := httptest.NewRequest(http.MethodGet, "/static/css/public.css", nil)
 	response := httptest.NewRecorder()
 	s.router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-cache" || response.Header().Get("ETag") == "" {
 		t.Fatalf("unstamped static response status=%d headers=%v", response.Code, response.Header())
 	}
 
-	stampedURL := "/static/css/main.css?v=" + s.assetStamp()
+	stampedURL := "/static/css/public.css?v=" + s.assetStamp()
 	request = httptest.NewRequest(http.MethodGet, stampedURL, nil)
 	response = httptest.NewRecorder()
 	s.router.ServeHTTP(response, request)
@@ -254,6 +310,60 @@ func TestStaticAssetCacheRequiresMatchingBuildStamp(t *testing.T) {
 	s.router.ServeHTTP(conditional, request)
 	if conditional.Code != http.StatusNotModified {
 		t.Fatalf("matching static ETag status=%d, want 304", conditional.Code)
+	}
+}
+
+func TestSecFetchValidationRejectsCrossSiteFrontendWritesOnly(t *testing.T) {
+	s := newTestServer(t)
+
+	frontend := httptest.NewRequest(http.MethodPost, "/server/preferences", strings.NewReader(""))
+	frontend.Header.Set("Sec-Fetch-Site", "cross-site")
+	frontendResponse := httptest.NewRecorder()
+	s.router.ServeHTTP(frontendResponse, frontend)
+	if frontendResponse.Code != http.StatusForbidden {
+		t.Fatalf("cross-site frontend write status = %d, want %d", frontendResponse.Code, http.StatusForbidden)
+	}
+
+	page := doRequest(s, http.MethodGet, "/", nil)
+	var token string
+	for _, cookie := range page.Result().Cookies() {
+		if cookie.Name == "csrf_token" {
+			token = cookie.Value
+		}
+	}
+	if token == "" {
+		t.Fatal("page did not set CSRF token for legacy browser")
+	}
+	legacy := httptest.NewRequest(http.MethodPost, "/server/preferences", strings.NewReader("theme=light&csrf_token="+url.QueryEscape(token)))
+	legacy.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	legacy.Header.Set("Accept", "text/html")
+	legacy.AddCookie(&http.Cookie{Name: "csrf_token", Value: token})
+	legacy.AddCookie(&http.Cookie{Name: "cookie_consent", Value: url.PathEscape(`{"essential":true,"preferences":true}`)})
+	legacyResponse := httptest.NewRecorder()
+	s.router.ServeHTTP(legacyResponse, legacy)
+	if legacyResponse.Code == http.StatusForbidden {
+		t.Fatalf("missing Sec-Fetch headers were rejected: status=%d", legacyResponse.Code)
+	}
+
+	apiRequest := httptest.NewRequest(http.MethodPost, "/api/v1/coordinates", strings.NewReader(""))
+	apiRequest.Header.Set("Sec-Fetch-Site", "cross-site")
+	apiResponse := httptest.NewRecorder()
+	s.router.ServeHTTP(apiResponse, apiRequest)
+	if apiResponse.Code == http.StatusForbidden {
+		t.Fatalf("API request was rejected by frontend Sec-Fetch validation: status=%d", apiResponse.Code)
+	}
+}
+
+func TestGPCPrivacyNoticeIsAvailableOnPreferencesPage(t *testing.T) {
+	s := newTestServer(t)
+	s.config.Web.Headers.HonorSecGPC = true
+	request := httptest.NewRequest(http.MethodGet, "/server/preferences", nil)
+	request.Header.Set("Accept", "text/html")
+	request.Header.Set("Sec-GPC", "1")
+	response := httptest.NewRecorder()
+	s.router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "privacy_signal") && !strings.Contains(response.Body.String(), "Global Privacy Control") {
+		t.Fatalf("preferences page did not render the privacy signal notice: status=%d", response.Code)
 	}
 }
 
@@ -279,6 +389,7 @@ func TestPreferencesRequireDoubleSubmitCSRF(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/server/preferences", strings.NewReader("theme=light&csrf_token="+token))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(&http.Cookie{Name: "csrf_token", Value: token})
+	req.AddCookie(&http.Cookie{Name: "cookie_consent", Value: url.PathEscape(`{"essential":true,"preferences":true}`)})
 	accepted := httptest.NewRecorder()
 	s.router.ServeHTTP(accepted, req)
 	if accepted.Code != http.StatusSeeOther {
@@ -299,6 +410,7 @@ func TestPreferencesSaveIgnoresSyncCode(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/server/preferences", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.AddCookie(&http.Cookie{Name: "csrf_token", Value: token})
+	request.AddCookie(&http.Cookie{Name: "cookie_consent", Value: url.PathEscape(`{"essential":true,"preferences":true}`)})
 	response := httptest.NewRecorder()
 	s.router.ServeHTTP(response, request)
 	if response.Code != http.StatusSeeOther {
@@ -316,6 +428,7 @@ func TestPreferencesAPIMirrorDoesNotRequireCSRF(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/server/preferences", strings.NewReader(`{"theme":"light","lang":"fr"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.AddCookie(&http.Cookie{Name: "cookie_consent", Value: url.PathEscape(`{"essential":true,"preferences":true}`)})
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 	var response struct {
@@ -330,6 +443,33 @@ func TestPreferencesAPIMirrorDoesNotRequireCSRF(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK || !response.OK || response.Data.Theme != "light" || response.Data.Lang != "fr" {
 		t.Fatalf("POST API preferences status=%d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPreferencesAPIMirrorRequiresPreferenceConsent(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/server/preferences", strings.NewReader(`{"theme":"light","lang":"fr"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	s.router.ServeHTTP(rec, req)
+	var response struct {
+		Data struct {
+			Applied         []string `json:"applied"`
+			Ignored         []string `json:"ignored"`
+			ConsentRequired bool     `json:"consent_required"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode API preferences response (status %d, body %q): %v", rec.Code, rec.Body.String(), err)
+	}
+	if rec.Code != http.StatusOK || len(response.Data.Applied) != 0 || len(response.Data.Ignored) != 2 || !response.Data.ConsentRequired {
+		t.Fatalf("preference consent response status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "theme" || cookie.Name == "lang" {
+			t.Errorf("preference cookie written without consent: %s", cookie.Name)
+		}
 	}
 }
 
@@ -356,6 +496,7 @@ func TestPreferenceSyncExportsAndImports(t *testing.T) {
 	padded := base64.URLEncoding.EncodeToString([]byte("lang=fr&theme=light"))
 	importRequest := httptest.NewRequest(http.MethodGet, "/api/v1/server/preferences/sync/import?code="+padded+"&theme=dark&lang=de-DE", nil)
 	importRequest.Header.Set("Accept", "application/json")
+	importRequest.AddCookie(&http.Cookie{Name: "cookie_consent", Value: url.PathEscape(`{"essential":true,"preferences":true}`)})
 	imported := httptest.NewRecorder()
 	s.router.ServeHTTP(imported, importRequest)
 	var result struct {
@@ -454,6 +595,7 @@ func TestConsentBannerAndSubmission(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/server/consent", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.AddCookie(&http.Cookie{Name: "csrf_token", Value: token})
+	request.AddCookie(&http.Cookie{Name: "cookie_consent", Value: url.PathEscape(`{"essential":true,"preferences":true}`)})
 	response := httptest.NewRecorder()
 	s.router.ServeHTTP(response, request)
 	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/server/about" {
@@ -514,6 +656,7 @@ func TestAutomaticLanguageSelectionClearsOverride(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/server/preferences", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.AddCookie(&http.Cookie{Name: "csrf_token", Value: token})
+	request.AddCookie(&http.Cookie{Name: "cookie_consent", Value: url.PathEscape(`{"essential":true,"preferences":true}`)})
 	response := httptest.NewRecorder()
 	s.router.ServeHTTP(response, request)
 	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/" {
@@ -610,6 +753,113 @@ func TestAboutAndHelpPagesDescribeProjectFeatures(t *testing.T) {
 		if !strings.Contains(helpText.String(), term) {
 			t.Errorf("help page does not include %q", term)
 		}
+	}
+	helpAPI := doRequest(s, http.MethodGet, "/api/v1/server/help", nil)
+	var helpEnvelope struct {
+		Data struct {
+			Content string `json:"content"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(helpAPI.Body.Bytes(), &helpEnvelope); err != nil {
+		t.Fatalf("decode built-in help API response: %v", err)
+	}
+	if helpAPI.Code != http.StatusOK || !strings.Contains(helpEnvelope.Data.Content, "Find countries") {
+		t.Fatalf("built-in help API content is missing project guidance: status=%d content=%q", helpAPI.Code, helpEnvelope.Data.Content)
+	}
+}
+
+func TestHelpPageUsesConfiguredMarkdownAndAPIContract(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Server.Pages.Help.Content = "# Operator guidance\n\nRead the [MCP guide](/server/help/mcp)."
+	s := newTestServerWithConfig(t, cfg)
+
+	page := doRequest(s, http.MethodGet, "/server/help", nil)
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `id="help-configured-content"`) || !strings.Contains(page.Body.String(), "Operator guidance") || strings.Contains(page.Body.String(), `id="help-search"`) {
+		t.Fatalf("configured help page did not replace built-in sections: status=%d body=%q", page.Code, page.Body.String())
+	}
+
+	apiResponse := doRequest(s, http.MethodGet, "/api/v1/server/help", nil)
+	if apiResponse.Code != http.StatusOK {
+		t.Fatalf("help API status = %d, want 200", apiResponse.Code)
+	}
+	var envelope struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(apiResponse.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode help API response: %v; body=%q", err, apiResponse.Body.String())
+	}
+	if len(envelope.Data) != 4 {
+		t.Fatalf("help API data has %d fields, want title, content, format and pages", len(envelope.Data))
+	}
+	var content, format string
+	if err := json.Unmarshal(envelope.Data["content"], &content); err != nil {
+		t.Fatalf("decode help API content: %v", err)
+	}
+	if err := json.Unmarshal(envelope.Data["format"], &format); err != nil {
+		t.Fatalf("decode help API format: %v", err)
+	}
+	if content != cfg.Server.Pages.Help.Content || format != "markdown" {
+		t.Fatalf("help API content/format = %q/%q, want configured Markdown/%q", content, format, "markdown")
+	}
+	var pages []map[string]json.RawMessage
+	if err := json.Unmarshal(envelope.Data["pages"], &pages); err != nil {
+		t.Fatalf("decode registered help pages: %v", err)
+	}
+	for index, registeredPage := range pages {
+		if len(registeredPage) != 2 || registeredPage["title"] == nil || registeredPage["path"] == nil {
+			t.Errorf("help page %d has fields %v, want exactly title and path", index, registeredPage)
+		}
+	}
+}
+
+func TestHelpContentMapUsesRequestLanguageAndFallbackOrder(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Server.Pages.Help.Content = map[string]any{
+		"fr":      "## Bonjour",
+		"default": "## Default language content",
+		"en":      "## English",
+	}
+	s := newTestServerWithConfig(t, cfg)
+	for _, tc := range []struct {
+		language string
+		want     string
+	}{
+		{language: "fr", want: "## Bonjour"},
+		{language: "es", want: "## Default language content"},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/server/help?lang="+tc.language, nil)
+		request.Header.Set("Accept", "application/json")
+		response := httptest.NewRecorder()
+		s.router.ServeHTTP(response, request)
+		var envelope struct {
+			Data struct {
+				Content string `json:"content"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+			t.Fatalf("decode %s help response: %v", tc.language, err)
+		}
+		if response.Code != http.StatusOK || envelope.Data.Content != tc.want {
+			t.Errorf("%s help content = %q, status=%d; want %q", tc.language, envelope.Data.Content, response.Code, tc.want)
+		}
+	}
+
+	cfg.Server.Pages.Help.Content = map[string]any{"zh": "## Chinese override", "de": "## German override"}
+	s = newTestServerWithConfig(t, cfg)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/server/help?lang=en", nil)
+	request.Header.Set("Accept", "application/json")
+	response := httptest.NewRecorder()
+	s.router.ServeHTTP(response, request)
+	var envelope struct {
+		Data struct {
+			Content string `json:"content"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode built-in fallback help response: %v", err)
+	}
+	if response.Code != http.StatusOK || !strings.Contains(envelope.Data.Content, "Find countries") || strings.Contains(envelope.Data.Content, "override") {
+		t.Fatalf("help content without language/default fallback = %q, status=%d; want built-in English help", envelope.Data.Content, response.Code)
 	}
 }
 
@@ -749,6 +999,15 @@ func TestSecurityHeadersAndReportEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(record.Header().Get("Content-Security-Policy"), "script-src 'self'") {
 		t.Errorf("CSP does not disallow inline scripts: %q", record.Header().Get("Content-Security-Policy"))
+	}
+	if got := record.Header().Get("Reporting-Endpoints"); !strings.Contains(got, "default=") || !strings.Contains(got, "nel=") {
+		t.Errorf("Reporting-Endpoints = %q, want default and NEL endpoints", got)
+	}
+	if got := record.Header().Get("Report-To"); !strings.Contains(got, `"group":"default"`) || !strings.Contains(got, `"group":"nel"`) {
+		t.Errorf("Report-To = %q, want default and NEL groups", got)
+	}
+	if got := record.Header().Get("NEL"); !strings.Contains(got, `"report_to":"nel"`) {
+		t.Errorf("NEL = %q, want report_to nel", got)
 	}
 	if record.Header().Get("X-Request-ID") == "" {
 		t.Error("response is missing X-Request-ID")
@@ -1037,6 +1296,7 @@ func TestHandleManifest(t *testing.T) {
 func TestPagesAndPWAAssetsHonorTrustedProxyPrefix(t *testing.T) {
 	s := newTestServer(t)
 	request := httptest.NewRequest(http.MethodGet, "http://example.com/server/about", nil)
+	request.Header.Set("Accept", "text/html")
 	request.RemoteAddr = "127.0.0.1:1234"
 	request.Header.Set("X-Forwarded-Prefix", "/countries")
 	recorder := httptest.NewRecorder()
@@ -1044,17 +1304,18 @@ func TestPagesAndPWAAssetsHonorTrustedProxyPrefix(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("page status = %d, want 200", recorder.Code)
 	}
-	for _, want := range []string{`content="/countries"`, `href="/countries/static/css/main.css?v=test-version-abc123"`, `href="/countries/search"`, `action="/countries/server/preferences"`} {
+	for _, want := range []string{`content="/countries"`, `href="/countries/static/css/common.css?v=test-version-abc123"`, `href="/countries/static/css/components.css?v=test-version-abc123"`, `href="/countries/static/css/public.css?v=test-version-abc123"`, `href="/countries/search"`, `action="/countries/server/preferences"`} {
 		if !strings.Contains(recorder.Body.String(), want) {
 			t.Errorf("page does not contain prefixed URL %q", want)
 		}
 	}
 	manifestRequest := httptest.NewRequest(http.MethodGet, "http://example.com/manifest.json", nil)
+	manifestRequest.Header.Set("Accept", "application/json")
 	manifestRequest.RemoteAddr = "127.0.0.1:1234"
 	manifestRequest.Header.Set("X-Forwarded-Prefix", "/countries")
 	manifest := httptest.NewRecorder()
 	s.router.ServeHTTP(manifest, manifestRequest)
-	if !strings.Contains(manifest.Body.String(), `"start_url":"/countries/"`) {
+	if !strings.Contains(manifest.Body.String(), `"start_url": "/countries/"`) {
 		t.Errorf("manifest start_url omitted trusted proxy prefix: %s", manifest.Body.String())
 	}
 }
@@ -1074,7 +1335,11 @@ func TestSingleFrontendScriptIsServed(t *testing.T) {
 
 func TestPWAActionsUseLocalizedAccessibleCopy(t *testing.T) {
 	s := newTestServer(t)
-	recorder := doRequest(s, http.MethodGet, "/?lang=fr", nil)
+	request := httptest.NewRequest(http.MethodGet, "/?lang=fr", nil)
+	request.Header.Set("Accept", "text/html")
+	request.AddCookie(&http.Cookie{Name: "cookie_consent", Value: url.PathEscape(`{"essential":true,"preferences":true}`)})
+	recorder := httptest.NewRecorder()
+	s.router.ServeHTTP(recorder, request)
 	body := recorder.Body.String()
 	for _, required := range []string{
 		`<html lang="fr"`,
@@ -1108,7 +1373,7 @@ func TestFallbackHTMLUsesServerBuildStampAndThemeAssets(t *testing.T) {
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("fallback status = %d, want 500", recorder.Code)
 	}
-	for _, required := range []string{`lang="fr"`, `dir="ltr"`, `class="theme-dark"`, `href="/countries/static/css/main.css?v=test-version-abc123"`, `id="main-content"`} {
+	for _, required := range []string{`lang="fr"`, `dir="ltr"`, `class="theme-dark"`, `href="/countries/static/css/common.css?v=test-version-abc123"`, `href="/countries/static/css/components.css?v=test-version-abc123"`, `href="/countries/static/css/public.css?v=test-version-abc123"`, `id="main-content"`} {
 		if !strings.Contains(recorder.Body.String(), required) {
 			t.Errorf("fallback response omitted %q", required)
 		}
@@ -1136,7 +1401,9 @@ func TestHandleServiceWorker(t *testing.T) {
 		"const CACHE_VERSION = 'test-version-abc123'",
 		"const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION",
 		"Countries API-cache-",
-		"APP_BASE + '/static/css/main.css?v=' + CACHE_VERSION",
+		"APP_BASE + '/static/css/common.css?v=' + CACHE_VERSION",
+		"APP_BASE + '/static/css/components.css?v=' + CACHE_VERSION",
+		"APP_BASE + '/static/css/public.css?v=' + CACHE_VERSION",
 		"APP_BASE + '/static/js/app.js?v=' + CACHE_VERSION",
 		"APP_BASE + '/static/icons/icon-192.png?v=' + CACHE_VERSION",
 		"APP_BASE + '/static/icons/icon-512.png?v=' + CACHE_VERSION",
@@ -1148,16 +1415,115 @@ func TestHandleServiceWorker(t *testing.T) {
 		"offlineFallbackResponse()",
 		"request.mode === 'navigate'",
 		"response.redirected",
-		"response.headers.get('Cache-Control') || '').includes('no-store')",
-		"self.navigator.language",
-		`"ar":{"message":"تعذر تحميل هذه الصفحة. تحقق من اتصالك وحاول مرة أخرى.","title":"أنت غير متصل بالإنترنت"}`,
+		"response.headers.get('X-Offline-Cache') !== 'public'",
+		"Countries API-offline-strings",
+		"const stored = await cache.match(new URL(APP_BASE + '/offline-strings.json'",
 	} {
 		if !strings.Contains(body, required) {
 			t.Errorf("service worker omitted %q", required)
 		}
 	}
+	if strings.Contains(body, `'<h1>`) {
+		t.Error("offline fallback must not render an h1")
+	}
 	if strings.Contains(body, "APP_BASE + '/'") || strings.Contains(body, "skipWaiting();\n});\n\nself.addEventListener('activate'") {
 		t.Errorf("service worker precaches HTML or activates updates without approval: %s", body)
+	}
+}
+
+func TestAutodiscoverPublishesCurrentAPIVersionAndPublicOrigins(t *testing.T) {
+	t.Setenv("DOMAIN", "request.example.test,api.example.test,hidden.onion,service.b32.i2p")
+	s := newTestServer(t)
+	request := httptest.NewRequest(http.MethodGet, "https://request.example.test/api/autodiscover", nil)
+	request.Header.Set("Accept", "application/json")
+	recorder := httptest.NewRecorder()
+	s.router.ServeHTTP(recorder, request)
+	var response struct {
+		Data struct {
+			API struct {
+				CurrentVersion string `json:"current_version"`
+			} `json:"api"`
+			URLs []string `json:"urls"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode autodiscover response (status %d, body %q): %v", recorder.Code, recorder.Body.String(), err)
+	}
+	if recorder.Code != http.StatusOK || response.Data.API.CurrentVersion == "" {
+		t.Fatalf("autodiscover status/version = %d/%q", recorder.Code, response.Data.API.CurrentVersion)
+	}
+	if len(response.Data.URLs) < 2 || response.Data.URLs[0] != "https://request.example.test" {
+		t.Fatalf("public URLs = %#v, want request origin first", response.Data.URLs)
+	}
+	for _, origin := range response.Data.URLs {
+		if strings.Contains(origin, ".onion") || strings.Contains(origin, ".b32.i2p") || strings.Contains(strings.TrimPrefix(origin, "https://"), "/") {
+			t.Errorf("non-public or non-origin autodiscover URL %q", origin)
+		}
+	}
+}
+
+func TestStaticCLIBinaryNameExcludesGUIArtifacts(t *testing.T) {
+	for _, name := range []string{
+		"countries-cli-linux-amd64",
+		"countries-cli-windows-arm64.exe",
+	} {
+		if !isStaticCLIBinaryName(name) {
+			t.Errorf("isStaticCLIBinaryName(%q) = false, want true", name)
+		}
+	}
+	for _, name := range []string{
+		"countries-cli-gui-linux-amd64",
+		"countries-cli-gui-windows-arm64.exe",
+		"../countries-cli-linux-amd64",
+	} {
+		if isStaticCLIBinaryName(name) {
+			t.Errorf("isStaticCLIBinaryName(%q) = true, want false", name)
+		}
+	}
+}
+
+func TestAutodiscoverExposesOverlayAddressesOnlyWhenOptedIn(t *testing.T) {
+	s := newTestServer(t)
+	s.overlayMu.Lock()
+	s.torHealth = HealthOverlayInfo{Enabled: true, Running: true, Hostname: "hiddenservice.onion"}
+	s.i2pHealth = HealthI2PInfo{Enabled: true, Running: true, Hostname: "destination.b32.i2p"}
+	s.overlayMu.Unlock()
+	request := httptest.NewRequest(http.MethodGet, "https://example.test/api/autodiscover", nil)
+	request.Header.Set("Accept", "application/json")
+	withoutConsent := httptest.NewRecorder()
+	s.router.ServeHTTP(withoutConsent, request)
+	if strings.Contains(withoutConsent.Body.String(), "hiddenservice.onion") || strings.Contains(withoutConsent.Body.String(), "destination.b32.i2p") {
+		t.Fatal("autodiscover exposed overlay addresses without operator opt-in")
+	}
+	s.config.Server.Tor.Expose = true
+	s.config.Server.I2P.Expose = true
+	withConsent := httptest.NewRecorder()
+	withConsentRequest := httptest.NewRequest(http.MethodGet, "https://example.test/api/autodiscover", nil)
+	withConsentRequest.Header.Set("Accept", "application/json")
+	s.router.ServeHTTP(withConsent, withConsentRequest)
+	if !strings.Contains(withConsent.Body.String(), "hiddenservice.onion") || !strings.Contains(withConsent.Body.String(), "destination.b32.i2p") {
+		t.Fatalf("autodiscover omitted opted-in overlay addresses: %s", withConsent.Body.String())
+	}
+}
+
+func TestMaintenanceModeBlocksWritesAndAppearsInHealth(t *testing.T) {
+	s := newTestServer(t)
+	s.SetSelfHealingState("database_connection", time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC), 2, false)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/coordinates", strings.NewReader("{}"))
+	recorder := httptest.NewRecorder()
+	s.router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable || recorder.Header().Get("Retry-After") != "30" || recorder.Header().Get("X-Maintenance-Reason") != "database_connection" {
+		t.Fatalf("maintenance write response = %d headers=%v", recorder.Code, recorder.Header())
+	}
+	if !strings.Contains(recorder.Body.String(), `"error": "MAINTENANCE"`) || !strings.Contains(recorder.Body.String(), `"self_healing": true`) {
+		t.Fatalf("maintenance error body = %s", recorder.Body.String())
+	}
+	health := httptest.NewRecorder()
+	healthRequest := httptest.NewRequest(http.MethodGet, "/server/healthz", nil)
+	healthRequest.Header.Set("Accept", "application/json")
+	s.router.ServeHTTP(health, healthRequest)
+	if health.Code != http.StatusServiceUnavailable || !strings.Contains(health.Body.String(), `"exhausted": false`) || !strings.Contains(health.Body.String(), `"attempts": 2`) {
+		t.Fatalf("maintenance health response = %d %s", health.Code, health.Body.String())
 	}
 }
 
@@ -1255,7 +1621,7 @@ func TestBuildURLHonorsConfiguredDomainBoundary(t *testing.T) {
 	})
 	s := newTestServer(t)
 	request := httptest.NewRequest(http.MethodGet, "http://attacker.com/page", nil)
-	if got := s.BuildURL(request, "/server/about"); got != "http://localhost/server/about" {
+	if got := s.BuildURL(request, "/server/about"); got == "" || strings.Contains(got, "attacker.com") || !strings.HasSuffix(got, "/server/about") {
 		t.Errorf("unlisted host produced URL %q", got)
 	}
 	request = httptest.NewRequest(http.MethodGet, "http://sub.example.com/page", nil)
@@ -1366,7 +1732,7 @@ func TestSwaggerUIPageUsesLocalAssetsAndVersionedSpec(t *testing.T) {
 		`/static/vendor/swagger-ui/swagger-ui.css`,
 		`/static/vendor/swagger-ui/swagger-ui-bundle.js`,
 		`/static/css/swagger-ui-theme.css`,
-		`/static/js/swagger-ui.js`,
+		`/static/js/docs-swagger.js`,
 	} {
 		if !strings.Contains(response.Body.String(), expected) {
 			t.Errorf("Swagger UI page is missing %q", expected)
@@ -1380,7 +1746,48 @@ func TestSwaggerUIPageUsesLocalAssetsAndVersionedSpec(t *testing.T) {
 		"/static/vendor/swagger-ui/swagger-ui.css",
 		"/static/vendor/swagger-ui/swagger-ui-bundle.js",
 		"/static/css/swagger-ui-theme.css",
-		"/static/js/swagger-ui.js",
+		"/static/js/docs-swagger.js",
+	} {
+		assetRequest := httptest.NewRequest(http.MethodGet, path, nil)
+		assetResponse := httptest.NewRecorder()
+		s.router.ServeHTTP(assetResponse, assetRequest)
+		if assetResponse.Code != http.StatusOK || assetResponse.Body.Len() == 0 {
+			t.Errorf("asset %s: status=%d body bytes=%d, want non-empty 200", path, assetResponse.Code, assetResponse.Body.Len())
+		}
+	}
+}
+
+func TestGraphiQLPageUsesLocalAssetsAndKeepsNoJavaScriptFallback(t *testing.T) {
+	s := newTestServer(t)
+	request := httptest.NewRequest(http.MethodGet, "/server/docs/graphql", nil)
+	request.Header.Set("Accept", "text/html")
+	response := httptest.NewRecorder()
+	s.router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("GraphiQL page status = %d, want 200", response.Code)
+	}
+	for _, expected := range []string{
+		`id="graphiql"`,
+		`data-endpoint="/api/v1/server/graphql"`,
+		`/static/vendor/graphiql/graphiql.min.css`,
+		`/static/vendor/graphiql/react.production.min.js`,
+		`/static/vendor/graphiql/react-dom.production.min.js`,
+		`/static/vendor/graphiql/graphiql.min.js`,
+		`/static/js/docs-graphql.js`,
+		`<noscript>`,
+		`id="graphql-form"`,
+	} {
+		if !strings.Contains(response.Body.String(), expected) {
+			t.Errorf("GraphiQL page is missing %q", expected)
+		}
+	}
+	for _, path := range []string{
+		"/static/vendor/graphiql/graphiql.min.css",
+		"/static/vendor/graphiql/react.production.min.js",
+		"/static/vendor/graphiql/react-dom.production.min.js",
+		"/static/vendor/graphiql/graphiql.min.js",
+		"/static/css/graphiql-theme.css",
+		"/static/js/docs-graphql.js",
 	} {
 		assetRequest := httptest.NewRequest(http.MethodGet, path, nil)
 		assetResponse := httptest.NewRecorder()
@@ -1412,7 +1819,7 @@ func TestAnnouncementControlsFollowSkipLinks(t *testing.T) {
 	dismiss := strings.Index(body, `class="site-banner-close"`)
 	header := strings.Index(body, "<header")
 	main := strings.Index(body, "<main")
-	if mainSkip < 0 || navigationSkip <= mainSkip || announcement <= navigationSkip || dismiss <= navigationSkip || header <= dismiss || main <= announcement {
+	if announcement <= navigationSkip || mainSkip < 0 || navigationSkip <= mainSkip || dismiss <= announcement || header <= dismiss || main <= announcement {
 		t.Fatalf("announcement/skip-link order is wrong: main skip=%d navigation skip=%d announcement=%d dismiss=%d header=%d main=%d", mainSkip, navigationSkip, announcement, dismiss, header, main)
 	}
 	if !strings.Contains(body, "Scheduled maintenance") || !strings.Contains(body, `name="id" value="maintenance"`) || strings.Contains(body, `id="announcement-slot"`) {
@@ -1437,23 +1844,44 @@ func TestRenderedPagesUseThemeClasses(t *testing.T) {
 			if !strings.Contains(response.Body.String(), `class="theme-`+theme+`"`) || strings.Contains(response.Body.String(), "data-theme=") {
 				t.Errorf("rendered page does not use theme-%s on html", theme)
 			}
+			body := response.Body.String()
+			common := strings.Index(body, `/static/css/common.css`)
+			components := strings.Index(body, `/static/css/components.css`)
+			public := strings.Index(body, `/static/css/public.css`)
+			if common < 0 || components <= common || public <= components {
+				t.Errorf("stylesheets are not loaded common, components, public: %d, %d, %d", common, components, public)
+			}
 		})
 	}
 }
 
 func TestThemeCSSUsesThemeClasses(t *testing.T) {
 	s := newTestServer(t)
-	response := doRequest(s, http.MethodGet, "/static/css/main.css", nil)
-	if response.Code != http.StatusOK {
-		t.Fatalf("GET main.css returned %d, want 200", response.Code)
+	assets := map[string]string{
+		"/static/css/common.css":           "html.theme-dark, html.theme-light, html.theme-auto {",
+		"/static/css/components.css":       ".btn-primary {",
+		"/static/css/public.css":           ".header {",
+		"/static/css/swagger-ui-theme.css": swagger.CSSVariables(),
+		"/static/css/graphiql-theme.css":   graphqlapi.CSSVariables(),
 	}
-	for _, required := range []string{"html.theme-dark, html.theme-light, html.theme-auto {", "html.theme-light {", "html.theme-auto {", "html.theme-light .header {", ".btn-danger {", ".btn-danger:hover {"} {
-		if !strings.Contains(response.Body.String(), required) {
-			t.Errorf("theme stylesheet omitted %q", required)
+	commonCSS := doRequest(s, http.MethodGet, "/static/css/common.css", nil)
+	if !strings.Contains(commonCSS.Body.String(), "--color-bg-primary: "+commontheme.ThemePaletteDark.Background+";") {
+		t.Error("common stylesheet does not contain the shared dark palette")
+	}
+	if !strings.Contains(commonCSS.Body.String(), "--color-text-muted: "+commontheme.ThemePaletteDark.Muted+";") {
+		t.Error("common stylesheet does not contain the shared muted text color")
+	}
+	for path, required := range assets {
+		response := doRequest(s, http.MethodGet, path, nil)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), required) {
+			t.Errorf("GET %s status=%d omitted expected theme content", path, response.Code)
 		}
 	}
-	if strings.Contains(response.Body.String(), "[data-theme=") {
-		t.Error("theme stylesheet still uses data-theme selectors")
+	for path := range assets {
+		response := doRequest(s, http.MethodGet, path, nil)
+		if strings.Contains(response.Body.String(), "[data-theme=") {
+			t.Errorf("%s still uses data-theme selectors", path)
+		}
 	}
 }
 
@@ -1481,9 +1909,10 @@ func TestGraphQLExplorerSubmitsWithoutJavaScript(t *testing.T) {
 	form := url.Values{"query": {"{ countries { cca2 } }"}}
 	request := httptest.NewRequest(http.MethodPost, "/server/docs/graphql", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "text/html")
 	response := httptest.NewRecorder()
 	s.router.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `&#34;cca2&#34;:&#34;TL&#34;`) || !strings.Contains(response.Body.String(), `method="post"`) {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `&#34;cca2&#34;`) || !strings.Contains(response.Body.String(), `&#34;TL&#34;`) || !strings.Contains(response.Body.String(), `method="post"`) {
 		t.Fatalf("GraphQL HTML form did not execute server-side: status=%d body=%q", response.Code, response.Body.String())
 	}
 }
@@ -1503,17 +1932,78 @@ func TestCoordinatesRouteServesWebPage(t *testing.T) {
 func TestCorsMiddleware(t *testing.T) {
 	s := newTestServer(t)
 
-	rec := doRequest(s, http.MethodOptions, "/api/healthz", nil)
-	if rec.Code != http.StatusOK {
-		t.Errorf("OPTIONS status = %d, want 200", rec.Code)
+	request := httptest.NewRequest(http.MethodOptions, "/api/healthz", nil)
+	request.Header.Set("Origin", "https://client.example")
+	request.Header.Set("Access-Control-Request-Method", "GET")
+	rec := httptest.NewRecorder()
+	s.router.ServeHTTP(rec, request)
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("OPTIONS status = %d, want 204", rec.Code)
 	}
 	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Errorf("Access-Control-Allow-Origin = %q, want *", rec.Header().Get("Access-Control-Allow-Origin"))
 	}
+	if rec.Header().Get("Access-Control-Allow-Methods") != "GET, POST, PUT, PATCH, DELETE, OPTIONS" {
+		t.Errorf("Access-Control-Allow-Methods = %q", rec.Header().Get("Access-Control-Allow-Methods"))
+	}
+	if rec.Header().Get("Access-Control-Max-Age") != "86400" {
+		t.Errorf("Access-Control-Max-Age = %q, want 86400", rec.Header().Get("Access-Control-Max-Age"))
+	}
+	if rec.Header().Get("Access-Control-Allow-Credentials") != "" {
+		t.Errorf("wildcard CORS credentials = %q, want empty", rec.Header().Get("Access-Control-Allow-Credentials"))
+	}
 
 	recGet := doRequest(s, http.MethodGet, "/api/healthz", nil)
-	if recGet.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Errorf("GET Access-Control-Allow-Origin = %q, want *", recGet.Header().Get("Access-Control-Allow-Origin"))
+	if recGet.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Errorf("GET without Origin has Access-Control-Allow-Origin = %q, want empty", recGet.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestCORSLearnsOnlyTrustedProxyHosts(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Server.CORS.AllowedOrigins = []string{"https://configured.example"}
+	cfg.Server.TrustedProxies.Additional = []string{"192.0.2.10"}
+	s := newTestServerWithConfig(t, cfg)
+	request := httptest.NewRequest(http.MethodGet, "/api/healthz", nil)
+	request.RemoteAddr = "192.0.2.10:4000"
+	request.Header.Set("X-Forwarded-Host", "learned.example")
+	request.Header.Set("Origin", "https://learned.example")
+	response := httptest.NewRecorder()
+	s.router.ServeHTTP(response, request)
+	if response.Header().Get("Access-Control-Allow-Origin") != "https://learned.example" {
+		t.Fatalf("trusted proxy origin = %q, want learned origin", response.Header().Get("Access-Control-Allow-Origin"))
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/healthz", nil)
+	request.RemoteAddr = "192.0.2.20:4000"
+	request.Header.Set("X-Forwarded-Host", "untrusted.example")
+	request.Header.Set("Origin", "https://untrusted.example")
+	response = httptest.NewRecorder()
+	s.router.ServeHTTP(response, request)
+	if response.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("untrusted forwarded host received CORS origin %q", response.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestCORSExplicitOriginCredentialsAndDisable(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Server.CORS = config.CORSConfig{AllowedOrigins: []string{"https://app.example"}, AllowCredentials: true, MaxAge: 86400}
+	s := newTestServerWithConfig(t, cfg)
+	request := httptest.NewRequest(http.MethodOptions, "/api/healthz", nil)
+	request.Header.Set("Origin", "https://app.example")
+	request.Header.Set("Access-Control-Request-Method", "POST")
+	response := httptest.NewRecorder()
+	s.router.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || response.Header().Get("Access-Control-Allow-Origin") != "https://app.example" || response.Header().Get("Access-Control-Allow-Credentials") != "true" {
+		t.Fatalf("credentialed preflight = status %d headers %v", response.Code, response.Header())
+	}
+	cfg.Server.CORS.AllowedOrigins = []string{""}
+	s = newTestServerWithConfig(t, cfg)
+	request = httptest.NewRequest(http.MethodGet, "/api/healthz", nil)
+	request.Header.Set("Origin", "https://app.example")
+	response = httptest.NewRecorder()
+	s.router.ServeHTTP(response, request)
+	if response.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("disabled CORS emitted origin %q", response.Header().Get("Access-Control-Allow-Origin"))
 	}
 }
 

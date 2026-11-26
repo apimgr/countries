@@ -246,7 +246,7 @@ func TestPrimaryTokenRevocationWebRequiresLastFourAndDeletesOwner(t *testing.T) 
 	pageRequest.AddCookie(&http.Cookie{Name: ownerTokenCookieName, Value: raw})
 	page := httptest.NewRecorder()
 	s.router.ServeHTTP(page, pageRequest)
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "token-revoke-primary") || !strings.Contains(page.Body.String(), primary.Last4) {
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `id="revoke-primary-title"`) || !strings.Contains(page.Body.String(), primary.Last4) {
 		t.Fatalf("primary revoke card missing: status=%d body=%q", page.Code, page.Body.String())
 	}
 	csrf := findCookie(page.Result().Cookies(), "csrf_token")

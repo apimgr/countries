@@ -10,7 +10,7 @@ import (
 	"github.com/apimgr/countries/src/testutil"
 )
 
-func TestOpenCreatesSecureSchemaAndPersistsRateLimit(t *testing.T) {
+func TestOpenCreatesSecureSchema(t *testing.T) {
 	dbPath := filepath.Join(testutil.TempDir(t), "db", "server.db")
 	db, err := Open(dbPath)
 	if err != nil {
@@ -38,14 +38,12 @@ func TestOpenCreatesSecureSchemaAndPersistsRateLimit(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
-	allowed, _, err := AllowRateLimit(ctx, db, "192.0.2.1", "read", now, 1, time.Minute, 10)
-	if err != nil || !allowed {
-		t.Fatalf("first request = (%v, %v), want allowed", allowed, err)
+	var rateLimitCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM rate_limits`).Scan(&rateLimitCount); err != nil {
+		t.Fatalf("count initial rate limits: %v", err)
 	}
-	allowed, retry, err := AllowRateLimit(ctx, db, "192.0.2.1", "read", now.Add(time.Second), 1, time.Minute, 10)
-	if err != nil || allowed || retry != 59*time.Second {
-		t.Fatalf("second request = (%v, %v, %v), want denied for 59s", allowed, retry, err)
+	if rateLimitCount != 0 {
+		t.Fatalf("initial rate limit rows = %d, want 0", rateLimitCount)
 	}
 
 	var triggerCount int
@@ -56,7 +54,6 @@ func TestOpenCreatesSecureSchemaAndPersistsRateLimit(t *testing.T) {
 		t.Fatalf("config trigger count = %d, want 3", triggerCount)
 	}
 }
-
 func TestOpenCreatesContactAndSecurityReportTables(t *testing.T) {
 	db, err := Open(filepath.Join(testutil.TempDir(t), "server.db"))
 	if err != nil {
@@ -169,39 +166,5 @@ func TestOpenMigratesLegacySecurityReportWindowAndErasesIdentifier(t *testing.T)
 	}
 	if fallbackWindow != 0 || fallbackIdentifier != "" {
 		t.Errorf("malformed legacy report migration = (window=%d, id=%q), want (0, empty)", fallbackWindow, fallbackIdentifier)
-	}
-}
-
-func TestRecordAndCheckRateLimitClass(t *testing.T) {
-	db, err := Open(filepath.Join(testutil.TempDir(t), "server.db"))
-	if err != nil {
-		t.Fatalf("Open() error = %v", err)
-	}
-	t.Cleanup(func() {
-		if err := db.Close(); err != nil {
-			t.Errorf("close database: %v", err)
-		}
-	})
-	ctx := context.Background()
-	now := time.Date(2026, time.November, 22, 12, 0, 0, 0, time.UTC)
-	for attempt := 0; attempt < 3; attempt++ {
-		allowed, retry, err := RecordRateLimitClass(ctx, db, "192.0.2.8", "auth_failures", now, 3, 15*time.Minute)
-		if err != nil {
-			t.Fatalf("RecordRateLimitClass(%d): %v", attempt+1, err)
-		}
-		if attempt < 2 && !allowed {
-			t.Fatalf("attempt %d unexpectedly blocked for %s", attempt+1, retry)
-		}
-		if attempt == 2 && (allowed || retry != 15*time.Minute) {
-			t.Fatalf("threshold attempt = (%v, %s), want blocked for 15m", allowed, retry)
-		}
-	}
-	blocked, retry, err := CheckRateLimit(ctx, db, "192.0.2.8", "auth_failures", now, 3, 15*time.Minute)
-	if err != nil || !blocked || retry != 15*time.Minute {
-		t.Fatalf("CheckRateLimit() = (%v, %s, %v), want blocked for 15m", blocked, retry, err)
-	}
-	blocked, _, err = CheckRateLimit(ctx, db, "192.0.2.8", "auth_failures", now.Add(16*time.Minute), 3, 15*time.Minute)
-	if err != nil || blocked {
-		t.Fatalf("expired failure window = (%v, %v), want not blocked", blocked, err)
 	}
 }

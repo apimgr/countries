@@ -2,7 +2,9 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -27,6 +29,8 @@ var falsyValues = map[string]bool{
 	"never": true, "noway": true,
 }
 
+var invalidBooleanWarnings sync.Map
+
 // ParseBool accepts the truthy and falsy values documented by AI.md.
 func ParseBool(value string, defaultValue bool) (bool, error) {
 	value = strings.ToLower(strings.TrimSpace(value))
@@ -40,6 +44,19 @@ func ParseBool(value string, defaultValue bool) (bool, error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("invalid boolean value: %q", value)
+}
+
+// ParseBoolOrDefault keeps invalid configuration values from aborting startup
+// and emits at most one warning for each setting name.
+func ParseBoolOrDefault(name, value string, defaultValue bool) bool {
+	parsed, err := ParseBool(value, defaultValue)
+	if err == nil {
+		return parsed
+	}
+	if _, loaded := invalidBooleanWarnings.LoadOrStore(name, struct{}{}); !loaded {
+		slog.Warn("invalid boolean, using default", "setting", name, "value", value, "default", defaultValue)
+	}
+	return defaultValue
 }
 
 // IsTruthy reports whether value is one of the recognized truthy values.

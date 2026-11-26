@@ -25,6 +25,7 @@ const (
 	defaultBaseURL  = "https://github.com/sapics/ip-location-db/releases/download"
 	maxDatabaseSize = 512 << 20
 	maxChecksumSize = 4096
+	lastUpdatedFile = ".last_updated"
 )
 
 var checksumPattern = regexp.MustCompile(`(?i)^[0-9a-f]{64}$`)
@@ -40,6 +41,9 @@ type ASNRecord struct {
 
 // CountryRecord contains the upstream ISO 3166-1 alpha-2 country code.
 type CountryRecord struct {
+	Country struct {
+		ISOCode string `maxminddb:"iso_code"`
+	} `maxminddb:"country"`
 	CountryCode string `maxminddb:"country_code"`
 }
 
@@ -66,6 +70,14 @@ var databaseAssets = [...]DatabaseAsset{
 	{Name: "country", File: "iptoasn-country.mmdb"},
 	{Name: "city_ipv4", File: "dbip-city-ipv4.mmdb"},
 	{Name: "city_ipv6", File: "dbip-city-ipv6.mmdb"},
+}
+
+func DatabaseAssets() []DatabaseAsset { return append([]DatabaseAsset(nil), databaseAssets[:]...) }
+
+func (m *GeoIPManager) HasDatabase(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.readers[name] != nil
 }
 
 type databaseReader interface {
@@ -177,7 +189,64 @@ func (m *GeoIPManager) Update(ctx context.Context) error {
 			failures = append(failures, err)
 		}
 	}
-	return errors.Join(failures...)
+	if updateErr := errors.Join(failures...); updateErr != nil {
+		return updateErr
+	}
+	if err := m.writeLastUpdated(time.Now().UTC()); err != nil {
+		return fmt.Errorf("record GeoIP update time: %w", err)
+	}
+	return nil
+}
+
+// LastUpdated returns the timestamp of the last fully verified database update.
+func (m *GeoIPManager) LastUpdated() (time.Time, error) {
+	data, err := os.ReadFile(filepath.Join(m.directory, lastUpdatedFile))
+	if err != nil {
+		return time.Time{}, err
+	}
+	updated, err := time.Parse(time.RFC3339, strings.TrimSpace(string(data)))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse GeoIP update timestamp: %w", err)
+	}
+	return updated.UTC(), nil
+}
+
+// IsStale reports whether the last verified database update is missing or older than maxAge.
+func (m *GeoIPManager) IsStale(now time.Time, maxAge time.Duration) bool {
+	updated, err := m.LastUpdated()
+	return err != nil || maxAge <= 0 || now.Sub(updated) > maxAge
+}
+
+func (m *GeoIPManager) writeLastUpdated(updated time.Time) (resultErr error) {
+	file, err := os.CreateTemp(m.directory, ".geoip-update-*.tmp")
+	if err != nil {
+		return err
+	}
+	temporary := file.Name()
+	defer func() {
+		if removeErr := os.Remove(temporary); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			resultErr = errors.Join(resultErr, fmt.Errorf("remove temporary GeoIP timestamp: %w", removeErr))
+		}
+	}()
+	if err := file.Chmod(0600); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if _, err := io.WriteString(file, updated.UTC().Format(time.RFC3339)+"\n"); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, filepath.Join(m.directory, lastUpdatedFile)); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (m *GeoIPManager) updateAsset(ctx context.Context, asset DatabaseAsset) error {
@@ -310,7 +379,12 @@ func (m *GeoIPManager) LookupCountry(ip net.IP) (CountryRecord, bool, error) {
 	if err := m.lookup("country", ip, &record); err != nil {
 		return record, false, err
 	}
-	record.CountryCode = strings.ToUpper(strings.TrimSpace(record.CountryCode))
+	legacyCode := strings.TrimSpace(record.CountryCode)
+	record.CountryCode = strings.TrimSpace(record.Country.ISOCode)
+	if record.CountryCode == "" {
+		record.CountryCode = legacyCode
+	}
+	record.CountryCode = strings.ToUpper(record.CountryCode)
 	return record, len(record.CountryCode) == 2, nil
 }
 

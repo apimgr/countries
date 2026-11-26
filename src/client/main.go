@@ -71,8 +71,11 @@ func clientExitCode(err error) int {
 type cliConfig struct {
 	Server struct {
 		Primary string `yaml:"primary"`
-		Token   string `yaml:"token"`
+		Token   string `yaml:"-"`
 	} `yaml:"server"`
+	Auth struct {
+		Token string `yaml:"token"`
+	} `yaml:"auth"`
 	Lang    string `yaml:"lang"`
 	Display struct {
 		Mode string `yaml:"mode"`
@@ -228,15 +231,48 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err := validateColor(opts.color, lang); err != nil {
 		return withClientExitCode(64, err)
 	}
-	baseURL := strings.TrimSpace(opts.server)
-	if baseURL == "" {
-		baseURL = strings.TrimSpace(os.Getenv("COUNTRIES_SERVER_PRIMARY"))
+	validServer := func(value string) (string, bool) {
+		normalized, normalizeErr := normalizeBaseURL(strings.TrimSpace(value), lang)
+		return normalized, normalizeErr == nil
+	}
+	configuredServer, configuredServerValid := validServer(cfg.Server.Primary)
+	flagServer, flagServerValid := "", false
+	if strings.TrimSpace(opts.server) != "" {
+		flagServer, flagServerValid = validServer(opts.server)
+		if !flagServerValid {
+			if _, err := fmt.Fprintln(stderr, "Warning: invalid --server value; keeping the configured server."); err != nil {
+				return err
+			}
+		}
+	}
+	if flagServerValid && !configuredServerValid {
+		if err := persistClientSettings(configPath, &flagServer, nil); err != nil {
+			return err
+		}
+		cfg.Server.Primary = flagServer
+		configuredServer = flagServer
+		configuredServerValid = true
+	}
+	baseURL := ""
+	if flagServerValid {
+		baseURL = flagServer
 	}
 	if baseURL == "" {
-		baseURL = strings.TrimSpace(cfg.Server.Primary)
+		if environmentServer := strings.TrimSpace(os.Getenv("COUNTRIES_SERVER_PRIMARY")); environmentServer != "" {
+			if normalized, ok := validServer(environmentServer); ok {
+				baseURL = normalized
+			} else if _, err := fmt.Fprintln(stderr, "Warning: invalid COUNTRIES_SERVER_PRIMARY value; ignoring it."); err != nil {
+				return err
+			}
+		}
+	}
+	if baseURL == "" && configuredServerValid {
+		baseURL = configuredServer
 	}
 	if baseURL == "" {
-		baseURL = strings.TrimSpace(OfficialSite)
+		if normalized, ok := validServer(OfficialSite); ok {
+			baseURL = normalized
+		}
 	}
 	pos := fs.Args()
 	mode, modeErr := clientDisplayMode(cfg.Display.Mode, len(pos) == 0 && opts.update == "", stdout, lang)
@@ -266,16 +302,62 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if format != "table" && format != "plain" && format != "json" {
 		return withClientExitCode(64, errors.New(clientTextFormat(lang, "error.output_invalid", map[string]string{"format": format})))
 	}
-	token := strings.TrimSpace(opts.token)
+	validToken := func(value string) bool {
+		value = strings.TrimSpace(value)
+		if len(value) != 36 || (!strings.HasPrefix(value, "own_") && !strings.HasPrefix(value, "adm_")) {
+			return false
+		}
+		for _, r := range value[4:] {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+				return false
+			}
+		}
+		return true
+	}
+	flagToken := strings.TrimSpace(opts.token)
+	flagTokenValid := flagToken != "" && validToken(flagToken)
+	if flagToken != "" && !flagTokenValid {
+		if _, err := fmt.Fprintln(stderr, "Warning: invalid --token value; keeping the configured token."); err != nil {
+			return err
+		}
+	}
+	configuredToken := cfg.Auth.Token
+	if configuredToken == "" {
+		configuredToken = cfg.Server.Token
+	}
+	if flagTokenValid && !validToken(configuredToken) {
+		if err := persistClientSettings(configPath, nil, &flagToken); err != nil {
+			return err
+		}
+		cfg.Server.Token = flagToken
+		cfg.Auth.Token = flagToken
+	}
+	token := ""
+	if flagTokenValid {
+		token = flagToken
+	}
 	if token == "" && opts.tokenFile != "" {
 		data, readErr := os.ReadFile(opts.tokenFile)
 		if readErr != nil {
 			return withClientExitCode(2, clientWrap("error.read_token_file", readErr))
 		}
-		token = strings.TrimSpace(string(data))
+		candidate := strings.TrimSpace(string(data))
+		if validToken(candidate) {
+			token = candidate
+		} else {
+			if _, err := fmt.Fprintln(stderr, "Warning: token file does not contain a valid token."); err != nil {
+				return err
+			}
+		}
 	}
 	if token == "" {
-		token = cfg.Server.Token
+		candidate := strings.TrimSpace(os.Getenv("COUNTRIES_TOKEN"))
+		if validToken(candidate) {
+			token = candidate
+		}
+	}
+	if token == "" && validToken(configuredToken) {
+		token = configuredToken
 	}
 	if opts.update != "" && opts.update != "check" && opts.update != "yes" {
 		return withClientExitCode(64, errors.New(clientText(lang, "error.update_invalid")))
@@ -589,6 +671,10 @@ func loadConfigAt(path string) (cliConfig, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, clientWrap("error.config_parse", err)
 	}
+	if cfg.Auth.Token == "" {
+		cfg.Auth.Token = cfg.Server.Token
+	}
+	cfg.Server.Token = cfg.Auth.Token
 	if err := os.Chmod(path, 0600); err != nil {
 		return cfg, clientWrap("error.config_secure", err)
 	}
@@ -604,6 +690,10 @@ func saveConfig(cfg cliConfig) error {
 }
 
 func saveConfigAt(cfg cliConfig, path string) error {
+	if cfg.Auth.Token == "" {
+		cfg.Auth.Token = cfg.Server.Token
+	}
+	cfg.Server.Token = cfg.Auth.Token
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return clientWrap("error.config_directory_create", err)
 	}
@@ -612,6 +702,54 @@ func saveConfigAt(cfg cliConfig, path string) error {
 		return clientWrap("error.config_encode", err)
 	}
 	if err := os.WriteFile(path, data, 0600); err != nil {
+		return clientWrap("error.config_write", err)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		return clientWrap("error.config_secure", err)
+	}
+	return nil
+}
+
+// persistClientSettings updates only the connection settings while retaining
+// every other configured CLI option and any future extension keys.
+func persistClientSettings(path string, server, token *string) error {
+	values := map[string]any{}
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return clientWrap("error.config_read", err)
+	}
+	if len(data) != 0 {
+		if err := yaml.Unmarshal(data, &values); err != nil {
+			return clientWrap("error.config_parse", err)
+		}
+	}
+	if values == nil {
+		values = map[string]any{}
+	}
+	if server != nil {
+		section, _ := values["server"].(map[string]any)
+		if section == nil {
+			section = map[string]any{}
+		}
+		section["primary"] = *server
+		values["server"] = section
+	}
+	if token != nil {
+		section, _ := values["auth"].(map[string]any)
+		if section == nil {
+			section = map[string]any{}
+		}
+		section["token"] = *token
+		values["auth"] = section
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return clientWrap("error.config_directory_create", err)
+	}
+	encoded, err := yaml.Marshal(values)
+	if err != nil {
+		return clientWrap("error.config_encode", err)
+	}
+	if err := os.WriteFile(path, encoded, 0600); err != nil {
 		return clientWrap("error.config_write", err)
 	}
 	if err := os.Chmod(path, 0600); err != nil {

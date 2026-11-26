@@ -238,7 +238,7 @@ __test_shipped_image() {
 	__say "Waiting for the shipped image health endpoint..."
 	local deadline=$((SECONDS + 90))
 	while (( SECONDS < deadline )); do
-		health="$(timeout 10s docker exec "${DOCKER_TEST_IMAGE_CONTAINER_NAME}" curl --fail --silent --header 'Accept: text/plain' http://127.0.0.1/api/v1/server/healthz 2>/dev/null || true)"
+		health="$(timeout 10s docker exec "${DOCKER_TEST_IMAGE_CONTAINER_NAME}" curl -q -LSsf --header 'Accept: text/plain' http://127.0.0.1/api/v1/server/healthz 2>/dev/null || true)"
 		if __health_core_ready "${health}"; then
 			healthy=1
 			break
@@ -250,7 +250,7 @@ __test_shipped_image() {
 		__fail "The production image server did not become healthy within 90 seconds."
 	fi
 	printf '%sPASS:%s production image server starts\n' "${DOCKER_TEST_GREEN}" "${DOCKER_TEST_RESET}"
-	if timeout 15s docker exec "${DOCKER_TEST_IMAGE_CONTAINER_NAME}" curl --fail --silent --location --connect-timeout 5 --max-time 10 https://www.torproject.org/ >/dev/null 2>&1; then
+	if timeout 15s docker exec "${DOCKER_TEST_IMAGE_CONTAINER_NAME}" curl -q -LSsf --connect-timeout 5 --max-time 10 https://www.torproject.org/ >/dev/null 2>&1; then
 		external_network=1
 	fi
 	if [[ "${external_network}" -eq 0 && "${REQUIRE_OVERLAY:-0}" -eq 1 ]]; then
@@ -258,7 +258,7 @@ __test_shipped_image() {
 	fi
 	if [[ "${external_network}" -eq 1 ]]; then
 		for ((elapsed = 0; elapsed < tor_wait; elapsed++)); do
-		health="$(timeout 10s docker exec "${DOCKER_TEST_IMAGE_CONTAINER_NAME}" curl --fail --silent --header 'Accept: text/plain' http://127.0.0.1/api/v1/server/healthz 2>/dev/null || true)"
+		health="$(timeout 10s docker exec "${DOCKER_TEST_IMAGE_CONTAINER_NAME}" curl -q -LSsf --header 'Accept: text/plain' http://127.0.0.1/api/v1/server/healthz 2>/dev/null || true)"
 			if [[ "${health}" == *$'features.tor: healthy'* ]]; then
 				break
 			fi
@@ -283,7 +283,7 @@ __test_shipped_image() {
 	fi
 	if [[ "${external_network}" -eq 1 ]]; then
 		for ((elapsed = 0; elapsed < i2p_wait; elapsed++)); do
-			health="$(timeout 10s docker exec "${DOCKER_TEST_IMAGE_CONTAINER_NAME}" curl --fail --silent --header 'Accept: text/plain' http://127.0.0.1/api/v1/server/healthz 2>/dev/null || true)"
+			health="$(timeout 10s docker exec "${DOCKER_TEST_IMAGE_CONTAINER_NAME}" curl -q -LSsf --header 'Accept: text/plain' http://127.0.0.1/api/v1/server/healthz 2>/dev/null || true)"
 			if [[ "${health}" == *$'features.i2p: healthy'* ]]; then
 				break
 			fi
@@ -296,9 +296,13 @@ __test_shipped_image() {
 		if [[ ! "${i2p_hostname}" =~ ^[a-z2-7]{52}\.b32\.i2p$ || "${health}" != *'provider=i2pd'* ]]; then
 			__fail "I2P health did not include the i2pd provider and required b32 hostname."
 		fi
+		if ! timeout 15s docker exec "${DOCKER_TEST_IMAGE_CONTAINER_NAME}" sh -c '! awk '\''$4 == "0A" { split($2, local, ":"); if (local[2] == "1B9E" || local[2] == "115C" || local[2] == "115F" || local[2] == "1DE6") found = 1 } END { exit found ? 0 : 1 }'\'' /proc/net/tcp /proc/net/tcp6'; then
+			__fail "The managed i2pd process opened a forbidden listener port (7070, 4444, 4447, or 7654)."
+		fi
 		if ! timeout 15s docker exec "${DOCKER_TEST_IMAGE_CONTAINER_NAME}" sh -c 'test -s /data/countries/i2p/site/site-keys.dat && test "$(stat -c %a /config/countries/i2p)" = 700 && test "$(stat -c %a /data/countries/i2p)" = 700 && test "$(stat -c %a /data/countries/i2p/site)" = 700'; then
 			__fail "I2P destination key was not persisted with the required private directory permissions."
 		fi
+		printf '%sPASS:%s production image i2pd has no forbidden listener ports\n' "${DOCKER_TEST_GREEN}" "${DOCKER_TEST_RESET}"
 		printf '%sPASS:%s production image I2P health and persisted destination key\n' "${DOCKER_TEST_GREEN}" "${DOCKER_TEST_RESET}"
 	fi
 	if [[ "${health}" == *'/config/'* || "${health}" == *'/data/'* || "${health}" == *'/logs/'* ]]; then
@@ -440,11 +444,14 @@ __assert_text_contains "robots.txt discovery" "/robots.txt" "User-agent: *"
 __assert_text_contains "robots sitemap declaration" "/robots.txt" "Sitemap:"
 __assert_contains "manifest discovery" "/manifest.json" "name"
 __assert_contains "service worker asset" "/sw.js" "CACHE_NAME"
-__assert_contains "main stylesheet asset" "/static/css/main.css" "--color-bg-primary"
+__assert_contains "common stylesheet asset" "/static/css/common.css" "--color-bg-primary"
+__assert_contains "shared components stylesheet asset" "/static/css/components.css" ".btn-primary"
+__assert_contains "public stylesheet asset" "/static/css/public.css" ".header"
 __assert_contains "main JavaScript asset" "/static/js/app.js" "addEventListener"
 __assert_contains "sitemap discovery" "/sitemap.xml" "urlset"
 __assert_text_contains "root health alias" "/api/healthz" "status:"
 __assert_contains "Swagger API alias" "/api/swagger" "openapi"
+__assert_contains "GraphQL countries GET query" "/api/v1/server/graphql?query=%7B%20countries%20%7B%20name%20%7B%20common%20%7D%20%7D%20%7D" "Japan"
 __assert_post_contains "GraphQL countries API" "/api/v1/server/graphql" '{"query":"{ countries { name { common } } }"}' "Japan"
 __assert_post_contains "GraphQL alias" "/api/graphql" '{"query":"{ countries { name { common } } }"}' "Japan"
 __assert_post_contains "nearest country POST API" "/api/v1/coordinates" '{"lat":40.7128,"lon":-74.0060}' "Bermuda"

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -108,6 +109,68 @@ func CheckWithDefer(ctx context.Context, client *http.Client, releasesURL, branc
 		return nil, nil
 	}
 	return candidate, nil
+}
+
+// ReleaseChecksum fetches the checksum for one exact release tag from release
+// metadata and its sha256.txt asset. It is intended for the privileged staged
+// update phase, which must not trust checksum metadata writable by the service
+// user.
+func ReleaseChecksum(ctx context.Context, client *http.Client, releasesURL, tag, binaryName string) (string, error) {
+	endpoint, err := url.Parse(releasesURL)
+	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil {
+		return "", errors.New("release metadata URL must be an absolute HTTPS URL")
+	}
+	if strings.TrimSpace(tag) == "" || strings.ContainsAny(tag, "\\/\x00\r\n") {
+		return "", errors.New("release tag is invalid")
+	}
+	if strings.TrimSpace(binaryName) == "" || strings.ContainsAny(binaryName, "\\/\x00\r\n") {
+		return "", errors.New("release binary name is invalid")
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return "", fmt.Errorf("create release metadata request: %w", err)
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("User-Agent", "countries-updater")
+	response, err := client.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("fetch release metadata: %w", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("release metadata returned HTTP %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxReleaseResponse+1))
+	if err != nil {
+		return "", fmt.Errorf("read release metadata: %w", err)
+	}
+	if len(body) > maxReleaseResponse {
+		return "", errors.New("release metadata exceeds size limit")
+	}
+	var releases []Release
+	if err := json.Unmarshal(body, &releases); err != nil {
+		return "", fmt.Errorf("decode release metadata: %w", err)
+	}
+	for _, release := range releases {
+		if release.TagName != tag || release.Draft {
+			continue
+		}
+		for _, asset := range release.Assets {
+			if asset.Name != "sha256.txt" {
+				continue
+			}
+			assetURL, err := url.Parse(asset.URL)
+			if err != nil || assetURL.Scheme != "https" || assetURL.Host == "" || assetURL.User != nil {
+				return "", errors.New("release checksum asset URL must be an absolute HTTPS URL")
+			}
+			return downloadChecksum(ctx, client, assetURL.String(), binaryName)
+		}
+		return "", fmt.Errorf("release %s has no sha256.txt asset", tag)
+	}
+	return "", fmt.Errorf("release %s was not found in official metadata", tag)
 }
 
 func eligible(release *Release, branch string) bool {
@@ -301,6 +364,31 @@ func Stage(ctx context.Context, client *http.Client, release *Release, binaryNam
 // ApplyStaged validates and installs a staged update when the process has
 // permission to replace the installed binary.
 func ApplyStaged(dataDir, currentPath, currentVersion string, currentBuildEpoch int64) (bool, error) {
+	return applyStaged(dataDir, currentPath, currentVersion, currentBuildEpoch, "")
+}
+
+// ApplyStagedVerified applies a staged update only after validating its binary
+// against a checksum fetched from trusted release metadata by the caller.
+func ApplyStagedVerified(dataDir, currentPath, currentVersion string, currentBuildEpoch int64, trustedChecksum string) (bool, error) {
+	if len(trustedChecksum) != sha256.Size*2 {
+		return false, discardStaged(filepath.Join(dataDir, "update"), errors.New("trusted staged update checksum is invalid"))
+	}
+	if _, err := hex.DecodeString(trustedChecksum); err != nil {
+		return false, discardStaged(filepath.Join(dataDir, "update"), errors.New("trusted staged update checksum is invalid"))
+	}
+	return applyStaged(dataDir, currentPath, currentVersion, currentBuildEpoch, trustedChecksum)
+}
+
+// DiscardStaged removes staged update artifacts after trusted metadata cannot
+// be fetched or validated, preserving both the cause and any cleanup failure.
+func DiscardStaged(dataDir string, cause error) error {
+	if cause == nil {
+		cause = errors.New("staged update was rejected")
+	}
+	return discardStaged(filepath.Join(dataDir, "update"), cause)
+}
+
+func applyStaged(dataDir, currentPath, currentVersion string, currentBuildEpoch int64, trustedChecksum string) (bool, error) {
 	if !CanApplyStaged() {
 		return false, nil
 	}
@@ -313,13 +401,19 @@ func ApplyStaged(dataDir, currentPath, currentVersion string, currentBuildEpoch 
 		return false, discardStaged(updateDir, fmt.Errorf("read staged update version: %w", err))
 	}
 	metadataVersion := strings.TrimSpace(string(versionBytes))
-	hashBytes, err := os.ReadFile(filepath.Join(updateDir, stagedHashName))
-	if err != nil {
-		return false, discardStaged(updateDir, fmt.Errorf("read staged update checksum: %w", err))
-	}
-	checksum := strings.TrimSpace(string(hashBytes))
-	if metadataVersion == "" || len(checksum) != sha256.Size*2 {
+	if metadataVersion == "" {
 		return false, discardStaged(updateDir, errors.New("staged update metadata is invalid"))
+	}
+	checksum := trustedChecksum
+	if checksum == "" {
+		hashBytes, err := os.ReadFile(filepath.Join(updateDir, stagedHashName))
+		if err != nil {
+			return false, discardStaged(updateDir, fmt.Errorf("read staged update checksum: %w", err))
+		}
+		checksum = strings.TrimSpace(string(hashBytes))
+		if len(checksum) != sha256.Size*2 {
+			return false, discardStaged(updateDir, errors.New("staged update metadata is invalid"))
+		}
 	}
 	if isRollingVersion(metadataVersion) {
 		publishedBytes, publishedErr := os.ReadFile(filepath.Join(updateDir, stagedPublished))

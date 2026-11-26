@@ -18,10 +18,11 @@ func (s *Server) handlePreferencesPage(w http.ResponseWriter, r *http.Request) {
 	}
 	data := s.pageContext(w, r, "/server/preferences")
 	data["PreferencePages"] = s.registeredPages("/server/preferences")
+	data["PrivacySignal"] = requestPrivacySignal(r)
 	data["ShowCCPA"] = s.config.Server.Privacy.Data.Sold
 	if cookie, err := r.Cookie("cookie_consent"); err == nil {
 		var consent map[string]interface{}
-		consentValue, err := url.QueryUnescape(cookie.Value)
+		consentValue, err := url.PathUnescape(cookie.Value)
 		if err == nil && json.Unmarshal([]byte(consentValue), &consent) == nil {
 			data["ConsentPreferences"] = consent["preferences"] == true
 			data["ConsentAnalytics"] = consent["analytics"] == true
@@ -60,12 +61,17 @@ func (s *Server) handleSavePreferencesAPI(w http.ResponseWriter, r *http.Request
 	}
 	applied := make([]string, 0, len(values))
 	ignored := make([]string, 0)
+	consentRequired := !s.preferencesConsentAccepted(r)
 	theme := s.themeForRequest(r)
 	lang := s.languageForRequest(w, r)
 	for key, value := range values {
 		switch key {
 		case "theme":
 			if !validTheme(value) {
+				ignored = append(ignored, key)
+				continue
+			}
+			if consentRequired {
 				ignored = append(ignored, key)
 				continue
 			}
@@ -78,6 +84,10 @@ func (s *Server) handleSavePreferencesAPI(w http.ResponseWriter, r *http.Request
 				ignored = append(ignored, key)
 				continue
 			}
+			if consentRequired {
+				ignored = append(ignored, key)
+				continue
+			}
 			http.SetCookie(w, &http.Cookie{Name: "lang", Value: value, Path: "/", MaxAge: 365 * 24 * 60 * 60, Secure: strings.HasPrefix(s.reportOrigin(r), "https://"), SameSite: http.SameSiteLaxMode})
 			lang = value
 			applied = append(applied, key)
@@ -85,22 +95,30 @@ func (s *Server) handleSavePreferencesAPI(w http.ResponseWriter, r *http.Request
 			ignored = append(ignored, key)
 		}
 	}
-	if len(applied) == 0 {
+	if len(applied) == 0 && !consentRequired {
 		writeAPIError(w, http.StatusBadRequest, "VALIDATION_FAILED", "No supplied preference value was valid")
 		return
 	}
 	data := map[string]interface{}{"theme": theme, "lang": lang, "prefs": map[string]string{}, "applied": applied, "ignored": ignored}
+	if consentRequired {
+		data["consent_required"] = true
+	}
 	s.jsonResponse(w, map[string]interface{}{"ok": true, "data": data})
 }
 
-func (s *Server) themeForRequest(r *http.Request) string {
-	if cookie, err := r.Cookie("theme"); err == nil && validTheme(cookie.Value) {
-		return cookie.Value
+func (s *Server) preferencesConsentAccepted(r *http.Request) bool {
+	cookie, err := r.Cookie("cookie_consent")
+	if err != nil {
+		return false
 	}
-	if validTheme(s.config.WebUI.Theme) {
-		return s.config.WebUI.Theme
+	value, err := url.PathUnescape(cookie.Value)
+	if err != nil {
+		return false
 	}
-	return "dark"
+	var consent struct {
+		Preferences bool `json:"preferences"`
+	}
+	return json.Unmarshal([]byte(value), &consent) == nil && consent.Preferences
 }
 
 func (s *Server) handleSavePreferences(w http.ResponseWriter, r *http.Request) {
@@ -133,16 +151,17 @@ func (s *Server) handleSavePreferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	theme := strings.TrimSpace(r.FormValue("theme"))
-	if validTheme(theme) {
+	consentRequired := !s.preferencesConsentAccepted(r)
+	if validTheme(theme) && !consentRequired {
 		http.SetCookie(w, &http.Cookie{
 			Name: "theme", Value: theme, Path: "/", MaxAge: 365 * 24 * 60 * 60,
 			Secure: strings.HasPrefix(s.reportOrigin(r), "https://"), SameSite: http.SameSiteLaxMode,
 		})
 	}
 	lang := strings.ToLower(strings.TrimSpace(r.FormValue("lang")))
-	if lang == "auto" {
+	if !consentRequired && lang == "auto" {
 		http.SetCookie(w, &http.Cookie{Name: "lang", Value: "", Path: "/", MaxAge: -1, Secure: strings.HasPrefix(s.reportOrigin(r), "https://"), SameSite: http.SameSiteLaxMode})
-	} else if i18n.IsSupported(lang) {
+	} else if !consentRequired && i18n.IsSupported(lang) {
 		http.SetCookie(w, &http.Cookie{
 			Name: "lang", Value: lang, Path: "/", MaxAge: 365 * 24 * 60 * 60,
 			Secure: strings.HasPrefix(s.reportOrigin(r), "https://"), SameSite: http.SameSiteLaxMode,
@@ -158,15 +177,29 @@ func (s *Server) handleSavePreferences(w http.ResponseWriter, r *http.Request) {
 			"essential": true, "preferences": preferencesConsent,
 			"analytics": analyticsConsent, "timestamp": time.Now().Unix(),
 		})
-		http.SetCookie(w, &http.Cookie{Name: "cookie_consent", Value: url.QueryEscape(string(consent)), Path: "/", MaxAge: 31536000, Secure: strings.HasPrefix(s.reportOrigin(r), "https://"), SameSite: http.SameSiteLaxMode})
+		http.SetCookie(w, &http.Cookie{Name: "cookie_consent", Value: url.PathEscape(string(consent)), Path: "/", MaxAge: 31536000, Secure: strings.HasPrefix(s.reportOrigin(r), "https://"), SameSite: http.SameSiteLaxMode})
 		if s.config.Server.Privacy.Data.Sold {
 			s.setCCPAOptOut(w, r, r.Form.Has("ccpa_opt_out"))
 		}
 	}
 	path := s.preferencesRedirect(r, "/")
+	if consentRequired {
+		path = addConsentRequiredQuery(path)
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Location", path)
 	w.WriteHeader(http.StatusSeeOther)
+}
+
+func addConsentRequiredQuery(path string) string {
+	parsed, err := url.Parse(path)
+	if err != nil {
+		return path
+	}
+	query := parsed.Query()
+	query.Set("consent_required", "1")
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func (s *Server) handleCCPAOptOut(w http.ResponseWriter, r *http.Request) {
@@ -218,7 +251,7 @@ func (s *Server) handleConsent(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Clear-Site-Data", `"cache", "storage"`)
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: "cookie_consent", Value: url.QueryEscape(string(consent)), Path: "/", MaxAge: 31536000,
+		Name: "cookie_consent", Value: url.PathEscape(string(consent)), Path: "/", MaxAge: 31536000,
 		Secure: strings.HasPrefix(s.reportOrigin(r), "https://"), SameSite: http.SameSiteLaxMode,
 	})
 	w.Header().Set("Cache-Control", "no-store")
@@ -233,7 +266,7 @@ func (s *Server) consentWithdrawn(r *http.Request, preferences, analytics bool) 
 	if err != nil {
 		return false
 	}
-	value, err := url.QueryUnescape(cookie.Value)
+	value, err := url.PathUnescape(cookie.Value)
 	if err != nil {
 		return false
 	}

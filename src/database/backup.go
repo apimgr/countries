@@ -68,11 +68,14 @@ func RecordBackup(ctx context.Context, db *sql.DB, record BackupRecord) error {
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	_, err := db.ExecContext(ctx, `INSERT INTO backups (filename, filepath, size_bytes, type, created_at, checksum, notes)
+	err := Write(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO backups (filename, filepath, size_bytes, type, created_at, checksum, notes)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(filename) DO UPDATE SET filepath=excluded.filepath, size_bytes=excluded.size_bytes, type=excluded.type,
 		created_at=excluded.created_at, checksum=excluded.checksum, notes=excluded.notes`,
 		record.Filename, record.Filepath, record.SizeBytes, record.Type, record.CreatedAt.Unix(), nullableBackupValue(record.Checksum), nullableBackupValue(record.Notes))
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("record backup metadata: %w", err)
 	}
@@ -126,7 +129,10 @@ func DeleteBackupMetadata(ctx context.Context, db *sql.DB, filename string) erro
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if _, err := db.ExecContext(ctx, `DELETE FROM backups WHERE filename = ?`, filename); err != nil {
+	if err := Write(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM backups WHERE filename = ?`, filename)
+		return err
+	}); err != nil {
 		return fmt.Errorf("delete backup metadata: %w", err)
 	}
 	return nil

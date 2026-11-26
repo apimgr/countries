@@ -91,6 +91,8 @@ type Metrics struct {
 	dbConnections prometheus.Gauge
 	dbInUse       prometheus.Gauge
 	dbErrors      *prometheus.CounterVec
+	dbBusy        prometheus.Counter
+	dbWriteWait   prometheus.Histogram
 
 	cacheHits      *prometheus.CounterVec
 	cacheMisses    *prometheus.CounterVec
@@ -204,6 +206,12 @@ func New(cfg Config) *Metrics {
 	metrics.dbConnections = newGauge("db_connections_open", "Number of open database connections.")
 	metrics.dbInUse = newGauge("db_connections_in_use", "Number of connections actively in use.")
 	metrics.dbErrors = newCounterVec("db_errors_total", "Total number of database errors.", []string{"operation", "error_type"})
+	metrics.dbBusy = newCounter("db_busy_total", "SQLite writes retried after a busy or locked error.")
+	metrics.dbWriteWait = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: project, Name: "db_write_wait_seconds", Help: "Time spent waiting for the SQLite write handle and file lock.",
+		Buckets: positiveBuckets(cfg.DBBuckets),
+	})
+	register(metrics.dbWriteWait)
 
 	metrics.cacheHits = newCounterVec("cache_hits_total", "Total number of cache hits.", []string{"cache"})
 	metrics.cacheMisses = newCounterVec("cache_misses_total", "Total number of cache misses.", []string{"cache"})
@@ -367,6 +375,19 @@ func (m *Metrics) SetDatabaseConnections(open, inUse int) {
 	}
 	m.dbConnections.Set(float64(open))
 	m.dbInUse.Set(float64(inUse))
+}
+
+// RecordDatabaseBusyRetry increments the SQLite busy/locked retry counter.
+func (m *Metrics) RecordDatabaseBusyRetry() {
+	m.dbBusy.Inc()
+}
+
+// ObserveDatabaseWriteWait records time spent waiting for SQLite's write handle.
+func (m *Metrics) ObserveDatabaseWriteWait(duration time.Duration) {
+	if duration < 0 {
+		duration = 0
+	}
+	m.dbWriteWait.Observe(duration.Seconds())
 }
 
 // RecordCache records a cache hit or miss for a known cache name.

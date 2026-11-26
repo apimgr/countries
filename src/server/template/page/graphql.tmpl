@@ -3,6 +3,14 @@
 {{define "meta"}}<meta name="url-prefix" content="{{.URLPrefix}}">
   <meta name="api-base-path" content="{{.APIBasePath}}">
 <meta name="description" content="{{t .Lang "graphql.description"}}">{{end}}
+{{define "head-extra"}}
+<link rel="stylesheet" href="{{asset .URLPrefix "/static/vendor/graphiql/graphiql.min.css"}}">
+<link rel="stylesheet" href="{{asset .URLPrefix "/static/css/graphiql-theme.css"}}">
+<script src="{{asset .URLPrefix "/static/vendor/graphiql/react.production.min.js"}}" defer></script>
+<script src="{{asset .URLPrefix "/static/vendor/graphiql/react-dom.production.min.js"}}" defer></script>
+<script src="{{asset .URLPrefix "/static/vendor/graphiql/graphiql.min.js"}}" defer></script>
+<script src="{{asset .URLPrefix "/static/js/docs-graphql.js"}}" defer></script>
+{{end}}
 {{define "content"}}
 <main class="container container-md" id="main-content">
     <header class="page-header">
@@ -10,17 +18,17 @@
       <p class="page-lead">{{t .Lang "graphql.description"}}</p>
     </header>
     <section class="section-card" aria-labelledby="graphql-query-heading">
-    <h2 id="graphql-query-heading">{{t .Lang "graphql.query"}}</h2>
-    <form id="graphql-form" method="post" action="{{path .URLPrefix "/server/docs/graphql"}}">
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <div class="form-group"><label for="graphql-query">{{t .Lang "graphql.query"}}</label>
-      <textarea class="form-input" id="graphql-query" name="query" rows="12" required>{{.GraphQLQuery}}</textarea></div>
-      <button class="btn btn-primary" type="submit">{{t .Lang "graphql.run"}}</button>
-    </form>
-    </section>
-    <section class="section-card" aria-labelledby="graphql-response-heading">
-    <h2 id="graphql-response-heading">{{t .Lang "graphql.response"}}</h2>
-    <pre id="graphql-result" role="status" aria-live="polite" data-loading="{{t .Lang "server.page.graphql.loading"}}" data-request-failed="{{t .Lang "server.page.graphql.request_failed"}}">{{if .GraphQLResult}}{{.GraphQLResult}}{{else}}{{t .Lang "graphql.initial"}}{{end}}</pre>
+      <h2 id="graphql-query-heading">{{t .Lang "graphql.query"}}</h2>
+      <div id="graphiql" data-endpoint="{{.APIBasePath}}/server/graphql" data-default-query="{{.GraphQLQuery}}"></div>
+      <noscript><p class="alert alert-info">{{t .Lang "graphql.description"}} <a href="{{.APIBasePath}}/server/graphql?query=%7B%20countries%20%7B%20name%20%7B%20common%20%7D%20cca2%20%7D%20%7D">{{t .Lang "graphql.endpoint"}}</a>. {{t .Lang "graphql.noscript_form"}}</p></noscript>
+      <form id="graphql-form" method="post" action="{{path .URLPrefix "/server/docs/graphql"}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <div class="form-group"><label for="graphql-query">{{t .Lang "graphql.query"}}</label>
+        <textarea class="form-input" id="graphql-query" name="query" rows="12" required>{{.GraphQLQuery}}</textarea></div>
+        <button class="btn btn-primary" type="submit">{{t .Lang "graphql.run"}}</button>
+      </form>
+      <h3 id="graphql-response-heading">{{t .Lang "graphql.response"}}</h3>
+      <pre id="graphql-result" role="status" aria-live="polite" data-loading="{{t .Lang "server.page.graphql.loading"}}" data-request-failed="{{t .Lang "server.page.graphql.request_failed"}}">{{if .GraphQLResult}}{{.GraphQLResult}}{{else}}{{t .Lang "graphql.initial"}}{{end}}</pre>
     </section>
   </main>
 {{end}}

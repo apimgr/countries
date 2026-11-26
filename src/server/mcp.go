@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -121,9 +122,8 @@ func (s *Server) registeredPagePayload(hub, lang string) []map[string]string {
 	result := make([]map[string]string, 0, len(pages))
 	for _, page := range pages {
 		result = append(result, map[string]string{
-			"path":        page.Path,
-			"title":       i18n.Translate(lang, page.TitleKey),
-			"description": i18n.Translate(lang, page.DescriptionKey),
+			"path":  page.Path,
+			"title": i18n.Translate(lang, page.TitleKey),
 		})
 	}
 	return result
@@ -181,7 +181,6 @@ func (s *Server) handleMCPHelpAPI(w http.ResponseWriter, r *http.Request) {
 			"auth":    map[string]string{"scheme": data.AuthScheme},
 			"tools":   tools,
 			"project": data.ProjectMarkdown,
-			"pages":   s.registeredPagePayload("/server/help", s.languageForRequest(w, r)),
 		},
 	})
 }
@@ -403,20 +402,7 @@ func (s *Server) mcpOriginAllowed(r *http.Request) bool {
 	if origin == "" {
 		return true
 	}
-	resolved, err := url.Parse(s.BuildURL(r, "/"))
-	if err == nil && origin == resolved.Scheme+"://"+resolved.Host {
-		return true
-	}
-	allowed := strings.TrimSpace(s.config.WebSecurity.CORS)
-	if allowed == "" || allowed == "*" {
-		return false
-	}
-	for _, candidate := range strings.Split(allowed, ",") {
-		if strings.TrimSpace(candidate) == origin {
-			return true
-		}
-	}
-	return false
+	return s.corsOriginAllowed(r)
 }
 
 func (s *Server) validMCPBearer(r *http.Request) (bool, bool) {
@@ -448,7 +434,10 @@ func (s *Server) auditMCPRequest(r *http.Request, method string) {
 		method = "unknown"
 	}
 	details, _ := json.Marshal(map[string]string{"source": "mcp", "method": method})
-	if _, err := s.db.ExecContext(r.Context(), `INSERT INTO audit_log (level, category, action, actor_ip, target_type, details, success) VALUES ('info', 'mcp', 'mcp.request', ?, 'endpoint', ?, 1)`, requestClientIP(r.RemoteAddr), string(details)); err != nil {
+	if err := database.Write(r.Context(), s.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(r.Context(), `INSERT INTO audit_log (level, category, action, actor_ip, target_type, details, success) VALUES ('info', 'mcp', 'mcp.request', ?, 'endpoint', ?, 1)`, requestClientIP(r.RemoteAddr), string(details))
+		return err
+	}); err != nil {
 		log.Printf("MCP audit write failed: %v", err)
 	}
 }

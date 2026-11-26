@@ -3,6 +3,7 @@ package overlay
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,6 +83,34 @@ func TestPureOverlayHelpers(t *testing.T) {
 		}
 	})
 
+	t.Run("stale Tor control file removal", func(t *testing.T) {
+		root := testutil.TempDir(t)
+		missing := filepath.Join(root, "missing")
+		if err := removeStaleControlFile(missing); err != nil {
+			t.Fatalf("removeStaleControlFile(missing) error = %v", err)
+		}
+		file := filepath.Join(root, "control_port")
+		if err := os.WriteFile(file, []byte("PORT=127.0.0.1:1\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := removeStaleControlFile(file); err != nil {
+			t.Fatalf("removeStaleControlFile(file) error = %v", err)
+		}
+		if _, err := os.Stat(file); !os.IsNotExist(err) {
+			t.Fatalf("stale control file still exists: %v", err)
+		}
+		nonemptyDir := filepath.Join(root, "control_dir")
+		if err := os.Mkdir(nonemptyDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(nonemptyDir, "child"), []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := removeStaleControlFile(nonemptyDir); err == nil {
+			t.Fatal("removeStaleControlFile(non-empty directory) succeeded")
+		}
+	})
+
 	t.Run("process log tail", func(t *testing.T) {
 		path := filepath.Join(testutil.TempDir(t), "tor.log")
 		if err := os.WriteFile(path, []byte("first\nsecond\nthird\n"), 0600); err != nil {
@@ -133,6 +162,101 @@ func TestManagerStatusAndNoProviderClose(t *testing.T) {
 		t.Fatal("HealthCheckI2P() succeeded without an I2P provider")
 	}
 	manager.Close()
+}
+
+func TestTorStartupFailureCleansBackend(t *testing.T) {
+	cfg := config.DefaultConfig()
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Server.Tor.Binary = binary
+	root := testutil.TempDir(t)
+	configDir := filepath.Join(root, "config")
+	dataDir := filepath.Join(root, "data")
+	logsDir := filepath.Join(root, "logs")
+	controlDir := filepath.Join(dataDir, "tor", "control_port")
+	if err := os.MkdirAll(controlDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(controlDir, "stale"), []byte("stale"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(Options{Config: *cfg, ConfigDir: configDir, DataDir: dataDir, LogsDir: logsDir})
+	manager.startTor(context.Background())
+	if got := manager.TorStatus().Status; got != "unavailable" {
+		t.Fatalf("Tor status after stale control file failure = %q", got)
+	}
+	manager.mu.RLock()
+	backend, server, process := manager.backend, manager.server, manager.cmd
+	manager.mu.RUnlock()
+	if backend != nil || server != nil || process != nil {
+		t.Fatalf("Tor resources remain after failed startup: backend=%v server=%v process=%v", backend != nil, server != nil, process != nil)
+	}
+}
+
+func TestTorControlPortWaitAcceptsLateCompleteFileAndRejectsPartialData(t *testing.T) {
+	for _, data := range [][]byte{nil, []byte("PORT="), []byte("PORT=127.0.0.1:"), []byte("PORT=127.0.0.1:0\n"), []byte("PORT=0.0.0.0:9051\n"), []byte("PORT=127.0.0.1:9051")} {
+		if address, ok := parseTorControlPortFile(data); ok {
+			t.Errorf("parseTorControlPortFile(%q) = %q, true; want invalid", data, address)
+		}
+	}
+	if address, ok := parseTorControlPortFile([]byte("PORT=127.0.0.1:9051\n")); !ok || address != "127.0.0.1:9051" {
+		t.Fatalf("parseTorControlPortFile(valid) = %q, %t", address, ok)
+	}
+
+	path := filepath.Join(testutil.TempDir(t), "control_port")
+	if err := os.WriteFile(path, []byte("PORT=127.0.0.1:"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		if err := os.WriteFile(path, []byte("PORT=127.0.0.1:"), 0600); err != nil {
+			t.Errorf("write partial Tor control-port file: %v", err)
+			return
+		}
+		time.Sleep(30 * time.Millisecond)
+		if err := os.WriteFile(path, []byte("PORT=127.0.0.1:9051\n"), 0600); err != nil {
+			t.Errorf("complete Tor control-port file: %v", err)
+		}
+	}()
+	address, err := waitForTorControlPort(context.Background(), path, time.Second, make(chan struct{}))
+	if err != nil || address != "127.0.0.1:9051" {
+		t.Fatalf("waitForTorControlPort(late complete file) = %q, %v", address, err)
+	}
+	processDone := make(chan struct{})
+	close(processDone)
+	if _, err := waitForTorControlPort(context.Background(), filepath.Join(filepath.Dir(path), "missing"), time.Second, processDone); err != errTorExitedBeforeControlPort {
+		t.Fatalf("waitForTorControlPort(child exit) error = %v", err)
+	}
+}
+
+func TestTorCookieRecoveryIsLimitedToOneRestart(t *testing.T) {
+	dataDir := testutil.TempDir(t)
+	cookiePath := filepath.Join(dataDir, "control_auth_cookie")
+	if err := os.WriteFile(cookiePath, []byte("stale"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(Options{DataDir: dataDir})
+	if !manager.recoverTorCookie(dataDir, filepath.Join(dataDir, "tor.log"), fmt.Errorf("515 Authentication failed")) {
+		t.Fatal("first stale-cookie recovery was rejected")
+	}
+	if _, err := os.Stat(cookiePath); !os.IsNotExist(err) {
+		t.Fatalf("stale cookie remains after recovery: %v", err)
+	}
+	select {
+	case <-manager.torRestart:
+	default:
+		t.Fatal("first cookie recovery did not queue a Tor restart")
+	}
+	if manager.recoverTorCookie(dataDir, filepath.Join(dataDir, "tor.log"), fmt.Errorf("515 Authentication failed")) {
+		t.Fatal("second stale-cookie recovery was accepted")
+	}
+	select {
+	case <-manager.torRestart:
+		t.Fatal("cookie recovery queued more than one restart")
+	default:
+	}
 }
 
 func TestI2PNoProviderAndDisabledRestart(t *testing.T) {

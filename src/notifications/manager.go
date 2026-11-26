@@ -1,6 +1,7 @@
 package notifications
 
 import (
+	"context"
 	"fmt"
 	"html"
 	"io/fs"
@@ -10,9 +11,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/apimgr/countries/src/common/i18n"
 	"github.com/apimgr/countries/src/config"
 )
 
@@ -25,11 +28,19 @@ type Manager struct {
 	Hostname    string
 	Version     string
 	Mode        string
+	Language    string
 	Sender      Sender
 	Sent        atomic.Int64
+	webhookOnce  sync.Once
+	webhookQueue chan webhookDelivery
+	webhookCtx   context.Context
+	webhookStop  context.CancelFunc
+	webhookWG    sync.WaitGroup
 }
 
 var templateVariable = regexp.MustCompile(`\{([a-z][a-z0-9_]*)\}`)
+var notificationCredentialURL = regexp.MustCompile(`(?i)(://)[^/@\s]+:[^/@\s]+@`)
+var notificationCredentialQuery = regexp.MustCompile(`(?i)((?:auth[_-]?)?(?:token|password|passwd|secret|key)\s*[=:]\s*)[^&#\s,;]+`)
 
 var templateVariables = map[string]bool{
 	"app_name": true, "app_url": true, "fqdn": true, "onion_url": true, "onion_address": true,
@@ -38,11 +49,11 @@ var templateVariables = map[string]bool{
 	"expires_in": true, "expiry_date": true, "valid_until": true, "next_retry": true, "hostname": true,
 	"version": true, "mode": true, "reason": true, "path": true, "used_percent": true, "free": true,
 	"threshold_percent": true, "since": true, "task_name": true, "next_run": true, "current_version": true,
-	"new_version": true, "channel": true, "previous_version": true,
+	"new_version": true, "channel": true, "previous_version": true, "command": true,
 }
 
 func (m *Manager) CanSend() bool {
-	return m != nil && m.Config != nil && m.Config.Server.Notifications.Email.Enabled && m.Sender.Config.Host != ""
+	return m != nil && m.Config != nil && m.Config.Server.Notifications.Email.Enabled && m.Sender.Config.Host != "" && strings.TrimSpace(m.FQDN) != ""
 }
 
 func (m *Manager) Notify(event string, values map[string]string) error {
@@ -51,8 +62,9 @@ func (m *Manager) Notify(event string, values map[string]string) error {
 	}
 	log.Printf("notification.event=%q", event)
 	m.Sent.Add(1)
+	webhookErr := m.NotifyRoleWebhooks("admin", event, values)
 	if !m.CanSend() || !m.eventEnabled(event) {
-		return nil
+		return webhookErr
 	}
 	recipient := strings.TrimSpace(m.Config.Server.Contact.Admin.Email)
 	if parsed, err := mail.ParseAddress(recipient); err != nil || parsed.Address != recipient {
@@ -63,9 +75,15 @@ func (m *Manager) Notify(event string, values map[string]string) error {
 		if strings.ContainsAny(key, "{}\r\n") {
 			continue
 		}
+		if event == "database_error" && key == "error" {
+			value = sanitizeDatabaseNotificationError(value)
+		}
+		if key == "timestamp" || key == "since" || key == "expiry_date" || key == "valid_until" {
+			value = formatNotificationTime(value)
+		}
 		vars[key] = value
 	}
-	templateText, err := m.loadTemplate(event)
+	templateText, err := m.loadTemplateForLanguage(event, m.notificationLanguage())
 	if err != nil {
 		return err
 	}
@@ -90,16 +108,19 @@ func (m *Manager) Notify(event string, values map[string]string) error {
 		Text: textBody, HTML: "<!doctype html><html><body><pre>" + html.EscapeString(textBody) + "</pre></body></html>", FQDN: m.FQDN,
 	}
 	if err := m.Sender.Send(message); err != nil {
+		if webhookErr != nil {
+			return fmt.Errorf("send %s notification: %v; webhook delivery: %w", event, err, webhookErr)
+		}
 		return fmt.Errorf("send %s notification: %w", event, err)
 	}
-	return nil
+	return webhookErr
 }
 
 func (m *Manager) DryRun() ([]string, error) {
 	if m == nil || m.Templates == nil {
 		return nil, fmt.Errorf("built-in email templates are unavailable")
 	}
-	names := []string{"security_alert", "backup_complete", "backup_failed", "ssl_expiring", "ssl_renewed", "ssl_renewal_failed", "scheduler_error", "startup", "shutdown", "disk_low", "database_error", "update_available", "update_installed", "test"}
+	names := []string{"security_alert", "backup_complete", "backup_failed", "ssl_expiring", "ssl_renewed", "ssl_renewal_failed", "scheduler_error", "startup", "shutdown", "disk_low", "database_error", "update_available", "update_installed", "update_failed", "update_staged", "test"}
 	values := m.globalVariables()
 	values["ip"] = "192.168.1.100"
 	values["event"] = "Rate limit exceeded"
@@ -108,24 +129,25 @@ func (m *Manager) DryRun() ([]string, error) {
 	values["size"] = "1.2 GB"
 	values["error"] = "Sample error"
 	values["expires_in"] = "7"
-	values["expiry_date"] = time.Now().Add(7 * 24 * time.Hour).Format(time.DateOnly)
-	values["valid_until"] = time.Now().Add(90 * 24 * time.Hour).Format(time.DateOnly)
+	values["expiry_date"] = formatNotificationTime(time.Now().Add(7 * 24 * time.Hour).Format(time.DateOnly))
+	values["valid_until"] = formatNotificationTime(time.Now().Add(90 * 24 * time.Hour).Format(time.DateOnly))
 	values["next_retry"] = "in one hour"
 	values["reason"] = "signal"
 	values["path"] = "/var/lib/countries"
 	values["used_percent"] = "90"
 	values["free"] = "2 GB"
 	values["threshold_percent"] = "85"
-	values["since"] = time.Now().Add(-time.Minute).Format(time.RFC3339)
+	values["since"] = formatNotificationTime(time.Now().Add(-time.Minute).Format(time.RFC3339))
 	values["task_name"] = "healthcheck_self"
 	values["next_run"] = "in five minutes"
 	values["current_version"] = m.Version
 	values["new_version"] = "2.0.0"
+	values["command"] = "countries --service restart"
 	values["channel"] = "stable"
 	values["previous_version"] = "1.9.0"
 	var rendered []string
 	for _, name := range names {
-		text, err := m.loadTemplate(name)
+		text, err := m.loadTemplateForLanguage(name, m.notificationLanguage())
 		if err != nil {
 			return nil, err
 		}
@@ -153,8 +175,8 @@ func (m *Manager) SendTest(recipient string) (string, error) {
 	}
 	values := m.globalVariables()
 	values["ip"] = "192.168.1.100"
-	values["timestamp"] = time.Now().Format(time.RFC3339)
-	text, err := m.loadTemplate("test")
+	values["timestamp"] = formatNotificationTime(time.Now().Format(time.RFC3339))
+	text, err := m.loadTemplateForLanguage("test", m.notificationLanguage())
 	if err != nil {
 		return "", err
 	}
@@ -204,13 +226,24 @@ func (m *Manager) eventEnabled(name string) bool {
 		return events.UpdateAvailable
 	case "update_installed":
 		return events.UpdateInstalled
-	case "disk_low", "database_error":
+	case "update_failed":
+		return events.UpdateFailed
+	case "update_staged":
+		return events.UpdateStaged
+	case "disk_low":
 		return true
+	case "database_error":
+		return m.Config.Server.Notifications.DatabaseError.Enabled
 	case "test":
 		return true
 	default:
 		return false
 	}
+}
+
+func sanitizeDatabaseNotificationError(message string) string {
+	message = notificationCredentialURL.ReplaceAllString(message, `${1}[redacted]@`)
+	return notificationCredentialQuery.ReplaceAllString(message, `${1}[redacted]`)
 }
 
 func (m *Manager) globalVariables() map[string]string {
@@ -219,23 +252,51 @@ func (m *Manager) globalVariables() map[string]string {
 		appName = m.ProjectName
 	}
 	fqdn := strings.TrimSpace(m.FQDN)
-	if fqdn == "" {
-		fqdn = "localhost"
+	urlHost := fqdn
+	if strings.Contains(urlHost, ":") && !strings.HasPrefix(urlHost, "[") {
+		urlHost = "[" + urlHost + "]"
 	}
-	appURL := "https://" + fqdn
+	appURL := "https://" + urlHost
 	if strings.HasSuffix(fqdn, ".onion") || strings.HasSuffix(fqdn, ".i2p") {
-		appURL = "http://" + fqdn
+		appURL = "http://" + urlHost
 	}
 	return map[string]string{
 		"app_name": appName, "app_url": appURL, "fqdn": fqdn,
 		"onion_url": "", "onion_address": "", "i2p_url": "", "i2p_address": "",
 		"notification_reply_to": m.Config.Server.Notifications.Email.ReplyTo,
-		"timestamp":             time.Now().Format(time.RFC3339), "year": fmt.Sprint(time.Now().Year()),
+		"timestamp":             formatNotificationTime(time.Now().Format(time.RFC3339)), "year": fmt.Sprint(time.Now().Year()),
 		"hostname": m.Hostname, "version": m.Version, "mode": m.Mode,
 	}
 }
 
+func formatNotificationTime(value string) string {
+	location, err := time.LoadLocation("America/New_York")
+	if configured := strings.TrimSpace(os.Getenv("TZ")); configured != "" {
+		if configuredLocation, loadErr := time.LoadLocation(configured); loadErr == nil {
+			location, err = configuredLocation, nil
+		}
+	}
+	if err != nil || location == nil {
+		location = time.UTC
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Now().In(location).Format("January 02, 2006 at 15:04:05 MST")
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, time.DateTime, time.DateOnly} {
+		parsed, parseErr := time.ParseInLocation(layout, value, location)
+		if parseErr == nil {
+			return parsed.In(location).Format("January 02, 2006 at 15:04:05 MST")
+		}
+	}
+	return value
+}
+
 func (m *Manager) loadTemplate(name string) (string, error) {
+	return m.loadTemplateForLanguage(name, "en")
+}
+
+func (m *Manager) loadTemplateForLanguage(name, lang string) (string, error) {
 	if m == nil {
 		return "", fmt.Errorf("notification manager is unavailable")
 	}
@@ -248,6 +309,9 @@ func (m *Manager) loadTemplate(name string) (string, error) {
 			return "", err
 		}
 	}
+	if translated := i18n.Translate(lang, "email.template."+name); translated != "email.template."+name {
+		return translated, nil
+	}
 	if m.Templates == nil {
 		return "", fmt.Errorf("built-in email templates are unavailable")
 	}
@@ -256,6 +320,29 @@ func (m *Manager) loadTemplate(name string) (string, error) {
 		return "", fmt.Errorf("load built-in %s email template: %w", name, err)
 	}
 	return string(data), nil
+}
+
+func (m *Manager) notificationLanguage() string {
+	if m == nil || m.Config == nil {
+		return "en"
+	}
+	lang := strings.ToLower(strings.TrimSpace(m.Language))
+	if lang == "" {
+		lang = strings.ToLower(strings.TrimSpace(m.Config.Server.I18N.DefaultLanguage))
+	}
+	if lang == "" || !i18n.IsSupported(lang) {
+		return "en"
+	}
+	available := m.Config.Server.I18N.AvailableLanguages
+	if len(available) != 0 {
+		for _, supported := range available {
+			if strings.EqualFold(strings.TrimSpace(supported), lang) {
+				return lang
+			}
+		}
+		return "en"
+	}
+	return lang
 }
 
 func validateRenderedTemplate(subject, body string) error {

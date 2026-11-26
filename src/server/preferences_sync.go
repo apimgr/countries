@@ -62,7 +62,8 @@ func (s *Server) handlePreferencesSyncAPI(w http.ResponseWriter, r *http.Request
 	}
 	values = mergePreferenceValues(decodePreferenceCode(values.Get("code")), values)
 	applied, ignored := s.applyPreferenceImport(w, r, values)
-	if len(applied) == 0 {
+	consentRequired := !s.preferencesConsentAccepted(r)
+	if len(applied) == 0 && !consentRequired {
 		writeAPIError(w, http.StatusBadRequest, "VALIDATION_FAILED", "No supported preference value was supplied")
 		return
 	}
@@ -73,9 +74,11 @@ func (s *Server) handlePreferencesSyncAPI(w http.ResponseWriter, r *http.Request
 	if value, valid := normalizePreferenceLanguage(values.Get("lang")); valid {
 		lang = value
 	}
-	s.jsonResponse(w, map[string]interface{}{"ok": true, "data": map[string]interface{}{
-		"theme": theme, "lang": lang, "prefs": map[string]string{}, "applied": applied, "ignored": ignored,
-	}})
+	data := map[string]interface{}{"theme": theme, "lang": lang, "prefs": map[string]string{}, "applied": applied, "ignored": ignored}
+	if consentRequired {
+		data["consent_required"] = true
+	}
+	s.jsonResponse(w, map[string]interface{}{"ok": true, "data": data})
 }
 
 func (s *Server) applyPreferenceImport(w http.ResponseWriter, r *http.Request, values url.Values) ([]string, []string) {
@@ -104,12 +107,20 @@ func (s *Server) applyPreferenceImport(w http.ResponseWriter, r *http.Request, v
 				ignored = append(ignored, key)
 				continue
 			}
+			if !s.preferencesConsentAccepted(r) {
+				ignored = append(ignored, key)
+				continue
+			}
 			http.SetCookie(w, &http.Cookie{Name: "theme", Value: value, Path: "/", MaxAge: 31536000, Secure: strings.HasPrefix(s.reportOrigin(r), "https://"), SameSite: http.SameSiteLaxMode})
 			applied = append(applied, key)
 		case "lang":
 			var valid bool
 			value, valid = normalizePreferenceLanguage(value)
 			if !valid {
+				ignored = append(ignored, key)
+				continue
+			}
+			if !s.preferencesConsentAccepted(r) {
 				ignored = append(ignored, key)
 				continue
 			}
@@ -185,7 +196,11 @@ func (s *Server) handlePreferencesSyncSave(w http.ResponseWriter, r *http.Reques
 	values := mergePreferenceValues(decodePreferenceCode(r.Form.Get("code")), r.Form)
 	s.applyPreferenceImport(w, r, values)
 	w.Header().Set("Cache-Control", "no-store")
-	redirectPreferenceRequest(w, s.preferencesRedirect(r, "/server/preferences/sync"))
+	target := s.preferencesRedirect(r, "/server/preferences/sync")
+	if !s.preferencesConsentAccepted(r) {
+		target = addConsentRequiredQuery(target)
+	}
+	redirectPreferenceRequest(w, target)
 }
 
 func (s *Server) handlePreferencesImport(w http.ResponseWriter, r *http.Request) {
@@ -200,13 +215,19 @@ func (s *Server) handlePreferencesImport(w http.ResponseWriter, r *http.Request)
 		if value, valid := normalizePreferenceLanguage(values.Get("lang")); valid {
 			lang = value
 		}
-		s.jsonResponse(w, map[string]interface{}{"ok": true, "data": map[string]interface{}{
-			"theme": theme, "lang": lang, "prefs": map[string]string{}, "applied": applied, "ignored": ignored,
-		}})
+		data := map[string]interface{}{"theme": theme, "lang": lang, "prefs": map[string]string{}, "applied": applied, "ignored": ignored}
+		if !s.preferencesConsentAccepted(r) {
+			data["consent_required"] = true
+		}
+		s.jsonResponse(w, map[string]interface{}{"ok": true, "data": data})
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	redirectPreferenceRequest(w, s.preferencesRedirect(r, "/server/preferences/sync"))
+	target := s.preferencesRedirect(r, "/server/preferences/sync")
+	if !s.preferencesConsentAccepted(r) {
+		target = addConsentRequiredQuery(target)
+	}
+	redirectPreferenceRequest(w, target)
 }
 
 func redirectPreferenceRequest(w http.ResponseWriter, target string) {

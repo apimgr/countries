@@ -6,17 +6,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
-
-var eventSequence atomic.Uint64
 
 var schema = []string{
 	`CREATE TABLE IF NOT EXISTS app_secrets (name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)`,
@@ -63,35 +57,9 @@ func Open(path string) (*sql.DB, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("database path is required")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return nil, fmt.Errorf("create database directory: %w", err)
-	}
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return nil, fmt.Errorf("resolve database path: %w", err)
-	}
-	dsn := (&url.URL{Scheme: "file", Path: absPath}).String() + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("countries-sqlite-instrumented", dsn)
+	db, err := OpenSQLiteDatabase(path, 25)
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite database: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(0)
-	pingCtx, cancelPing := context.WithTimeout(context.Background(), 5*time.Second)
-	err = db.PingContext(pingCtx)
-	cancelPing()
-	if err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("verify SQLite database: %w", err)
-	}
-	if err := EnsureSchema(context.Background(), db); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	if err := os.Chmod(absPath, 0600); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("secure database file: %w", err)
 	}
 	return db, nil
 }
@@ -101,7 +69,10 @@ func EnsureSchema(ctx context.Context, db *sql.DB) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	for _, statement := range schema {
-		if _, err := db.ExecContext(ctx, statement); err != nil {
+		if err := Write(ctx, db, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, statement)
+			return err
+		}); err != nil {
 			return fmt.Errorf("initialize server database schema: %w", err)
 		}
 	}
@@ -109,7 +80,10 @@ func EnsureSchema(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("migrate API token metadata schema: %w", err)
 	}
 	// Schema update 7107920 adds the canonical report window and erases legacy rotating identifiers.
-	if _, err := db.ExecContext(ctx, `ALTER TABLE security_reports ADD COLUMN id_window BIGINT NOT NULL DEFAULT 0`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+	if err := Write(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `ALTER TABLE security_reports ADD COLUMN id_window BIGINT NOT NULL DEFAULT 0`)
+		return err
+	}); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 		return fmt.Errorf("add security report window column: %w", err)
 	}
 	legacySecurityID, err := hasColumn(ctx, db, "security_reports", "security_id")
@@ -117,7 +91,10 @@ func EnsureSchema(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("inspect legacy security report metadata: %w", err)
 	}
 	if legacySecurityID {
-		if _, err := db.ExecContext(ctx, `UPDATE security_reports SET id_window = COALESCE(CAST(strftime('%s', created_at) / 172800 AS INTEGER), 0), security_id = '' WHERE id_window = 0 AND security_id <> ''`); err != nil {
+		if err := Write(ctx, db, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `UPDATE security_reports SET id_window = COALESCE(CAST(strftime('%s', created_at) / 172800 AS INTEGER), 0), security_id = '' WHERE id_window = 0 AND security_id <> ''`)
+			return err
+		}); err != nil {
 			return fmt.Errorf("migrate security report window metadata: %w", err)
 		}
 	}
@@ -148,113 +125,4 @@ func hasColumn(ctx context.Context, db *sql.DB, table, column string) (bool, err
 		return false, err
 	}
 	return found, nil
-}
-
-// AllowRateLimit persists a request event and checks the class and global sliding windows.
-func AllowRateLimit(ctx context.Context, db *sql.DB, client, class string, now time.Time, classRequests int, classWindow time.Duration, globalBurst int) (bool, time.Duration, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	classPrefix := "ip:" + client + ":" + class + ":"
-	globalPrefix := "ip:" + client + ":global:"
-	classCount, classFirst, err := countEvents(ctx, tx, classPrefix, now.Add(-classWindow))
-	if err != nil {
-		return false, 0, err
-	}
-	globalWindow := time.Minute
-	globalCount, globalFirst, err := countEvents(ctx, tx, globalPrefix, now.Add(-globalWindow))
-	if err != nil {
-		return false, 0, err
-	}
-	if classCount >= classRequests {
-		return false, maxRetry(classFirst.Add(classWindow).Sub(now)), nil
-	}
-	if globalCount >= globalBurst {
-		return false, maxRetry(globalFirst.Add(globalWindow).Sub(now)), nil
-	}
-	nowUnix := now.Unix()
-	key := fmt.Sprintf("%s%d-%d", classPrefix, now.UnixNano(), eventSequence.Add(1))
-	if _, err := tx.ExecContext(ctx, `INSERT INTO rate_limits (key, count, window_start, updated_at) VALUES (?, 1, ?, ?)`, key, nowUnix, nowUnix); err != nil {
-		return false, 0, err
-	}
-	globalKey := fmt.Sprintf("%s%d-%d", globalPrefix, now.UnixNano(), eventSequence.Add(1))
-	if _, err := tx.ExecContext(ctx, `INSERT INTO rate_limits (key, count, window_start, updated_at) VALUES (?, 1, ?, ?)`, globalKey, nowUnix, nowUnix); err != nil {
-		return false, 0, err
-	}
-	if now.Second() == 0 {
-		_, _ = tx.ExecContext(ctx, `DELETE FROM rate_limits WHERE window_start < ?`, now.Add(-time.Hour).Unix())
-	}
-	if err := tx.Commit(); err != nil {
-		return false, 0, err
-	}
-	return true, 0, nil
-}
-
-// CheckRateLimit reports whether a class-specific event limit has been reached.
-func CheckRateLimit(ctx context.Context, db *sql.DB, client, class string, now time.Time, requests int, window time.Duration) (bool, time.Duration, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	var count int
-	var first int64
-	prefix := "ip:" + client + ":" + class + ":"
-	cutoff := now.Add(-window)
-	err := db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MIN(window_start), 0) FROM rate_limits WHERE key LIKE ? AND window_start >= ?`, prefix+"%", cutoff.Unix()).Scan(&count, &first)
-	if err != nil {
-		return false, 0, err
-	}
-	if count < requests {
-		return false, 0, nil
-	}
-	return true, maxRetry(time.Unix(first, 0).Add(window).Sub(now)), nil
-}
-
-// RecordRateLimitClass stores one event without consuming the global request bucket.
-func RecordRateLimitClass(ctx context.Context, db *sql.DB, client, class string, now time.Time, requests int, window time.Duration) (bool, time.Duration, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	prefix := "ip:" + client + ":" + class + ":"
-	var count int
-	var first int64
-	cutoff := now.Add(-window)
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MIN(window_start), 0) FROM rate_limits WHERE key LIKE ? AND window_start >= ?`, prefix+"%", cutoff.Unix()).Scan(&count, &first); err != nil {
-		return false, 0, err
-	}
-	if count >= requests {
-		return false, maxRetry(time.Unix(first, 0).Add(window).Sub(now)), nil
-	}
-	nowUnix := now.Unix()
-	key := fmt.Sprintf("%s%d-%d", prefix, now.UnixNano(), eventSequence.Add(1))
-	if _, err := tx.ExecContext(ctx, `INSERT INTO rate_limits (key, count, window_start, updated_at) VALUES (?, 1, ?, ?)`, key, nowUnix, nowUnix); err != nil {
-		return false, 0, err
-	}
-	if err := tx.Commit(); err != nil {
-		return false, 0, err
-	}
-	if count+1 >= requests {
-		return false, maxRetry(time.Unix(first, 0).Add(window).Sub(now)), nil
-	}
-	return true, 0, nil
-}
-
-func countEvents(ctx context.Context, tx *sql.Tx, prefix string, cutoff time.Time) (int, time.Time, error) {
-	var count int
-	var first int64
-	err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MIN(window_start), 0) FROM rate_limits WHERE key LIKE ? AND window_start >= ?`, prefix+"%", cutoff.Unix()).Scan(&count, &first)
-	return count, time.Unix(first, 0), err
-}
-
-func maxRetry(duration time.Duration) time.Duration {
-	if duration <= 0 {
-		return time.Second
-	}
-	return duration
 }

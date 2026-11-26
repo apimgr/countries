@@ -60,7 +60,7 @@ func handlePGPMaintenance(args []string, configDir, dataDir, logsDir, configPath
 	if err != nil {
 		return err
 	}
-	defer func() { resultErr = errors.Join(resultErr, db.Close()) }()
+	defer func() { resultErr = errors.Join(resultErr, database.Close(db)) }()
 	ctx := context.Background()
 	if err := database.EnsureGeneratedSecrets(ctx, db); err != nil {
 		return err
@@ -68,6 +68,9 @@ func handlePGPMaintenance(args []string, configDir, dataDir, logsDir, configPath
 	keyDir := filepath.Join(configDir, "security")
 	if err := os.MkdirAll(keyDir, 0700); err != nil {
 		return fmt.Errorf("create security key directory: %w", err)
+	}
+	if err := RecoverPGPRotation(ctx, db, keyDir); err != nil {
+		return fmt.Errorf("recover PGP key rotation: %w", err)
 	}
 	authorizationAction := args[0]
 	if len(args) > 1 && args[0] == "export" && args[1] == "private" {
@@ -423,11 +426,14 @@ func retryPGPPublication(ctx context.Context, cfg *config.Config, db *sql.DB, co
 	return publishPGP(ctx, cfg, db, public, fingerprint, statePath, &state, now)
 }
 
-func rotatePGP(cfg *config.Config, db *sql.DB, keyDir, statePath string, state *pgpServerState) (resultErr error) {
+func rotatePGP(cfg *config.Config, db *sql.DB, keyDir, statePath string, state *pgpServerState) error {
 	ctx := context.Background()
 	publicPath := filepath.Join(keyDir, "pgp.pub.asc")
 	privatePath := filepath.Join(keyDir, "pgp.priv.asc.enc")
 	oldPrivatePath := filepath.Join(keyDir, "pgp.priv.old.asc.enc")
+	stagedPublicPath := publicPath + ".new"
+	stagedPrivatePath := privatePath + ".new"
+	stagedSignaturePath := filepath.Join(keyDir, "pgp.rotation.asc.sig.new")
 	oldPublic, err := os.ReadFile(publicPath)
 	if err != nil {
 		return errors.New("no active PGP key is installed")
@@ -470,89 +476,68 @@ func rotatePGP(cfg *config.Config, db *sql.DB, keyDir, statePath string, state *
 	if err != nil {
 		return err
 	}
+	if err := writePGPFile(stagedPrivatePath, newPrivateEncrypted); err != nil {
+		return fmt.Errorf("stage rotated PGP private key: %w", err)
+	}
+	if err := writePGPFile(stagedPublicPath, newPair.Public); err != nil {
+		_ = os.Remove(stagedPrivatePath)
+		return fmt.Errorf("stage rotated PGP public key: %w", err)
+	}
+	if err := writePGPFile(stagedSignaturePath, signature); err != nil {
+		_ = os.Remove(stagedPrivatePath)
+		_ = os.Remove(stagedPublicPath)
+		return fmt.Errorf("stage rotated PGP signature: %w", err)
+	}
 	nextState := pgpServerState{Fingerprint: newPair.Fingerprint, Keyservers: map[string]pgpPublishAttempt{}, LastExports: state.LastExports}
 
-	conn, err := db.Conn(ctx)
+	var publishedJSON []byte
+	err = database.Write(ctx, db, func(tx *sql.Tx) error {
+		if err := reencryptPGPReports(ctx, tx, oldPrivate, newPair.Public); err != nil {
+			return err
+		}
+		publishedJSON, err = json.Marshal(map[string]string{})
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO pgp_keys (fingerprint, created_at, expires_at, last_rotated_at, keyservers_published, revoked) VALUES (?, ?, ?, ?, ?, FALSE)`, newPair.Fingerprint, newPair.CreatedAt.Format(time.RFC3339Nano), newPair.ExpiresAt.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), string(publishedJSON)); err != nil {
+			return fmt.Errorf("save rotated PGP key metadata: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return err
-	}
-	defer func() { resultErr = errors.Join(resultErr, conn.Close()) }()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return fmt.Errorf("lock report submissions for PGP rotation: %w", err)
-	}
-	committed := false
-	publishStateWritten := false
-	defer func() {
-		if !committed {
-			_, rollbackErr := conn.ExecContext(context.Background(), "ROLLBACK")
-			resultErr = errors.Join(resultErr, rollbackErr)
-			if publishStateWritten {
-				resultErr = errors.Join(resultErr, writePGPState(statePath, *state))
-			}
-		}
-	}()
-	if err := reencryptPGPReports(ctx, conn, oldPrivate, newPair.Public); err != nil {
-		return err
-	}
-	publishStateWritten = true
-	if err := publishPGP(ctx, cfg, nil, newPair.Public, newPair.Fingerprint, statePath, &nextState, now); err != nil {
-		if !strings.HasPrefix(err.Error(), "key publication incomplete:") {
-			return fmt.Errorf("persist PGP publication state: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "PGP key publication will continue through keyserver retries: %v\n", err)
-	}
-	published := map[string]string{}
-	for host, attempt := range nextState.Keyservers {
-		if attempt.Done && attempt.PublishedAt != "" {
-			published[host] = attempt.PublishedAt
-		}
-	}
-	encodedPublished, err := json.Marshal(published)
-	if err != nil {
-		return err
-	}
-	if _, err := conn.ExecContext(ctx, `INSERT INTO pgp_keys (fingerprint, created_at, expires_at, last_rotated_at, keyservers_published, revoked) VALUES (?, ?, ?, ?, ?, FALSE)`, newPair.Fingerprint, newPair.CreatedAt.Format(time.RFC3339Nano), newPair.ExpiresAt.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), string(encodedPublished)); err != nil {
-		return fmt.Errorf("save rotated PGP key metadata: %w", err)
-	}
-	if err := writePGPFile(oldPrivatePath, oldPrivateEncrypted); err != nil {
-		return fmt.Errorf("preserve retired PGP private key: %w", err)
-	}
-	signaturePath := filepath.Join(keyDir, "pgp.rotation.asc.sig")
-	oldSignature, signatureErr := os.ReadFile(signaturePath)
-	if signatureErr != nil && !os.IsNotExist(signatureErr) {
-		return errors.Join(signatureErr, os.Remove(oldPrivatePath))
-	}
-	if err := writePGPFile(privatePath, newPrivateEncrypted); err != nil {
-		return errors.Join(err, os.Remove(oldPrivatePath))
-	}
-	if err := writePGPFile(publicPath, newPair.Public); err != nil {
-		_ = writePGPFile(privatePath, oldPrivateEncrypted)
-		_ = os.Remove(oldPrivatePath)
-		return err
-	}
-	if err := writePGPFile(signaturePath, signature); err != nil {
-		_ = writePGPFile(privatePath, oldPrivateEncrypted)
-		_ = writePGPFile(publicPath, oldPublic)
-		if signatureErr == nil {
-			_ = writePGPFile(signaturePath, oldSignature)
-		} else {
-			_ = os.Remove(signaturePath)
-		}
-		_ = os.Remove(oldPrivatePath)
-		return err
-	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		_ = writePGPFile(privatePath, oldPrivateEncrypted)
-		_ = writePGPFile(publicPath, oldPublic)
-		if signatureErr == nil {
-			_ = writePGPFile(signaturePath, oldSignature)
-		} else {
-			_ = os.Remove(signaturePath)
-		}
-		_ = os.Remove(oldPrivatePath)
+		_ = os.Remove(stagedPrivatePath)
+		_ = os.Remove(stagedPublicPath)
+		_ = os.Remove(stagedSignaturePath)
 		return fmt.Errorf("commit PGP report re-encryption: %w", err)
 	}
-	committed = true
+	signaturePath := filepath.Join(keyDir, "pgp.rotation.asc.sig")
+	if err := os.Rename(privatePath, oldPrivatePath); err != nil {
+		return fmt.Errorf("preserve retired PGP private key: %w", err)
+	}
+	if err := os.Rename(stagedPrivatePath, privatePath); err != nil {
+		return fmt.Errorf("install rotated PGP private key: %w", err)
+	}
+	if err := os.Rename(stagedSignaturePath, signaturePath); err != nil {
+		return fmt.Errorf("install rotated PGP signature: %w", err)
+	}
+	if err := os.Rename(stagedPublicPath, publicPath); err != nil {
+		return fmt.Errorf("install rotated PGP public key: %w", err)
+	}
+	if err := publishPGP(ctx, cfg, nil, newPair.Public, newPair.Fingerprint, statePath, &nextState, now); err != nil && !strings.HasPrefix(err.Error(), "key publication incomplete:") {
+		return fmt.Errorf("persist PGP publication state: %w", err)
+	}
+	for host, attempt := range nextState.Keyservers {
+		if !attempt.Done || attempt.PublishedAt == "" {
+			continue
+		}
+		publishedAt, err := time.Parse(time.RFC3339Nano, attempt.PublishedAt)
+		if err != nil {
+			return fmt.Errorf("parse PGP publication time for %s: %w", host, err)
+		}
+		if err := database.RecordPGPKeyserverPublication(ctx, db, newPair.Fingerprint, host, publishedAt); err != nil {
+			return fmt.Errorf("record PGP publication for %s: %w", host, err)
+		}
+	}
 	*state = nextState
 	if err := writePGPState(statePath, *state); err != nil {
 		return fmt.Errorf("save PGP rotation publication state: %w", err)
@@ -561,7 +546,100 @@ func rotatePGP(cfg *config.Config, db *sql.DB, keyDir, statePath string, state *
 	return nil
 }
 
-func reencryptPGPReports(ctx context.Context, conn *sql.Conn, oldPrivate, newPublic []byte) error {
+// RecoverPGPRotation resolves staged key files against the database commit marker.
+func RecoverPGPRotation(ctx context.Context, db *sql.DB, keyDir string) error {
+	publicPath := filepath.Join(keyDir, "pgp.pub.asc")
+	privatePath := filepath.Join(keyDir, "pgp.priv.asc.enc")
+	oldPrivatePath := filepath.Join(keyDir, "pgp.priv.old.asc.enc")
+	stagedPublicPath := publicPath + ".new"
+	stagedPrivatePath := privatePath + ".new"
+	stagedSignaturePath := filepath.Join(keyDir, "pgp.rotation.asc.sig.new")
+	signaturePath := filepath.Join(keyDir, "pgp.rotation.asc.sig")
+	staged, err := anyFileExists(stagedPublicPath, stagedPrivatePath, stagedSignaturePath)
+	if err != nil || !staged {
+		return err
+	}
+	metadata, found, err := database.GetPGPKeyMetadata(ctx, db)
+	if err != nil {
+		return err
+	}
+	stagedPublic, stagedErr := os.ReadFile(stagedPublicPath)
+	if stagedErr == nil {
+		fingerprint, fingerprintErr := securitykey.Fingerprint(stagedPublic)
+		if fingerprintErr != nil {
+			return fmt.Errorf("read staged PGP fingerprint: %w", fingerprintErr)
+		}
+		if !found || fingerprint != metadata.Fingerprint {
+			return removeStagedPGPFiles(stagedPrivatePath, stagedPublicPath, stagedSignaturePath)
+		}
+	} else if !os.IsNotExist(stagedErr) {
+		return stagedErr
+	} else {
+		activePublic, readErr := os.ReadFile(publicPath)
+		if readErr != nil {
+			return fmt.Errorf("read active PGP key during recovery: %w", readErr)
+		}
+		fingerprint, fingerprintErr := securitykey.Fingerprint(activePublic)
+		if fingerprintErr != nil || !found || fingerprint != metadata.Fingerprint {
+			return errors.New("PGP rotation staged files are incomplete and the active key does not match the database commit marker")
+		}
+		// The public key is renamed last. Without its staged file, any remaining
+		// staged artifacts came from a crash before the database commit.
+		return removeStagedPGPFiles(stagedPrivatePath, stagedPublicPath, stagedSignaturePath)
+	}
+	if _, err := os.Stat(stagedPrivatePath); err == nil {
+		if _, err := os.Stat(oldPrivatePath); os.IsNotExist(err) {
+			if err := os.Rename(privatePath, oldPrivatePath); err != nil {
+				return fmt.Errorf("preserve previous PGP private key during recovery: %w", err)
+			}
+		} else if err != nil {
+			return err
+		}
+		if err := os.Rename(stagedPrivatePath, privatePath); err != nil {
+			return fmt.Errorf("install staged PGP private key during recovery: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if _, err := os.Stat(stagedSignaturePath); err == nil {
+		if err := os.Rename(stagedSignaturePath, signaturePath); err != nil {
+			return fmt.Errorf("install staged PGP signature during recovery: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if _, err := os.Stat(stagedPublicPath); err == nil {
+		if err := os.Rename(stagedPublicPath, publicPath); err != nil {
+			return fmt.Errorf("install staged PGP public key during recovery: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func anyFileExists(paths ...string) (bool, error) {
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return true, nil
+		} else if !os.IsNotExist(err) {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+func removeStagedPGPFiles(paths ...string) error {
+	var result error
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			result = errors.Join(result, err)
+		}
+	}
+	return result
+}
+
+func reencryptPGPReports(ctx context.Context, conn *sql.Tx, oldPrivate, newPublic []byte) error {
 	lastID := ""
 	for {
 		rows, err := conn.QueryContext(ctx, `SELECT tracking_id, body_enc FROM security_reports WHERE body_alg = 'pgp' AND tracking_id > ? ORDER BY tracking_id LIMIT 100`, lastID)

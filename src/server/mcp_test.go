@@ -51,10 +51,11 @@ func mcpPayload(method string, params interface{}) []byte {
 func TestMCPValidationOrderAndProtocol(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Server.Token = mcpTestOperatorToken
+	cfg.Server.CORS.AllowedOrigins = []string{"https://client.example"}
 	s := newTestServerWithConfig(t, cfg)
 	payload := mcpPayload("tools/list", map[string]interface{}{})
 
-	response := mcpTestRequest(s, "/api/v1/server/mcp", http.MethodPost, payload, "", "https://attacker.example")
+	response := mcpTestRequest(s, "/api/v1/server/mcp", http.MethodPost, payload, mcpTestOperatorToken, "https://attacker.example")
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("foreign origin status = %d, want 403", response.Code)
 	}
@@ -151,7 +152,43 @@ func TestMCPHelpAPIShape(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("MCP help JSON invalid: %v", err)
 	}
+	var fields struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &fields); err != nil {
+		t.Fatalf("decode MCP help fields: %v", err)
+	}
+	if len(fields.Data) != 6 {
+		t.Errorf("MCP help data contains %d fields, want exactly 6 fixed fields", len(fields.Data))
+	}
 	if !envelope.OK || !envelope.Data.Enabled || !strings.HasSuffix(envelope.Data.URL, "/api/v1/server/mcp") || len(envelope.Data.Aliases) != 2 || envelope.Data.Auth.Scheme != "Bearer" || len(envelope.Data.Tools) == 0 || !strings.Contains(envelope.Data.Project, "getCountries") {
 		t.Fatalf("MCP help data does not match the documented shape: %+v", envelope)
+	}
+}
+
+func TestMCPHelpPageUsesCurrentProtocolForConnectionCheck(t *testing.T) {
+	s := newTestServer(t)
+	request := httptest.NewRequest(http.MethodGet, "/server/help/mcp", nil)
+	request.Header.Set("Accept", "text/html")
+	response := httptest.NewRecorder()
+	s.router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("MCP help page status = %d, want 200", response.Code)
+	}
+	body := response.Body.String()
+	for _, required := range []string{
+		"remote-only MCP server over Streamable HTTP",
+		"scope determines which tools are available",
+		`"method":"tools/list"`,
+		`MCP-Protocol-Version: 2026-07-28`,
+		`Mcp-Method: tools/list`,
+		`"io.modelcontextprotocol/protocolVersion":"2026-07-28"`,
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("MCP help page does not include %q in its connection check", required)
+		}
+	}
+	if strings.Contains(body, `"method":"initialize"`) {
+		t.Error("MCP help page advertises the unsupported initialize handshake")
 	}
 }
