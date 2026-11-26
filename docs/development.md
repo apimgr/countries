@@ -15,7 +15,7 @@ make test
 
 The standard `make dev`, `make local`, and `make build` outputs include a static server and a static CLI/TUI binary. To also build the optional GUI client, use `BUILD_GUI=1 make dev`, `BUILD_GUI=1 make local`, or `BUILD_GUI=1 make build`. GUI binaries are separate `*-cli-gui*` artifacts for Linux, macOS, and Windows and require the dynamic loader used by the Go build container.
 
-The GitHub license workflow runs `scripts/verify-licenses.sh` in `casjaysdev/go:latest`. When dependencies change, run that script in the same container to refresh `licenses.csv` and `third_party_licenses/`, then review the results and update [`LICENSE.md`](https://github.com/apimgr/countries/blob/main/LICENSE.md) as needed. The script requires the repository to be mounted writable because it updates those tracked inventories.
+The GitHub license workflow runs `scripts/verify-licenses.sh` in `casjaysdev/go:latest`. It scans shipped packages under `src/`, applies only reviewed module overrides from `.github/license-overrides.txt`, and writes a CSV report and license notices to a project-scoped temporary directory. It does not change tracked files. When dependencies change, review the temporary report against `licenses.csv`, `third_party_licenses/`, and [`LICENSE.md`](https://github.com/apimgr/countries/blob/main/LICENSE.md), then update those tracked inventories separately as needed. An override requires reading the dependency's license terms and recording the license identifier and review note.
 
 ## CI/CD providers
 
