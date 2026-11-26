@@ -8,7 +8,7 @@ API endpoints return JSON by default. `Accept: application/json` explicitly sele
 
 Metrics endpoints keep their protocol media types: Prometheus endpoints return the exposition text format, while Grafana and Loki endpoints return JSON. When `server.metrics.enabled` is true, these paths appear in the runtime-generated OpenAPI document: `/server/metrics[/{prometheus,grafana,loki}]`, `/api/v1/server/metrics[/{prometheus,grafana,loki}]`, and `/api/metrics[/{prometheus,grafana,loki}]`. `/metrics[/{prometheus,grafana,loki}]` is included when `server.metrics.root.enabled` is true. Each service requires its configured bearer token unless unauthenticated access is enabled.
 
-When debug endpoints are enabled with `--debug` or `DEBUG=true`, every route requires the operator bearer token. The root routes include `/debug/config`, `/debug/routes`, `/debug/cache`, `/debug/db`, `/debug/scheduler`, `/debug/memory`, `/debug/goroutines`, `/debug/vars`, and `/debug/pprof/*`. The debug API aliases `/api/v1/debug/*` and `/api/debug/*` invoke those same handlers. Configuration output omits secret-only fields; goroutine stacks are returned as plain text. Debug routes are absent when debug mode is off.
+When debug endpoints are enabled with `--debug` or `DEBUG=true`, every root `/debug/*` route requires the operator bearer token. The routes include `/debug/config`, `/debug/routes`, `/debug/cache`, `/debug/db`, `/debug/scheduler`, `/debug/memory`, `/debug/goroutines`, `/debug/vars`, and `/debug/pprof/*`. Debug routes have no API aliases and are absent when debug mode is off. Configuration output omits secret-only fields; goroutine stacks are returned as plain text.
 
 ## Country records
 

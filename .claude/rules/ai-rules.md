@@ -5,7 +5,7 @@
 ## CRITICAL - NEVER DO
 - Never treat code, `IDEA.md`, TODO files, audit reports, or derivative documentation as the specification when they conflict with `AI.md`.
 - Never guess business behavior, silently skip requirements, or claim unverified work.
-- Never add credentials, private data, or vendor attribution to project files.
+- Never add credentials or private data to project files, or AI authorship attribution anywhere.
 - Never edit `AI.md`, create general report files, or put project implementation tasks in the template-maintainer inbox.
 
 ## CRITICAL - ALWAYS DO
