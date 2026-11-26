@@ -23,7 +23,7 @@ Each `cli_versions` entry is keyed by platform and architecture, such as `linux-
 Download a client binary from the deployment with a platform-specific path:
 
 ```sh
-SERVER_URL="https://your-server.example"
+SERVER_URL="${COUNTRIES_SERVER_PRIMARY:?Set this to your deployment URL}"
 curl -q -LSsf "$SERVER_URL/cli/binaries/countries-cli-linux-amd64" -o countries-cli
 ```
 

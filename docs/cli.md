@@ -19,7 +19,7 @@ countries-cli [flags] QUERY
 | `stats` | Read dataset statistics. |
 | `request METHOD /api/v1/PATH [JSON_BODY]` | Send a supported native API request to the configured server. Absolute URLs, redirects, and machine-only/server-binary endpoints are rejected. |
 
-The interactive menu and GUI expose these same seven commands in this order. The `request` command accepts a versioned `/api/v1/` path and an optional JSON body; it uses the configured server origin and does not follow redirects. Any positional arguments that do not start with a recognized command are treated as a search query. For example, `countries-cli --server https://countries.example "South Korea"` is equivalent to `countries-cli --server https://countries.example search "South Korea"`.
+The interactive menu and GUI expose these same seven commands in this order. The `request` command accepts a versioned `/api/v1/` path and an optional JSON body; it uses the configured server origin and does not follow redirects. Any positional arguments that do not start with a recognized command are treated as a search query. For example, `countries-cli --server "$SERVER_URL" "South Korea"` is equivalent to `countries-cli --server "$SERVER_URL" search "South Korea"`, where `SERVER_URL` is the URL of your deployment.
 
 ## Flags
 

@@ -500,7 +500,7 @@ Tracking scripts load only when a provider is configured, the visitor has consen
 server:
   tracking:
     type: plausible
-    id: example.com
+    id: your-site-domain
     url: "" # Optional self-managed endpoint; empty uses plausible.io
 ```
 

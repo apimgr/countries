@@ -75,9 +75,10 @@ The companion client supports country listing, lookup, search, coordinate and ne
 
 ```sh
 countries-cli --help
-countries-cli --server http://YOUR_SERVER search united
-countries-cli --server http://YOUR_SERVER get US
-countries-cli --server http://YOUR_SERVER request GET /api/v1/server/healthz
+SERVER_URL="${COUNTRIES_SERVER_PRIMARY:?Set this to your deployment URL}"
+countries-cli --server "$SERVER_URL" search united
+countries-cli --server "$SERVER_URL" get US
+countries-cli --server "$SERVER_URL" request GET /api/v1/server/healthz
 ```
 
 With no command, the client opens its GUI when available, otherwise its terminal interface when attached to an interactive terminal. See the [CLI reference](docs/cli.md) for commands, flags, configuration, and output formats.
