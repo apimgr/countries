@@ -449,8 +449,8 @@ Each task accepts `enabled` and `schedule`; `retry_on_fail` and `retry_delay` ap
 | `server.metrics.auth.tokens.prometheus` | generated secret | Prometheus bearer token. |
 | `server.metrics.auth.tokens.grafana` | generated secret | Grafana dashboard bearer token. |
 | `server.metrics.auth.tokens.loki` | generated secret | Loki log-stream bearer token. |
-| `server.metrics.include_system` | `false` | Include CPU, memory, and disk metrics. |
-| `server.metrics.include_runtime` | `false` | Include Go runtime statistics. |
+| `server.metrics.include_system` | `true` | Include CPU, memory, and disk metrics. |
+| `server.metrics.include_runtime` | `true` | Include Go runtime statistics. |
 | `server.metrics.loki.max_entries` | `1000` | Maximum recent log entries served. |
 | `server.metrics.loki.max_age` | `1h` | Maximum age of log entries served. |
 | `server.logs.level` | empty (mode-derived) | Global log level: `debug`, `info`, `warn`, or `error`. |
