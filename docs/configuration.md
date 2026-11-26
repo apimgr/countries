@@ -174,7 +174,7 @@ Both a legacy `server.yml` containing area settings and the drop-in layout are a
 
 ### Help and contact pages
 
-The help page uses the built-in Countries guidance when `server.pages.help.content` is empty. Set it to Markdown to replace that content. `server.pages.help.mcp` adds project-specific Markdown after the generated MCP connection and tool documentation. Both settings belong in `yaml.d/pages.yml`.
+The help page uses built-in, localized Countries guidance when `server.pages.help.content` is empty. Set it to a Markdown string to replace that content in every language, or provide a language-to-Markdown map. Map lookup uses the resolved request language, then `default`, then the first language key in lexicographic order. The API returns the selected Markdown source. `server.pages.help.mcp` adds project-specific Markdown after the generated MCP connection and tool documentation. Both settings belong in `yaml.d/pages.yml`.
 
 The contact form is enabled by default. It is reached from the security-reporting page and is not linked from the site's general navigation. `server.pages.contact.enabled: false` disables both the form and its form entry in `security.txt`. Contact page settings belong in `yaml.d/pages.yml`:
 
@@ -185,7 +185,7 @@ The contact form is enabled by default. It is reached from the security-reportin
 | `server.pages.contact.captcha_site_key` | empty | Public site key for reCAPTCHA or hCaptcha. |
 | `server.pages.contact.captcha_secret_key` | empty | Private provider key stored only in `secrets.yml`. |
 | `server.pages.contact.success_message` | `Thank you for your report.` | Confirmation shown after a report is accepted. |
-| `server.pages.help.content` | built-in help | Markdown content for `/server/help`; empty uses built-in content. |
+| `server.pages.help.content` | built-in help | A Markdown string shared by all languages or a language-to-Markdown map for `/server/help`; maps resolve by request language, then `default`, then the lexicographically first key. Empty or missing content uses built-in localized guidance. |
 | `server.pages.help.mcp` | empty | Optional project-specific Markdown appended to `/server/help/mcp`. |
 
 The simple CAPTCHA works without JavaScript and does not contact a third party. reCAPTCHA and hCaptcha require both site and secret keys; the secret is never exposed in responses or logs. Those providers retain a simple no-JavaScript fallback, and a provider verification failure rejects the submission.
