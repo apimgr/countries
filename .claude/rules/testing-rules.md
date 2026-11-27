@@ -9,7 +9,7 @@
 - Never put non-ReadTheDocs content under `docs/`.
 
 ## CRITICAL - ALWAYS DO
-- Put runtime/test artifacts in project-scoped temporary directories and clean them according to the script contract.
+- Put runtime and test data in project-scoped temporary directories and clean them according to the script contract; compiled build artifacts go in `binaries/` as required by AI.md.
 - Keep `make test` as the commit gate: it runs Go quality checks and unit coverage, then the basic Docker binary tier through `./tests/run_tests.sh`.
 - Run `./tests/incus.sh` as the separate full-app init-system check; run `./tests/e2e.sh` on demand, outside the commit gate.
 - Maintain ReadTheDocs documentation that describes the shipped product accurately.

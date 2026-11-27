@@ -24,7 +24,7 @@
 | Local target | A Makefile command for developer use, not invoked from CI/CD |
 
 ## QUICK REFERENCE
-Preserve target names, container limits, temporary output paths, and cleanup behavior.
+Preserve target names, container limits, `binaries/` and `releases/` output paths, and cleanup behavior.
 
 ---
 For complete details, see AI.md PART 25.
