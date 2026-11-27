@@ -458,16 +458,30 @@ Each task accepts `enabled` and `schedule`; `retry_on_fail` and `retry_delay` ap
 | `server.logs.defaults.rotate` | `weekly,50MB` | Default rotation policy inherited by each log kind. |
 | `server.logs.defaults.keep` | `none` | Default retention policy; `none`, a count, or a duration-based policy. |
 | `server.logs.access.format` | `apache` | Access log format: `apache`, `nginx`, `json`, or `custom`. |
+| `server.logs.access.filename` | `access.log` | Access log file name within the log directory. |
 | `server.logs.access.rotate` | `monthly` | Access log rotation policy. |
+| `server.logs.access.keep` | `none` | Number or age policy for rotated access logs. |
 | `server.logs.server.format` | `text` | Server log format: `text` or `json`. |
+| `server.logs.server.filename` | `server.log` | Application event log file name within the log directory. |
+| `server.logs.server.rotate` | inherited | Server log rotation policy; inherits `server.logs.defaults.rotate`. |
+| `server.logs.server.keep` | inherited | Server log retention policy; inherits `server.logs.defaults.keep`. |
 | `server.logs.error.format` | `text` | Error log format: `text` or `json`. |
+| `server.logs.error.filename` | `error.log` | Error log file name within the log directory. |
+| `server.logs.error.rotate` | inherited | Error log rotation policy; inherits `server.logs.defaults.rotate`. |
+| `server.logs.error.keep` | inherited | Error log retention policy; inherits `server.logs.defaults.keep`. |
 | `server.logs.audit.enabled` | `true` | Enable the append-only audit log. |
 | `server.logs.audit.format` | `json` | Audit log format; JSON is required. |
 | `server.logs.audit.rotate` | `daily` | Audit log rotation policy. |
 | `server.logs.audit.compress` | `false` | Compress retained audit logs. |
 | `server.logs.security.format` | `fail2ban` | Security log format: `fail2ban`, `syslog`, `cef`, `json`, or `text`. |
+| `server.logs.security.filename` | `security.log` | Security event log file name within the log directory. |
+| `server.logs.security.rotate` | inherited | Security log rotation policy; inherits `server.logs.defaults.rotate`. |
+| `server.logs.security.keep` | inherited | Security log retention policy; inherits `server.logs.defaults.keep`. |
 | `server.logs.debug.enabled` | `false` | Enable the troubleshooting debug log. |
 | `server.logs.debug.format` | `text` | Debug log format: `text` or `json`. |
+| `server.logs.debug.filename` | `debug.log` | Debug log file name within the log directory. |
+| `server.logs.debug.rotate` | inherited | Debug log rotation policy; inherits `server.logs.defaults.rotate`. |
+| `server.logs.debug.keep` | inherited | Debug log retention policy; inherits `server.logs.defaults.keep`. |
 | `server.rate_limit.read.requests` | `120` | Read requests per client in the configured window. |
 | `server.rate_limit.read.window` | `60` | Read-request window in seconds. |
 | `server.rate_limit.write.requests` | `10` | Non-read requests per client in the configured window. |
