@@ -62,6 +62,7 @@ The browser interface also includes `/`, `/search`, and `/coordinates`. Server p
 
 | Method | Path | Description |
 |---|---|---|
+| GET | `/api/v1` | API root discovery document, matching `/api/autodiscover`; `/api/v1/` redirects here. |
 | GET | `/api/v1/server/healthz` | Public-safe health status, version/build information, enabled features, component checks, and aggregate request statistics. |
 | GET | `/api/v1/server/auth/check` | Validate an operator or owner bearer token without changing token activity metadata; returns `kind` or 401. |
 | GET | `/api/v1/server/about` | Service information. |

@@ -150,6 +150,7 @@ Country-data and public information routes below require no authentication. Owne
 | GET, POST | `/api/{api_version}/server/graphql` | Public | Execute read-only GraphQL queries against the country dataset. |
 | POST | `/api/{api_version}/server/mcp` | Owner token | Handle MCP initialize, discovery and tool calls scoped to the owner token. |
 | GET | `/api/{api_version}/server/swagger` | Public | Return the OpenAPI document. |
+| GET | `/api/{api_version}` | Public | Return the API and CLI discovery envelope; the trailing-slash path redirects here. |
 | GET | `/` | Public | Render the country-service home page. |
 | GET | `/search` | Public | Render country search results and search form. |
 | GET | `/coordinates` | Public | Render the nearest-country lookup form and result. |
@@ -181,6 +182,6 @@ Country-data and public information routes below require no authentication. Owne
 | GET | `/server/tracking.js` | Public | Serve the consent-aware tracking bootstrap script. |
 | GET | `/api/healthz`, `/api/healthz.txt`, `/api/swagger` | Public | Stable unversioned health and OpenAPI discovery aliases. |
 | GET, POST | `/api/graphql` | Public | Execute read-only GraphQL queries through the stable unversioned alias; GET accepts `query`, optional `variables`, and `operationName`, and POST accepts a JSON request body. |
-| GET | `/api/autodiscover` | Public | List available CLI binaries. |
+| GET | `/api/autodiscover` | Public | Return server, API, overlay-address, and CLI version discovery data. |
 | GET | `/cli/binaries/{binary}` | Public | Download an allowlisted CLI binary. |
 | POST | `/mcp`, `/api/mcp` | Owner token | Handle MCP protocol requests using the compatibility endpoint aliases. |
