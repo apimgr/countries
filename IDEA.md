@@ -26,6 +26,7 @@ owner_token: countries_owner_token_gId2fHet
 - CLI client (`countries-cli`) for queries from the terminal
 - OpenAPI reference and interactive REST explorer
 - Read-only GraphQL API and interactive query explorer
+- Optional remote libSQL/Turso storage with a separate synchronized SQLite read cache for eligible reads during remote outages
 - Optional authenticated MCP access with anonymous owner-token management, plus guest preference and consent controls, public privacy requests, contact delivery, and encrypted security-report handling
 
 **Non-goals:**

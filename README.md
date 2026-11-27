@@ -16,6 +16,7 @@ Countries provides read-only information about 249 ISO 3166-1 country records th
 - Browse the mobile-friendly server-rendered interface; core pages and forms work without JavaScript.
 - Use the shared dark, light, or system-following theme across server pages, Swagger, and GraphiQL.
 - Use the companion CLI/TUI client or its optional GUI.
+- Configure remote libSQL/Turso storage with a separate SQLite read cache for eligible reads during remote outages.
 
 ## Production
 
