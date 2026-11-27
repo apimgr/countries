@@ -86,6 +86,7 @@ type Options struct {
 	DataDir            string
 	DatabasePath       string
 	DatabaseDriver     string
+	SecretsDB          *sql.DB
 	SourceDatabasePath string
 	BackupDir          string
 	AppVersion         string
@@ -125,6 +126,7 @@ type RestoreOptions struct {
 	DataDir             string
 	DatabasePath        string
 	RemoteDatabase      *sql.DB
+	SecretsDB           *sql.DB
 	TLSFileDestinations map[string]string
 	Limits              Limits
 }
@@ -311,6 +313,7 @@ func captureSnapshotFiles(ctx context.Context, options Options) (map[string]file
 		originalDatabasePath = filepath.Join(options.DataDir, "db", "server.db")
 	}
 	options.SourceDatabasePath = originalDatabasePath
+	var snapshotDatabase *sql.DB
 	if remoteDatabase {
 		log.Printf("INFO: remote database backup is handled by the provider (driver=%s)", options.DatabaseDriver)
 		options.DatabasePath = ""
@@ -328,6 +331,12 @@ func captureSnapshotFiles(ctx context.Context, options Options) (map[string]file
 		if err := snapshotSQLite(ctx, originalDatabasePath, databaseSnapshot); err != nil {
 			return nil, fmt.Errorf("snapshot main database: %w", err)
 		}
+		snapshotDatabase, err = database.Open(databaseSnapshot)
+		if err != nil {
+			return nil, fmt.Errorf("open main database snapshot: %w", err)
+		}
+		defer func() { _ = database.Close(snapshotDatabase) }()
+		options.SecretsDB = snapshotDatabase
 		options.DatabasePath = databaseSnapshot
 	}
 	inputs, err := backupInputs(options)
@@ -338,6 +347,11 @@ func captureSnapshotFiles(ctx context.Context, options Options) (map[string]file
 	if err != nil {
 		return nil, err
 	}
+	secrets, err := exportAppSecrets(ctx, options)
+	if err != nil {
+		return nil, fmt.Errorf("export application secrets: %w", err)
+	}
+	files["app_secrets.json"] = fileData{content: secrets, mtime: time.Now().Unix()}
 	if secretFile, exists := files["config/secrets.yml"]; exists {
 		secretFile.content, err = scrubOperatorToken(secretFile.content)
 		if err != nil {
@@ -346,6 +360,89 @@ func captureSnapshotFiles(ctx context.Context, options Options) (map[string]file
 		files["config/secrets.yml"] = secretFile
 	}
 	return files, nil
+}
+
+type appSecretRecord struct {
+	Name      string `json:"name"`
+	Value     string `json:"value"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+func decodeAppSecrets(data []byte) ([]appSecretRecord, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return nil, errors.New("application secrets must be a JSON array")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.DisallowUnknownFields()
+	var secrets []appSecretRecord
+	if err := decoder.Decode(&secrets); err != nil {
+		return nil, err
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("application secrets contain trailing JSON data")
+		}
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(secrets))
+	for _, item := range secrets {
+		if strings.TrimSpace(item.Name) == "" || item.UpdatedAt == "" {
+			return nil, errors.New("archived application secret has an empty name or timestamp")
+		}
+		if _, duplicate := seen[item.Name]; duplicate {
+			return nil, fmt.Errorf("archived application secret %q is duplicated", item.Name)
+		}
+		seen[item.Name] = struct{}{}
+		if _, err := time.Parse(time.RFC3339Nano, item.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("archived application secret %q has an invalid timestamp", item.Name)
+		}
+	}
+	return secrets, nil
+}
+
+func exportAppSecrets(ctx context.Context, options Options) ([]byte, error) {
+	remoteDatabase := strings.EqualFold(strings.TrimSpace(options.DatabaseDriver), "libsql") || strings.EqualFold(strings.TrimSpace(options.DatabaseDriver), "turso")
+	db := options.SecretsDB
+	closeDB := false
+	if db == nil {
+		if remoteDatabase {
+			return nil, errors.New("remote database backup requires an application secrets database connection")
+		}
+		path := options.DatabasePath
+		if path == "" {
+			path = filepath.Join(options.DataDir, "db", "server.db")
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(options.DataDir, path)
+		}
+		var err error
+		db, err = database.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		closeDB = true
+	}
+	if closeDB {
+		defer func() { _ = database.Close(db) }()
+	}
+	rows, err := db.QueryContext(ctx, `SELECT name, value, updated_at FROM app_secrets ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	secrets := make([]appSecretRecord, 0)
+	for rows.Next() {
+		var item appSecretRecord
+		if err := rows.Scan(&item.Name, &item.Value, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		secrets = append(secrets, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return json.Marshal(secrets)
 }
 
 func cloneFiles(files map[string]fileData) map[string]fileData {
@@ -574,6 +671,14 @@ func Restore(ctx context.Context, path, password string, options RestoreOptions)
 		}
 		entries = baseEntries
 	}
+	var appSecrets []appSecretRecord
+	_, hasAppSecrets := entries["app_secrets.json"]
+	if hasAppSecrets {
+		appSecrets, err = decodeAppSecrets(entries["app_secrets.json"])
+		if err != nil {
+			return Manifest{}, fmt.Errorf("decode archived application secrets: %w", err)
+		}
+	}
 	if len(entries)-1 > limits.MaxFiles {
 		return Manifest{}, errors.New("combined backup exceeds maximum file count")
 	}
@@ -621,14 +726,41 @@ func Restore(ctx context.Context, path, password string, options RestoreOptions)
 		}
 	}
 	var afterInstall func() error
-	if options.RemoteDatabase != nil {
+	if options.RemoteDatabase != nil || hasAppSecrets {
 		afterInstall = func() error {
-			databasePath := options.DatabasePath
-			if databasePath == "" {
-				databasePath = filepath.Join(options.DataDir, "db", "server.db")
+			if options.RemoteDatabase != nil {
+				databasePath := options.DatabasePath
+				if databasePath == "" {
+					databasePath = filepath.Join(options.DataDir, "db", "server.db")
+				}
+				if _, err := database.SeedRemoteIfEmpty(ctx, options.RemoteDatabase, databasePath); err != nil {
+					return fmt.Errorf("seed empty remote database from restored server.db: %w", err)
+				}
 			}
-			if _, err := database.SeedRemoteIfEmpty(ctx, options.RemoteDatabase, databasePath); err != nil {
-				return fmt.Errorf("seed empty remote database from restored server.db: %w", err)
+			if hasAppSecrets {
+				db := options.SecretsDB
+				closeDB := false
+				if db == nil {
+					db = options.RemoteDatabase
+				}
+				if db == nil {
+					databasePath := options.DatabasePath
+					if databasePath == "" {
+						databasePath = filepath.Join(options.DataDir, "db", "server.db")
+					}
+					var err error
+					db, err = sql.Open("sqlite", databasePath)
+					if err != nil {
+						return fmt.Errorf("open restored database for application secrets: %w", err)
+					}
+					closeDB = true
+				}
+				if closeDB {
+					defer func() { _ = db.Close() }()
+				}
+				if err := replaceAppSecrets(ctx, db, appSecrets); err != nil {
+					return err
+				}
 			}
 			return nil
 		}
@@ -637,6 +769,27 @@ func Restore(ctx context.Context, path, password string, options RestoreOptions)
 		return Manifest{}, err
 	}
 	return verified.Manifest, nil
+}
+
+func replaceAppSecrets(ctx context.Context, db *sql.DB, secrets []appSecretRecord) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin application secret restore: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM app_secrets`); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("restore application secrets: %w", err)
+	}
+	for _, item := range secrets {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO app_secrets(name,value,updated_at) VALUES(?,?,?)`, item.Name, item.Value, item.UpdatedAt); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("restore application secrets: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit application secret restore: %w", err)
+	}
+	return nil
 }
 
 func backupInputs(options Options) ([]inputRoot, error) {
@@ -1526,7 +1679,7 @@ func ensureNoSymlinkAncestors(path string) error {
 }
 
 func supportedArchiveRoot(name string) bool {
-	return strings.HasPrefix(name, "config/") || strings.HasPrefix(name, "data/") || strings.HasPrefix(name, "connection-tls/")
+	return name == "app_secrets.json" || strings.HasPrefix(name, "config/") || strings.HasPrefix(name, "data/") || strings.HasPrefix(name, "connection-tls/")
 }
 
 func writeAtomic(path string, content []byte) error {

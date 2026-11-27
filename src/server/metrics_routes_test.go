@@ -26,10 +26,10 @@ func TestMetricsRoutesRequireIndependentBearerTokens(t *testing.T) {
 	cfg.Auth.Tokens = config.MetricsAuthTokens{Prometheus: "prom-secret", Grafana: "graf-secret", Loki: "loki-secret"}
 	handler := metricsTestRouter(cfg)
 	for _, test := range []struct {
-		path  string
-		token string
+		path   string
+		token  string
 		method string
-		want  int
+		want   int
 	}{
 		{path: "/server/metrics", want: http.StatusUnauthorized},
 		{path: "/server/metrics", token: "graf-secret", want: http.StatusUnauthorized},

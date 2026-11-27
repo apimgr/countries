@@ -8,8 +8,8 @@ import (
 
 func TestSafePath(t *testing.T) {
 	tests := []struct {
-		input string
-		want  string
+		input   string
+		want    string
 		wantErr error
 	}{
 		{input: "/my//admin/", want: "my/admin"},

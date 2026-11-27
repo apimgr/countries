@@ -47,7 +47,7 @@ GO_DOCKER_RUN := timeout -k 30 $(DOCKER_TIMEOUT) docker run --rm --no-healthchec
 	-e BUILD_LDFLAGS="$(LDFLAGS)" -e CLIENT_LDFLAGS="$(CLIENT_LDFLAGS)"
 GO_DOCKER := $(GO_DOCKER_RUN) casjaysdev/go:latest
 
-.PHONY: dev local build test release-check release beta docker clean
+.PHONY: dev local build test test-docker test-e2e test-incus release-check release beta docker clean
 .DEFAULT_GOAL := dev
 
 # Build server and CLI for quick local development into a temporary directory.
@@ -106,6 +106,18 @@ test:
 	-v $(GO_CACHE):/usr/local/share/go/pkg/mod -v $(GO_BUILD):/usr/local/share/go/cache \
 	-w /app -e CGO_ENABLED=0 -e GOFLAGS=-buildvcs=false casjaysdev/go:latest \
 	sh -c 'go vet ./... && govulncheck ./... && go test -v -coverprofile=/coverage/coverage.out ./... && go tool cover -func=/coverage/coverage.out && coverage=$$(go tool cover -func=/coverage/coverage.out | awk "/^total:/ {print \$$3}") && awk -v coverage="$$coverage" "BEGIN { if (coverage+0 < 60) exit 1 }"'
+
+# Run the Docker-based server and CLI binary integration suite.
+test-docker:
+	@bash ./tests/run_tests.sh
+
+# Run the browser-based application flow in isolated Docker containers.
+test-e2e:
+	@bash ./tests/e2e.sh
+
+# Run service installation and lifecycle checks in Debian and Alpine Incus containers.
+test-incus:
+	@bash ./tests/incus.sh
 
 # Validate the stable semantic version required for a manual release.
 release-check:

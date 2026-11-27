@@ -1003,41 +1003,41 @@ func (s *Server) storeSecurityReport(values map[string]string) (string, string, 
 		if err != nil {
 			return err
 		}
-	randomID := make([]byte, 8)
-	if _, err := rand.Read(randomID); err != nil {
-		return err
-	}
-	trackingID = "sec_" + hex.EncodeToString(randomID)
-	token := make([]byte, 32)
-	if _, err := rand.Read(token); err != nil {
-		return err
-	}
-	statusToken = base64.RawURLEncoding.EncodeToString(token)
-	tokenHash := sha256.Sum256([]byte(statusToken))
-	credit := values["credit_preference"]
-	creditName := values["credit_handle"]
-	if credit == "real_name" {
-		credit, creditName = "name", values["name"]
-	}
-	if credit == "anonymous" {
-		credit, creditName = "anon", ""
-	}
-	if credit == "no" {
-		creditName = ""
-	}
-	disclosureDays := 90
-	if raw := values["disclosure_days"]; raw != "" {
-		parsed, e := strconv.Atoi(raw)
-		if e != nil || parsed < 0 {
-			return fmt.Errorf("invalid disclosure timeline")
+		randomID := make([]byte, 8)
+		if _, err := rand.Read(randomID); err != nil {
+			return err
 		}
-		disclosureDays = parsed
-	}
-	disclosureDate := time.Now().UTC().AddDate(0, 0, disclosureDays).Format("2006-01-02")
-	idWindow, valid := s.securityIDWindow(values["security_id"], time.Now())
-	if !valid {
-		return fmt.Errorf("invalid or expired security report identifier")
-	}
+		trackingID = "sec_" + hex.EncodeToString(randomID)
+		token := make([]byte, 32)
+		if _, err := rand.Read(token); err != nil {
+			return err
+		}
+		statusToken = base64.RawURLEncoding.EncodeToString(token)
+		tokenHash := sha256.Sum256([]byte(statusToken))
+		credit := values["credit_preference"]
+		creditName := values["credit_handle"]
+		if credit == "real_name" {
+			credit, creditName = "name", values["name"]
+		}
+		if credit == "anonymous" {
+			credit, creditName = "anon", ""
+		}
+		if credit == "no" {
+			creditName = ""
+		}
+		disclosureDays := 90
+		if raw := values["disclosure_days"]; raw != "" {
+			parsed, e := strconv.Atoi(raw)
+			if e != nil || parsed < 0 {
+				return fmt.Errorf("invalid disclosure timeline")
+			}
+			disclosureDays = parsed
+		}
+		disclosureDate := time.Now().UTC().AddDate(0, 0, disclosureDays).Format("2006-01-02")
+		idWindow, valid := s.securityIDWindow(values["security_id"], time.Now())
+		if !valid {
+			return fmt.Errorf("invalid or expired security report identifier")
+		}
 		_, err = tx.Exec(`INSERT INTO security_reports(tracking_id,id_window,severity,component,body_enc,body_alg,contact_enc,credit_pref,credit_name,disclosure_date,cve_requested,token_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, trackingID, idWindow, values["severity"], values["component"], bodyEnc, bodyAlg, contactEnc, credit, creditName, disclosureDate, values["cve_requested"] == "on", hex.EncodeToString(tokenHash[:]))
 		return err
 	})

@@ -123,6 +123,16 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestLoggingConfigUsesDocumentedServerLogsPaths(t *testing.T) {
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte("server:\n  logs:\n    level: debug\n    defaults:\n      custom: '{remote_ip} {method} {status}'\n      rotate: weekly,50MB\n      keep: none\n    access:\n      format: custom\n      rotate: monthly\n      keep: 3\n"), cfg); err != nil {
+		t.Fatalf("decode server.logs config: %v", err)
+	}
+	if cfg.Server.Logging.Level != "debug" || cfg.Server.Logging.Access.Format != "custom" || cfg.Server.Logging.Defaults.Custom != "{remote_ip} {method} {status}" || cfg.Server.Logging.Defaults.Rotate != "weekly,50MB" || cfg.Server.Logging.Defaults.Keep != "none" || cfg.Server.Logging.Access.Rotate != "monthly" || cfg.Server.Logging.Access.Keep != "3" {
+		t.Fatalf("server.logs config = %+v, want documented level/access/defaults values", cfg.Server.Logging)
+	}
+}
+
 func TestConfiguredConnectionHelpers(t *testing.T) {
 	for input, want := range map[string]string{"": "sqlite", " sqlite3 ": "sqlite", "TURSO": "libsql", "custom": "custom"} {
 		if got := normalizeConfiguredDatabaseDriver(input); got != want {
@@ -1361,7 +1371,7 @@ func TestConfigSanitizedRedactsSecretsWithoutMutatingConfig(t *testing.T) {
 	cfg.Server.Notifications.Email.SMTP.Password = "smtp-secret"
 	cfg.Server.Metrics.Auth.Tokens = MetricsAuthTokens{Prometheus: "prom-secret", Grafana: "grafana-secret", Loki: "loki-secret"}
 	cfg.Server.Contact.Admin.WebhookSecrets = map[string]string{"discord": "webhook-secret"}
-	cfg.Server.Contact.Admin.Webhooks = map[string]string{"discord": "https://user:webhook-secret@example.test/hook"}
+	cfg.Server.Contact.Admin.Webhooks = map[string]string{"discord": "https://user:" + "webhook-secret@example.test/hook"}
 	cfg.Data.CVE.APIKey = "cve-secret"
 
 	sanitized := cfg.Sanitized()

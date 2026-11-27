@@ -72,6 +72,59 @@ func DetectServiceManager() ServiceType {
 	}
 }
 
+// SystemServiceTarget reports whether a lifecycle command addresses an
+// installed system service rather than a per-user service.
+func SystemServiceTarget(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "--install":
+		switch runtime.GOOS {
+		case "linux":
+			return DetectServiceManager() != ServiceUnknown
+		case "darwin", "windows", "freebsd", "openbsd", "netbsd":
+			return true
+		default:
+			return false
+		}
+	case "start", "stop", "restart", "reload", "status", "--disable", "--uninstall":
+	default:
+		return false
+	}
+	exists := func(path string) bool {
+		info, err := os.Stat(path)
+		return err == nil && (info.Mode().IsRegular() || info.IsDir())
+	}
+	paths := []string{}
+	switch runtime.GOOS {
+	case "linux":
+		paths = []string{
+			"/etc/systemd/system/" + appName + ".service",
+			"/usr/lib/systemd/system/" + appName + ".service",
+			"/lib/systemd/system/" + appName + ".service",
+			"/etc/init.d/" + appName,
+			"/etc/service/" + appName,
+			"/etc/s6/sv/" + appName,
+		}
+	case "darwin":
+		paths = []string{"/Library/LaunchDaemons/" + plistName() + ".plist"}
+	case "windows":
+		return exec.Command("sc.exe", "query", appName).Run() == nil
+	case "freebsd", "openbsd", "netbsd":
+		paths = []string{"/usr/local/etc/rc.d/" + appName}
+	}
+	for _, path := range paths {
+		if exists(path) {
+			return true
+		}
+	}
+	return false
+}
+
+// CanElevate reports whether a native administrator prompt can be attempted.
+func CanElevate() bool { return canElevate() }
+
+// Elevate reruns the original argument vector with administrator privileges.
+func Elevate(args []string) error { return elevate(args) }
+
 func detectLinuxServiceManager(stat func(string) (os.FileInfo, error), lookPath func(string) (string, error), readFile func(string) ([]byte, error)) ServiceType {
 	if _, err := stat("/run/systemd/system"); err == nil {
 		return ServiceSystemd
@@ -160,11 +213,14 @@ func Install() error {
 		switch runtime.GOOS {
 		case "linux":
 			if serviceType != ServiceSystemd {
-				return errors.New("unprivileged service installation requires a systemd user manager")
+				printUserServiceUnavailable()
+				return nil
 			}
 			return installUserSystemd()
 		case "darwin":
 			return installUserLaunchAgent()
+		case "windows":
+			return installUserWindowsTask()
 		default:
 			return errors.New("unprivileged service installation is unsupported on this platform")
 		}
@@ -193,7 +249,50 @@ func Install() error {
 }
 
 func isUserServiceMode() bool {
-	return !privilege.IsElevated() && (runtime.GOOS == "linux" || runtime.GOOS == "darwin")
+	return !privilege.IsElevated() && (runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows")
+}
+
+func userServiceUnavailable() bool {
+	if privilege.IsElevated() {
+		return false
+	}
+	switch runtime.GOOS {
+	case "linux":
+		return detectServiceManager() != ServiceSystemd
+	case "freebsd", "openbsd", "netbsd":
+		return true
+	default:
+		return false
+	}
+}
+
+func printUserServiceUnavailable() {
+	fmt.Printf("No per-user service manager is available on this platform. Start the server with '%s --daemon' or ask an administrator to install the system service.\n", appName)
+}
+
+func installUserWindowsTask() error {
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executable for user task: %w", err)
+	}
+	configDir := paths.GetConfigDir(appName)
+	command := windowsServiceBinaryPath(executable) + " --config " + windowsServiceBinaryPath(configDir)
+	if err := exec.Command("schtasks.exe", "/Create", "/SC", "ONLOGON", "/TN", appName, "/TR", command, "/F").Run(); err != nil {
+		return fmt.Errorf("create Windows logon task: %w", err)
+	}
+	fmt.Printf("Windows logon task '%s' installed for the current user.\n", appName)
+	return nil
+}
+
+func uninstallUserWindowsTask() error {
+	if err := exec.Command("schtasks.exe", "/Delete", "/TN", appName, "/F").Run(); err != nil {
+		return fmt.Errorf("remove Windows logon task: %w", err)
+	}
+	return nil
+}
+
+func runUserWindowsTask(action string) error {
+	return exec.Command("schtasks.exe", action, "/TN", appName).Run()
 }
 
 func installUserSystemd() error {
@@ -399,6 +498,10 @@ func PIDDirectory() string {
 
 // UninstallWithPaths uninstalls the service and removes the resolved runtime directories.
 func UninstallWithPaths(dirs UninstallPaths) error {
+	if userServiceUnavailable() {
+		printUserServiceUnavailable()
+		return nil
+	}
 	if err := confirmUninstall(os.Stdin, os.Stdout); err != nil {
 		return err
 	}
@@ -410,6 +513,8 @@ func UninstallWithPaths(dirs UninstallPaths) error {
 			err = uninstallUserSystemd()
 		case "darwin":
 			err = uninstallUserLaunchAgent()
+		case "windows":
+			err = uninstallUserWindowsTask()
 		}
 		if err != nil {
 			return err
@@ -1195,8 +1300,15 @@ func copyExecutableToInstallPath(destination string) error {
 
 // Start starts the service
 func Start() error {
+	if userServiceUnavailable() {
+		printUserServiceUnavailable()
+		return nil
+	}
 	serviceType := detectServiceManager()
 	if isUserServiceMode() {
+		if runtime.GOOS == "windows" {
+			return runUserWindowsTask("/Run")
+		}
 		if runtime.GOOS == "linux" {
 			return exec.Command("systemctl", "--user", "start", appName+".service").Run()
 		}
@@ -1232,8 +1344,15 @@ func Start() error {
 
 // Stop stops the service
 func Stop() error {
+	if userServiceUnavailable() {
+		printUserServiceUnavailable()
+		return nil
+	}
 	serviceType := detectServiceManager()
 	if isUserServiceMode() {
+		if runtime.GOOS == "windows" {
+			return runUserWindowsTask("/End")
+		}
 		if runtime.GOOS == "linux" {
 			return exec.Command("systemctl", "--user", "stop", appName+".service").Run()
 		}
@@ -1269,8 +1388,16 @@ func Stop() error {
 
 // Restart restarts the service
 func Restart() error {
+	if userServiceUnavailable() {
+		printUserServiceUnavailable()
+		return nil
+	}
 	serviceType := detectServiceManager()
 	if isUserServiceMode() {
+		if runtime.GOOS == "windows" {
+			_ = runUserWindowsTask("/End")
+			return runUserWindowsTask("/Run")
+		}
 		if runtime.GOOS == "linux" {
 			return exec.Command("systemctl", "--user", "restart", appName+".service").Run()
 		}
@@ -1311,8 +1438,15 @@ func Restart() error {
 
 // Reload sends reload signal to the service
 func Reload() error {
+	if userServiceUnavailable() {
+		printUserServiceUnavailable()
+		return nil
+	}
 	serviceType := detectServiceManager()
 	if isUserServiceMode() {
+		if runtime.GOOS == "windows" {
+			return Restart()
+		}
 		return Restart()
 	}
 
@@ -1331,7 +1465,14 @@ func Reload() error {
 
 // Status reports service state through the detected platform manager.
 func Status() error {
+	if userServiceUnavailable() {
+		printUserServiceUnavailable()
+		return nil
+	}
 	if isUserServiceMode() {
+		if runtime.GOOS == "windows" {
+			return runServiceCommand("schtasks.exe", "/Query", "/TN", appName, "/FO", "LIST", "/V")
+		}
 		if runtime.GOOS == "linux" {
 			return runServiceCommand("systemctl", "--user", "status", appName+".service")
 		}
@@ -1363,9 +1504,26 @@ func Status() error {
 	}
 }
 
+// WindowsServiceStatus checks the system service first and the current user's
+// logon task when no SCM service is installed.
+func WindowsServiceStatus() error {
+	if err := runServiceCommand("sc.exe", "query", appName); err == nil {
+		return nil
+	}
+	return runServiceCommand("schtasks.exe", "/Query", "/TN", appName, "/FO", "LIST", "/V")
+}
+
 // Disable prevents the service manager from starting the application automatically.
 func Disable() error {
+	if userServiceUnavailable() {
+		printUserServiceUnavailable()
+		return nil
+	}
 	if isUserServiceMode() {
+		if runtime.GOOS == "windows" {
+			_ = runUserWindowsTask("/End")
+			return exec.Command("schtasks.exe", "/Change", "/TN", appName, "/DISABLE").Run()
+		}
 		if runtime.GOOS == "linux" {
 			return runServiceCommand("systemctl", "--user", "disable", "--now", appName+".service")
 		}

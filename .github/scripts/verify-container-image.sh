@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 image=${1:?usage: verify-container-image.sh IMAGE}
-container="countries-image-check-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)"
+container="countries-image-check-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
 health=''
 healthy=false
 

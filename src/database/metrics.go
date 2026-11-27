@@ -21,17 +21,25 @@ type MetricsObserver interface {
 	ObserveDB(operation, table string, duration time.Duration, errorType string)
 }
 
-type databaseBusyMetrics interface { RecordDatabaseBusyRetry() }
-type databaseWriteWaitMetrics interface { ObserveDatabaseWriteWait(time.Duration) }
+type databaseBusyMetrics interface{ RecordDatabaseBusyRetry() }
+type databaseWriteWaitMetrics interface{ ObserveDatabaseWriteWait(time.Duration) }
 
 func recordBusyRetry() {
-	observerState.RLock(); observer := observerState.observer; observerState.RUnlock()
-	if metrics, ok := observer.(databaseBusyMetrics); ok { metrics.RecordDatabaseBusyRetry() }
+	observerState.RLock()
+	observer := observerState.observer
+	observerState.RUnlock()
+	if metrics, ok := observer.(databaseBusyMetrics); ok {
+		metrics.RecordDatabaseBusyRetry()
+	}
 }
 
 func recordWriteWait(duration time.Duration) {
-	observerState.RLock(); observer := observerState.observer; observerState.RUnlock()
-	if metrics, ok := observer.(databaseWriteWaitMetrics); ok { metrics.ObserveDatabaseWriteWait(duration) }
+	observerState.RLock()
+	observer := observerState.observer
+	observerState.RUnlock()
+	if metrics, ok := observer.(databaseWriteWaitMetrics); ok {
+		metrics.ObserveDatabaseWriteWait(duration)
+	}
 }
 
 var observerState struct {
@@ -92,8 +100,8 @@ func (c instrumentedConnector) Driver() driver.Driver {
 
 type instrumentedConn struct {
 	driver.Conn
-	rewrite bool
-	replica *ReadReplica
+	rewrite  bool
+	replica  *ReadReplica
 	txActive *atomic.Bool
 }
 
@@ -135,7 +143,9 @@ func (c instrumentedConn) QueryContext(ctx context.Context, query string, args [
 			values := namedValues(args)
 			rows, err := c.replica.query(ctx, query, values, table, func() (driverRows, error) {
 				connection, ok := c.Conn.(driver.QueryerContext)
-				if !ok { return nil, driver.ErrSkip }
+				if !ok {
+					return nil, driver.ErrSkip
+				}
 				return connection.QueryContext(ctx, c.rewriteQuery(query), args)
 			})
 			if err == nil {
@@ -170,20 +180,44 @@ func (c instrumentedConn) rewriteQuery(query string) string {
 func (c instrumentedConn) BeginTx(ctx context.Context, options driver.TxOptions) (driver.Tx, error) {
 	if connection, ok := c.Conn.(driver.ConnBeginTx); ok {
 		tx, err := connection.BeginTx(ctx, options)
-		if err != nil { return nil, err }
-		if c.txActive != nil { c.txActive.Store(true) }
+		if err != nil {
+			return nil, err
+		}
+		if c.txActive != nil {
+			c.txActive.Store(true)
+		}
 		return instrumentedTx{Tx: tx, active: c.txActive}, nil
 	}
 	//lint:ignore SA1019 Legacy-driver fallback; the driver lacks ConnBeginTx.
 	tx, err := c.Conn.Begin() //nolint:staticcheck
-	if err != nil { return nil, err }
-	if c.txActive != nil { c.txActive.Store(true) }
+	if err != nil {
+		return nil, err
+	}
+	if c.txActive != nil {
+		c.txActive.Store(true)
+	}
 	return instrumentedTx{Tx: tx, active: c.txActive}, nil
 }
 
-type instrumentedTx struct { driver.Tx; active *atomic.Bool }
-func (tx instrumentedTx) Commit() error { err := tx.Tx.Commit(); if tx.active != nil { tx.active.Store(false) }; return err }
-func (tx instrumentedTx) Rollback() error { err := tx.Tx.Rollback(); if tx.active != nil { tx.active.Store(false) }; return err }
+type instrumentedTx struct {
+	driver.Tx
+	active *atomic.Bool
+}
+
+func (tx instrumentedTx) Commit() error {
+	err := tx.Tx.Commit()
+	if tx.active != nil {
+		tx.active.Store(false)
+	}
+	return err
+}
+func (tx instrumentedTx) Rollback() error {
+	err := tx.Tx.Rollback()
+	if tx.active != nil {
+		tx.active.Store(false)
+	}
+	return err
+}
 
 type instrumentedStmt struct {
 	driver.Stmt

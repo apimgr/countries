@@ -175,11 +175,11 @@ func TestMetricsAPIRoutesPreserveProtocolSuccessBodies(t *testing.T) {
 
 func TestAPIContentNegotiationSetsSafeCacheHeaders(t *testing.T) {
 	for _, test := range []struct {
-		name       string
-		method     string
-		path       string
-		status     int
-		cache      string
+		name   string
+		method string
+		path   string
+		status int
+		cache  string
 	}{
 		{name: "public country data", method: http.MethodGet, path: api.APIPath("countries/US"), status: http.StatusOK, cache: "public, max-age=60"},
 		{name: "private server page", method: http.MethodGet, path: api.APIPath("server/healthz"), status: http.StatusOK, cache: "private, no-store"},

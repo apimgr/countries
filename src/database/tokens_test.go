@@ -33,6 +33,9 @@ func TestOwnerTokenLifecycleAndMetadataIsolation(t *testing.T) {
 	if primary.Kind != "primary" || primary.OwnerID == "" || primary.Last4 != rawPrimary[len(rawPrimary)-4:] {
 		t.Fatalf("created primary metadata = %+v", primary)
 	}
+	if !ValidTokenID(primary.ID) {
+		t.Fatalf("created primary public id = %q, want UUIDv7", primary.ID)
+	}
 	identity, err := LookupOwnerToken(ctx, db, rawPrimary, now)
 	if err != nil || identity.OwnerID != primary.OwnerID || identity.Kind != "primary" || !identity.Active || identity.ExpiresAt != nil {
 		t.Fatalf("LookupOwnerToken() = (%+v, %v)", identity, err)
@@ -48,9 +51,19 @@ func TestOwnerTokenLifecycleAndMetadataIsolation(t *testing.T) {
 	if listed[0].Last4 != primary.Last4 || listed[0].Prefix != rawPrimary[:12] {
 		t.Fatalf("listed token metadata = %+v", listed[0])
 	}
+	if listed[0].ID != primary.ID {
+		t.Fatalf("listed token id = %q, want opaque public id %q", listed[0].ID, primary.ID)
+	}
 	metadataJSON, err := json.Marshal(listed)
 	if err != nil || strings.Contains(string(metadataJSON), rawPrimary) {
 		t.Fatalf("listed metadata exposed raw token value: %s (%v)", metadataJSON, err)
+	}
+	var publicRecords []map[string]any
+	if err := json.Unmarshal(metadataJSON, &publicRecords); err != nil {
+		t.Fatalf("decode public token metadata: %v", err)
+	}
+	if got, ok := publicRecords[0]["id"].(string); !ok || got != primary.ID {
+		t.Fatalf("serialized token id = %#v, want public string %q", publicRecords[0]["id"], primary.ID)
 	}
 	revealed, _, err := RevealOwnerToken(ctx, db, primary.OwnerID, primary.ID, key)
 	if err != nil || revealed != rawPrimary {
@@ -104,8 +117,38 @@ func TestOwnerTokenLifecycleAndMetadataIsolation(t *testing.T) {
 		t.Fatalf("revoked linked token remains valid: %v", err)
 	}
 	listed, err = ListOwnerTokens(ctx, db, primary.OwnerID)
-	if err != nil || len(listed) != 3 || listed[1].Name != "release bot" || listed[1].RevokedAt == nil || listed[2].ID != second.ID {
+	var updatedLinked, secondLinked bool
+	for _, item := range listed {
+		if item.ID == linked.ID {
+			updatedLinked = item.Name == "release bot" && item.RevokedAt != nil
+		}
+		if item.ID == second.ID && item.Name == "another" {
+			secondLinked = true
+		}
+	}
+	if err != nil || len(listed) != 3 || listed[0].Kind != "primary" || !updatedLinked || !secondLinked {
 		t.Fatalf("linked token metadata after update/revoke = (%+v, %v)", listed, err)
+	}
+}
+
+func TestValidTokenIDRequiresUUIDv7(t *testing.T) {
+	for _, value := range []string{
+		"019b3e57-4f80-7000-8000-000000000001",
+		"019B3E57-4F80-7000-8000-000000000001",
+	} {
+		if !ValidTokenID(value) {
+			t.Errorf("ValidTokenID(%q) = false, want true", value)
+		}
+	}
+	for _, value := range []string{
+		"1",
+		"019b3e57-4f80-4000-8000-000000000001",
+		"019b3e57-4f80-7000-7000-000000000001",
+		"019b3e574f8070008000000000000001",
+	} {
+		if ValidTokenID(value) {
+			t.Errorf("ValidTokenID(%q) = true, want false", value)
+		}
 	}
 }
 

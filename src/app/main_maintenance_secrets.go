@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -53,6 +53,7 @@ func handleSecretMaintenance(args []string, configDir, dataDir, logsDir, configP
 		return fmt.Errorf("open server database: %w", err)
 	}
 	defer func() { _ = database.Close(db) }()
+	auditMirrorDB = db
 	ctx := context.Background()
 	if err := database.EnsureGeneratedSecrets(ctx, db); err != nil {
 		return fmt.Errorf("initialize generated secrets: %w", err)
@@ -503,16 +504,21 @@ func reencryptDatabaseValues(ctx context.Context, db *sql.DB, previous, current 
 }
 
 func reencryptTokenValues(ctx context.Context, db *sql.DB, previous, current []byte, logsDir string, now time.Time) error {
-	var lastID int64
+	publicIDColumn, err := database.PublicTokenIDColumn(ctx, db)
+	if err != nil {
+		return fmt.Errorf("inspect public API token identifier: %w", err)
+	}
+	var lastPublicID string
 	for {
-		rows, err := db.QueryContext(ctx, `SELECT id, token_enc FROM api_tokens WHERE id > ? ORDER BY id LIMIT 100`, lastID)
+		query := fmt.Sprintf(`SELECT %s, token_enc FROM api_tokens WHERE %s > ? ORDER BY %s LIMIT 100`, publicIDColumn, publicIDColumn, publicIDColumn)
+		rows, err := db.QueryContext(ctx, query, lastPublicID)
 		if err != nil {
 			return fmt.Errorf("read encrypted API tokens: %w", err)
 		}
 		items := make([]tokenCipherRow, 0, 100)
 		for rows.Next() {
 			var item tokenCipherRow
-			if err := rows.Scan(&item.id, &item.value); err != nil {
+			if err := rows.Scan(&item.publicID, &item.value); err != nil {
 				_ = rows.Close()
 				return fmt.Errorf("read encrypted API token metadata: %w", err)
 			}
@@ -526,28 +532,29 @@ func reencryptTokenValues(ctx context.Context, db *sql.DB, previous, current []b
 			return nil
 		}
 		for _, item := range items {
-			lastID = item.id
+			lastPublicID = item.publicID
 			encoded, err := base64.StdEncoding.DecodeString(item.value)
 			if err != nil {
-				return secretDecryptFailure(logsDir, "api_tokens", fmt.Sprint(item.id), err, now)
+				return secretDecryptFailure(logsDir, "api_tokens", item.publicID, err, now)
 			}
 			replacement, changed, err := reencryptCiphertext(encoded, previous, current)
 			if err != nil {
-				return secretDecryptFailure(logsDir, "api_tokens", fmt.Sprint(item.id), err, now)
+				return secretDecryptFailure(logsDir, "api_tokens", item.publicID, err, now)
 			}
 			if !changed {
 				continue
 			}
-			if err := updateEncryptedRow(ctx, db, `UPDATE api_tokens SET token_enc = ? WHERE id = ? AND token_enc = ?`, base64.StdEncoding.EncodeToString(replacement), item.id, item.value); err != nil {
-				return fmt.Errorf("reencrypt api_tokens row %d: %w", item.id, err)
+			updateQuery := fmt.Sprintf(`UPDATE api_tokens SET token_enc = ? WHERE %s = ? AND token_enc = ?`, publicIDColumn)
+			if err := updateEncryptedRow(ctx, db, updateQuery, base64.StdEncoding.EncodeToString(replacement), item.publicID, item.value); err != nil {
+				return fmt.Errorf("reencrypt API token %s: %w", item.publicID, err)
 			}
 		}
 	}
 }
 
 type tokenCipherRow struct {
-	id    int64
-	value string
+	publicID string
+	value    string
 }
 
 type reportCipherRow struct {
@@ -814,7 +821,7 @@ func writeSecretRotationAudit(logsDir, eventName, reason string, now time.Time) 
 			ip = parsed.String()
 		}
 	}
-	return auditlog.Write(logsDir, auditlog.Event{
+	return auditlog.WriteAndMirror(logsDir, auditMirrorDB, auditlog.Event{
 		Event: eventName, Category: "security", Severity: "high",
 		Actor:   auditlog.Actor{Type: "operator", ID: "cli", IP: &ip},
 		Details: map[string]any{"reason": reason}, Result: "success", Source: "cli",
@@ -823,7 +830,7 @@ func writeSecretRotationAudit(logsDir, eventName, reason string, now time.Time) 
 
 func secretDecryptFailure(logsDir, table, rowID string, cause error, now time.Time) error {
 	if logsDir != "" {
-		_ = auditlog.Write(logsDir, auditlog.Event{
+		_ = auditlog.WriteAndMirror(logsDir, auditMirrorDB, auditlog.Event{
 			Event: "security.decrypt_failed", Category: "security", Severity: "high",
 			Actor:   auditlog.Actor{Type: "system"},
 			Details: map[string]any{"table": table, "row_id": rowID}, Result: "failure", Source: "secret-rotation",

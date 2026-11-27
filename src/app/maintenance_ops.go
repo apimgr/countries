@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bufio"
@@ -101,6 +101,7 @@ func openMaintenanceDatabase(ctx context.Context, cfg *config.Config, dataDir st
 	if err != nil {
 		return nil, err
 	}
+	auditMirrorDB = db
 	return db, nil
 }
 
@@ -163,9 +164,13 @@ func maintenanceTokenCommand(ctx context.Context, db *sql.DB, args []string, log
 	if err != nil {
 		return err
 	}
-	var ownerID, kind string
-	var tokenID int64
-	if err := db.QueryRowContext(ctx, `SELECT id, owner_id, kind FROM api_tokens WHERE token_prefix = ? AND revoked_at IS NULL`, prefix).Scan(&tokenID, &ownerID, &kind); err != nil {
+	publicIDColumn, err := database.PublicTokenIDColumn(ctx, db)
+	if err != nil {
+		return fmt.Errorf("inspect public API token identifier: %w", err)
+	}
+	var ownerID, kind, tokenID string
+	query := fmt.Sprintf(`SELECT %s, owner_id, kind FROM api_tokens WHERE token_prefix = ? AND revoked_at IS NULL`, publicIDColumn)
+	if err := db.QueryRowContext(ctx, query, prefix).Scan(&tokenID, &ownerID, &kind); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New("token prefix not found")
 		}
@@ -188,7 +193,7 @@ func maintenanceTokenCommand(ctx context.Context, db *sql.DB, args []string, log
 		if err != nil {
 			return err
 		}
-		if err := writeMaintenanceAudit(logsDir, "token.revoked", "security", "high", map[string]any{"scope": "owner", "tokens": deleted.tokens, "resources": deleted.resources, "source": "cli"}, ownerID); err != nil {
+		if err := writeMaintenanceAudit(logsDir, "token.revoked", "security", "high", map[string]any{"scope": "owner", "revoked_count": deleted.tokens, "resources": deleted.resources, "source": "cli"}, ownerID); err != nil {
 			return err
 		}
 		fmt.Printf("Owner revoked; deleted %d tokens and %d resources.\n", deleted.tokens, deleted.resources)
@@ -200,8 +205,9 @@ func maintenanceTokenCommand(ctx context.Context, db *sql.DB, args []string, log
 	}
 	var result sql.Result
 	err = database.Write(ctx, db, func(tx *sql.Tx) error {
+		query := fmt.Sprintf(`UPDATE api_tokens SET revoked_at = ?, revoked_reason = 'operator' WHERE %s = ? AND revoked_at IS NULL`, publicIDColumn)
 		var err error
-		result, err = tx.ExecContext(ctx, `UPDATE api_tokens SET revoked_at = ?, revoked_reason = 'operator' WHERE id = ? AND revoked_at IS NULL`, time.Now().UTC().Unix(), tokenID)
+		result, err = tx.ExecContext(ctx, query, time.Now().UTC().Unix(), tokenID)
 		return err
 	})
 	if err != nil {
@@ -413,49 +419,49 @@ func updateSecurityReport(ctx context.Context, db *sql.DB, cfg *config.Config, a
 	now := time.Now().UTC()
 	var oldStatus, oldSeverity, creditPref, creditName, component string
 	err := database.Write(ctx, db, func(tx *sql.Tx) error {
-	if err := tx.QueryRowContext(ctx, `SELECT status,severity,credit_pref,COALESCE(credit_name,''),component FROM security_reports WHERE tracking_id = ?`, id).Scan(&oldStatus, &oldSeverity, &creditPref, &creditName, &component); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return errors.New("security report not found")
-		}
-		return fmt.Errorf("read security report for update: %w", err)
-	}
-	if nextStatus != "" && (!validSecurityStatus(nextStatus) || !statusMayAdvance(oldStatus, nextStatus)) {
-		return errors.New("security report status may only move forward or to wont_fix")
-	}
-	if nextStatus == "" {
-		nextStatus = oldStatus
-	}
-	if severity == "" {
-		severity = oldSeverity
-	}
-	if comment == "" {
-		comment = ""
-	}
-	var disclosureValue any
-	if disclosure != "" {
-		disclosureValue = disclosure
-	}
-	var closedValue any
-	if nextStatus == "disclosed" || nextStatus == "wont_fix" {
-		closedValue = now.Format(time.RFC3339Nano)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE security_reports SET status=?,severity=?,researcher_comment=CASE WHEN ? = '' THEN researcher_comment ELSE ? END,disclosure_date=CASE WHEN ? IS NULL THEN disclosure_date ELSE ? END,closed_at=CASE WHEN closed_at IS NULL AND ? IS NOT NULL THEN ? ELSE closed_at END,updated_at=? WHERE tracking_id=?`, nextStatus, severity, comment, comment, disclosureValue, disclosureValue, closedValue, closedValue, now.Format(time.RFC3339Nano), id); err != nil {
-		return fmt.Errorf("update security report: %w", err)
-	}
-	if nextStatus == "disclosed" && oldStatus != "disclosed" && creditPref != "no" {
-		credit := creditName
-		if creditPref == "anon" {
-			var count int
-			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_thanks WHERE credit LIKE 'Anonymous Researcher #%'`).Scan(&count); err != nil {
-				return err
+		if err := tx.QueryRowContext(ctx, `SELECT status,severity,credit_pref,COALESCE(credit_name,''),component FROM security_reports WHERE tracking_id = ?`, id).Scan(&oldStatus, &oldSeverity, &creditPref, &creditName, &component); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return errors.New("security report not found")
 			}
-			credit = fmt.Sprintf("Anonymous Researcher #%d", count+1)
+			return fmt.Errorf("read security report for update: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO security_thanks(tracking_id,credit,severity,disclosed_on) VALUES(?,?,?,?) ON CONFLICT(tracking_id) DO NOTHING`, id, credit, severity, now.Format(time.DateOnly)); err != nil {
-			return fmt.Errorf("record security researcher acknowledgment: %w", err)
+		if nextStatus != "" && (!validSecurityStatus(nextStatus) || !statusMayAdvance(oldStatus, nextStatus)) {
+			return errors.New("security report status may only move forward or to wont_fix")
 		}
-	}
-	return nil
+		if nextStatus == "" {
+			nextStatus = oldStatus
+		}
+		if severity == "" {
+			severity = oldSeverity
+		}
+		if comment == "" {
+			comment = ""
+		}
+		var disclosureValue any
+		if disclosure != "" {
+			disclosureValue = disclosure
+		}
+		var closedValue any
+		if nextStatus == "disclosed" || nextStatus == "wont_fix" {
+			closedValue = now.Format(time.RFC3339Nano)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE security_reports SET status=?,severity=?,researcher_comment=CASE WHEN ? = '' THEN researcher_comment ELSE ? END,disclosure_date=CASE WHEN ? IS NULL THEN disclosure_date ELSE ? END,closed_at=CASE WHEN closed_at IS NULL AND ? IS NOT NULL THEN ? ELSE closed_at END,updated_at=? WHERE tracking_id=?`, nextStatus, severity, comment, comment, disclosureValue, disclosureValue, closedValue, closedValue, now.Format(time.RFC3339Nano), id); err != nil {
+			return fmt.Errorf("update security report: %w", err)
+		}
+		if nextStatus == "disclosed" && oldStatus != "disclosed" && creditPref != "no" {
+			credit := creditName
+			if creditPref == "anon" {
+				var count int
+				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_thanks WHERE credit LIKE 'Anonymous Researcher #%'`).Scan(&count); err != nil {
+					return err
+				}
+				credit = fmt.Sprintf("Anonymous Researcher #%d", count+1)
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO security_thanks(tracking_id,credit,severity,disclosed_on) VALUES(?,?,?,?) ON CONFLICT(tracking_id) DO NOTHING`, id, credit, severity, now.Format(time.DateOnly)); err != nil {
+				return fmt.Errorf("record security researcher acknowledgment: %w", err)
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return err
@@ -973,7 +979,7 @@ func writeMaintenanceAudit(logsDir, event, category, severity string, details ma
 	if targetID != "" {
 		target = &auditlog.Target{Type: "owner", ID: targetID}
 	}
-	return auditlog.Write(logsDir, auditlog.Event{
+	return auditlog.WriteAndMirror(logsDir, auditMirrorDB, auditlog.Event{
 		Event: event, Category: category, Severity: severity,
 		Actor: auditlog.Actor{Type: "system", ID: "cli"}, Target: target,
 		Details: details, Result: "success", Source: "cli",

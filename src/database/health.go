@@ -205,13 +205,19 @@ func (s *HealthStore) FlushStats(ctx context.Context) error {
 		return nil
 	}
 	err := Write(ctx, s.db, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE health_request_stats SET requests_total = requests_total + ? WHERE id = 1`, total); err != nil { return err }
+		if _, err := tx.ExecContext(ctx, `UPDATE health_request_stats SET requests_total = requests_total + ? WHERE id = 1`, total); err != nil {
+			return err
+		}
 		for hour, count := range hours {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO health_request_hours (hour, requests) VALUES (?, ?) ON CONFLICT(hour) DO UPDATE SET requests = requests + excluded.requests`, hour, count); err != nil { return err }
+			if _, err := tx.ExecContext(ctx, `INSERT INTO health_request_hours (hour, requests) VALUES (?, ?) ON CONFLICT(hour) DO UPDATE SET requests = requests + excluded.requests`, hour, count); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	s.pendingTotal -= total
 	for hour, count := range hours {

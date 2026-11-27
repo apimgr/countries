@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -109,18 +108,12 @@ func TestPrintVersionUsesExecutableNameAndBuildMetadata(t *testing.T) {
 func TestRunServerAndGracefulShutdown(t *testing.T) {
 	t.Setenv("SMTP_HOST", "127.0.0.1")
 	t.Setenv("SMTP_PORT", "1")
-	port := ""
-	for candidate := 64000; candidate <= 64999; candidate++ {
-		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(candidate)))
-		if err == nil {
-			port = strconv.Itoa(candidate)
-			_ = listener.Close()
-			break
-		}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("bind ephemeral test listener: %v", err)
 	}
-	if port == "" {
-		t.Fatal("no available port in AI.md's default range")
-	}
+	t.Cleanup(func() { _ = listener.Close() })
+	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
 	root := testutil.TempDir(t)
 	configDir, dataDir, cacheDir, logsDir, backupDir := filepath.Join(root, "config"), filepath.Join(root, "data"), filepath.Join(root, "cache"), filepath.Join(root, "logs"), filepath.Join(root, "backup")
 	t.Setenv("DATABASE_DIR", filepath.Join(dataDir, "db"))
@@ -157,15 +150,13 @@ func TestRunServerAndGracefulShutdown(t *testing.T) {
 		ensureServiceAccount = oldEnsureAccount
 		dropServicePrivileges = oldDropPrivileges
 	})
-	result := make(chan int, 1)
-	guardSignals := make(chan os.Signal, 4)
-	signal.Notify(guardSignals, os.Interrupt)
-	t.Cleanup(func() { signal.Stop(guardSignals) })
-	go func() { result <- run() }()
-	process, err := os.FindProcess(os.Getpid())
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	appConfig := *config.DefaultConfig()
+	appConfig.Version, appConfig.CommitID, appConfig.BuildEpoch = Version, CommitID, BuildEpoch
+	appConfig.Listener = listener
+	go func() { result <- Run(ctx, appConfig) }()
 	client := &http.Client{Timeout: time.Second}
 	endpoint := "http://127.0.0.1:" + port + "/server/about"
 	deadline := time.Now().Add(30 * time.Second)
@@ -180,25 +171,12 @@ func TestRunServerAndGracefulShutdown(t *testing.T) {
 			}
 		}
 		select {
-		case code := <-result:
-			t.Fatalf("run() exited before serving, code=%d", code)
+		case err := <-result:
+			t.Fatalf("app.Run exited before serving: %v", err)
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
 	if !ready {
-		// run() installs its shutdown handler only after initialization. Retry
-		// the signal until that handler is ready; guardSignals prevents an
-		// early signal from terminating the go test process itself.
-		shutdownDeadline := time.Now().Add(15 * time.Second)
-		for time.Now().Before(shutdownDeadline) {
-			_ = process.Signal(os.Interrupt)
-			select {
-			case <-result:
-				goto serverStopped
-			case <-time.After(100 * time.Millisecond):
-			}
-		}
-	serverStopped:
 		t.Fatal("server did not become ready within 30 seconds")
 	}
 	if !paths.IsContainer() {
@@ -208,13 +186,11 @@ func TestRunServerAndGracefulShutdown(t *testing.T) {
 			t.Fatalf("server PID file = %q, error = %v", pidData, err)
 		}
 	}
-	if err := process.Signal(os.Interrupt); err != nil {
-		t.Fatalf("send graceful shutdown signal: %v", err)
-	}
+	cancel()
 	select {
-	case code := <-result:
-		if code != 0 {
-			t.Fatalf("run() exit code = %d, want 0", code)
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("app.Run returned error after cancellation: %v", err)
 		}
 		if !paths.IsContainer() {
 			if _, err := os.Stat(filepath.Join(dataDir, "countries.pid")); !os.IsNotExist(err) {

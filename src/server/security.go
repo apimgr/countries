@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
@@ -20,7 +19,6 @@ import (
 
 	"github.com/apimgr/countries/src/common/api"
 	"github.com/apimgr/countries/src/common/network"
-	"github.com/apimgr/countries/src/database"
 	appmode "github.com/apimgr/countries/src/mode"
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/net/publicsuffix"
@@ -262,18 +260,11 @@ func (s *Server) privacySignalMiddleware(next http.Handler) http.Handler {
 		}
 		if signal != "" {
 			r = r.WithContext(context.WithValue(r.Context(), privacySignalContextKey{}, signal))
-			if s.db != nil {
-				action := "compliance.gpc_honored"
-				if signal == "dnt" {
-					action = "compliance.dnt_honored"
-				}
-				if err := database.Write(r.Context(), s.db, func(tx *sql.Tx) error {
-					_, err := tx.ExecContext(r.Context(), `INSERT INTO audit_log (level, category, action, actor_ip, target_type, target_id, details, success) VALUES ('info', 'compliance', ?, ?, 'request', '', ?, 1)`, action, requestClientIP(r.RemoteAddr), `{"signal":"`+signal+`"}`)
-					return err
-				}); err != nil {
-					log.Printf("privacy signal audit write failed: signal=%s", signal)
-				}
+			action := "compliance.gpc_honored"
+			if signal == "dnt" {
+				action = "compliance.dnt_honored"
 			}
+			s.recordAudit(r, "compliance", action, "request", "", map[string]any{"signal": signal}, true)
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -525,9 +516,9 @@ func (s *Server) handleSecurityReport(w http.ResponseWriter, r *http.Request) {
 	clientIP := requestClientIP(r.RemoteAddr)
 	reportRule := s.config.Web.Reports
 	for _, limit := range []struct {
-		class   string
+		class    string
 		requests int
-		window  time.Duration
+		window   time.Duration
 	}{
 		{class: "reports", requests: reportRule.RateLimitPerMinute, window: time.Minute},
 		{class: "reports_burst", requests: reportRule.RateLimitPerIPBurst, window: 10 * time.Second},

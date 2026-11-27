@@ -19,9 +19,9 @@ import (
 )
 
 type fakeDatabaseReader struct {
-	lookupErr   error
-	lookupCalls int
-	closed      bool
+	lookupErr         error
+	lookupCalls       int
+	closed            bool
 	legacyCountryOnly bool
 }
 
@@ -50,9 +50,9 @@ func (r *fakeDatabaseReader) Lookup(_ net.IP, target any) error {
 
 func TestLookupCountryPrefersNestedISOCodeAndUsesLegacyFallback(t *testing.T) {
 	for _, test := range []struct {
-		name string
+		name   string
 		reader *fakeDatabaseReader
-		want string
+		want   string
 	}{
 		{name: "nested canonical code", reader: &fakeDatabaseReader{}, want: "US"},
 		{name: "legacy top-level fallback", reader: &fakeDatabaseReader{legacyCountryOnly: true}, want: "CA"},

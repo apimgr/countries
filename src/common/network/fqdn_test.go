@@ -38,9 +38,9 @@ func TestResolveFQDNPrecedenceAndUnresolvedValue(t *testing.T) {
 func TestDisplayURLDevelopmentAndPortRules(t *testing.T) {
 	for _, test := range []struct {
 		name, host, ipv6, ipv4, project string
-		port                           int
-		https                          bool
-		want                           string
+		port                            int
+		https                           bool
+		want                            string
 	}{
 		{name: "standard HTTP port", host: "api.example.com", port: 80, want: "http://api.example.com"},
 		{name: "standard HTTPS port", host: "api.example.com", port: 443, want: "https://api.example.com"},

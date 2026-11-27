@@ -11,6 +11,23 @@ import (
 	"github.com/apimgr/countries/src/config"
 )
 
+func TestTorCircuitIdentityUsesOnlyTheLow32Bits(t *testing.T) {
+	first := torCircuitIdentity("[2001:db8:1111:2222:3333:4444:5555:002a]:9050")
+	second := torCircuitIdentity("[fcff:ffff:aaaa:bbbb:3333:4444:5555:002a]:9050")
+	if first != "tor:5555002a" || second != first {
+		t.Fatalf("circuit identities = %q and %q, want tor:5555002a regardless of the upper 96 bits", first, second)
+	}
+	if got := torCircuitIdentity("127.0.0.1:9050"); got != "" {
+		t.Fatalf("IPv4 circuit identity = %q, want empty", got)
+	}
+}
+
+func TestRequestClientIPDoesNotTreatULAAsTorOutsideTorListener(t *testing.T) {
+	if got := requestClientIP("[fc00::1]:4321"); got != "fc00::1" {
+		t.Fatalf("requestClientIP() = %q, want the literal ULA client address", got)
+	}
+}
+
 func TestRateLimiterAppliesSlidingClassAndGlobalLimits(t *testing.T) {
 	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 	limiter := newRateLimiter(config.RateLimitConfig{

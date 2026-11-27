@@ -117,10 +117,16 @@ func NewScheduler(options ScheduledOptions) (*Scheduler, error) {
 // RunDaily creates the cumulative incremental against the latest full before
 // creating the new full, both from the same snapshot instant.
 func (s *Scheduler) RunDaily(ctx context.Context) (ScheduleResult, error) {
-	if err := EnsureBackupDir(s.backupDir); err != nil { return ScheduleResult{}, err }
-	if err := sweepBackupTemporaryFiles(s.backupDir); err != nil { return ScheduleResult{}, fmt.Errorf("backup temporary-file sweep: %w", err) }
+	if err := EnsureBackupDir(s.backupDir); err != nil {
+		return ScheduleResult{}, err
+	}
+	if err := sweepBackupTemporaryFiles(s.backupDir); err != nil {
+		return ScheduleResult{}, fmt.Errorf("backup temporary-file sweep: %w", err)
+	}
 	candidatePath, err := s.newestFullCandidate(ctx)
-	if err != nil { return ScheduleResult{}, err }
+	if err != nil {
+		return ScheduleResult{}, err
+	}
 	var latest *Result
 	forceTimestampedFull := false
 	if candidatePath != "" {
@@ -136,7 +142,9 @@ func (s *Scheduler) RunDaily(ctx context.Context) (ScheduleResult, error) {
 			if verifyErr != nil {
 				log.Printf("WARN: latest backup base failed verification; skipping daily incremental: %v", verifyErr)
 				forceTimestampedFull = true
-			} else if verified.Manifest.Type == "full" { latest = &verified }
+			} else if verified.Manifest.Type == "full" {
+				latest = &verified
+			}
 		}
 	}
 	if skip, reason, err := s.diskPressure(); err != nil {
@@ -146,14 +154,22 @@ func (s *Scheduler) RunDaily(ctx context.Context) (ScheduleResult, error) {
 	}
 	snapshotAt := s.options.Now().UTC()
 	fullPath := s.fullPath(snapshotAt)
-	if forceTimestampedFull { fullPath = s.timestampedFullPath(snapshotAt) }
+	if forceTimestampedFull {
+		fullPath = s.timestampedFullPath(snapshotAt)
+	}
 	if _, err := os.Lstat(fullPath); err == nil && !forceTimestampedFull {
 		if existing, verifyErr := Verify(ctx, fullPath, s.options.Backup.Password, s.options.Backup.Limits); verifyErr == nil && existing.Manifest.Type == "full" {
-		return ScheduleResult{Skipped: true, SkipReason: "daily full backup already exists for this date"}, nil
+			return ScheduleResult{Skipped: true, SkipReason: "daily full backup already exists for this date"}, nil
 		}
 		fullPath = s.timestampedFullPath(snapshotAt)
-	} else if err != nil && !errors.Is(err, fs.ErrNotExist) { return ScheduleResult{}, err }
-	if _, err := os.Lstat(fullPath); err == nil { return ScheduleResult{}, fmt.Errorf("full backup filename already exists: %s", fullPath) } else if !errors.Is(err, fs.ErrNotExist) { return ScheduleResult{}, err }
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return ScheduleResult{}, err
+	}
+	if _, err := os.Lstat(fullPath); err == nil {
+		return ScheduleResult{}, fmt.Errorf("full backup filename already exists: %s", fullPath)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return ScheduleResult{}, err
+	}
 	snapshot, err := CaptureSnapshot(ctx, s.options.Backup)
 	if err != nil {
 		return ScheduleResult{}, fmt.Errorf("capture daily backup snapshot: %w", err)
@@ -198,14 +214,27 @@ func (s *Scheduler) RunDaily(ctx context.Context) (ScheduleResult, error) {
 // EnsureBackupDir creates and secures the configured backup directory and verifies it is writable.
 func EnsureBackupDir(path string) error {
 	mode := os.FileMode(0700)
-	if privilege.IsElevated() { mode = 0755 }
-	if err := paths.EnsureDir(path); err != nil { return backupDirectoryError(path, mode, err) }
-	if err := os.Chmod(path, mode); err != nil { return backupDirectoryError(path, mode, err) }
+	if privilege.IsElevated() {
+		mode = 0755
+	}
+	if err := paths.EnsureDir(path); err != nil {
+		return backupDirectoryError(path, mode, err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		return backupDirectoryError(path, mode, err)
+	}
 	probe, err := os.CreateTemp(path, ".countries-backup-probe-*")
-	if err != nil { return backupDirectoryError(path, mode, err) }
+	if err != nil {
+		return backupDirectoryError(path, mode, err)
+	}
 	probePath := probe.Name()
-	if err := probe.Close(); err != nil { _ = os.Remove(probePath); return backupDirectoryError(path, mode, err) }
-	if err := os.Remove(probePath); err != nil { return backupDirectoryError(path, mode, err) }
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(probePath)
+		return backupDirectoryError(path, mode, err)
+	}
+	if err := os.Remove(probePath); err != nil {
+		return backupDirectoryError(path, mode, err)
+	}
 	return nil
 }
 
@@ -218,22 +247,34 @@ func backupDirectoryError(path string, expectedMode os.FileMode, cause error) er
 		indirect := reflect.Indirect(value)
 		if indirect.IsValid() && indirect.Kind() == reflect.Struct {
 			uid := indirect.FieldByName("Uid")
-			if uid.IsValid() && uid.CanUint() { if account, err := user.LookupId(strconv.FormatUint(uid.Uint(), 10)); err == nil { owner = account.Username } }
+			if uid.IsValid() && uid.CanUint() {
+				if account, err := user.LookupId(strconv.FormatUint(uid.Uint(), 10)); err == nil {
+					owner = account.Username
+				}
+			}
 		}
 	}
 	running := "unknown"
-	if account, err := user.Current(); err == nil { running = account.Username }
+	if account, err := user.Current(); err == nil {
+		running = account.Username
+	}
 	return fmt.Errorf("backup directory %q (owner %s, mode %s; running user %s) is unavailable: %w", path, owner, mode, running, cause)
 }
 
 func sweepBackupTemporaryFiles(directory string) error {
 	entries, err := os.ReadDir(directory)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	for _, entry := range entries {
-		if entry.IsDir() { continue }
+		if entry.IsDir() {
+			continue
+		}
 		name := entry.Name()
 		if strings.HasPrefix(name, ".backup-verify-") || strings.HasPrefix(name, ".countries-backup-probe-") || strings.HasPrefix(name, ".countries-backup-partial-") {
-			if err := os.Remove(filepath.Join(directory, name)); err != nil && !errors.Is(err, fs.ErrNotExist) { return err }
+			if err := os.Remove(filepath.Join(directory, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
 		}
 	}
 	return nil
@@ -241,8 +282,12 @@ func sweepBackupTemporaryFiles(directory string) error {
 
 // RunHourly creates a cumulative incremental against the newest full archive.
 func (s *Scheduler) RunHourly(ctx context.Context) (ScheduleResult, error) {
-	if err := EnsureBackupDir(s.backupDir); err != nil { return ScheduleResult{}, err }
-	if err := sweepBackupTemporaryFiles(s.backupDir); err != nil { return ScheduleResult{}, fmt.Errorf("backup temporary-file sweep: %w", err) }
+	if err := EnsureBackupDir(s.backupDir); err != nil {
+		return ScheduleResult{}, err
+	}
+	if err := sweepBackupTemporaryFiles(s.backupDir); err != nil {
+		return ScheduleResult{}, fmt.Errorf("backup temporary-file sweep: %w", err)
+	}
 	latest, err := s.latestFull(ctx)
 	if err != nil {
 		return ScheduleResult{}, err
@@ -411,10 +456,16 @@ type backupCandidate struct {
 
 func (s *Scheduler) latestFull(ctx context.Context) (*Result, error) {
 	path, err := s.newestFullCandidate(ctx)
-	if err != nil || path == "" { return nil, err }
+	if err != nil || path == "" {
+		return nil, err
+	}
 	verified, err := Verify(ctx, path, s.options.Backup.Password, s.options.Backup.Limits)
-	if err != nil { return nil, err }
-	if verified.Manifest.Type != "full" { return nil, errors.New("newest backup candidate is not a full backup") }
+	if err != nil {
+		return nil, err
+	}
+	if verified.Manifest.Type != "full" {
+		return nil, errors.New("newest backup candidate is not a full backup")
+	}
 	return &verified, nil
 }
 
@@ -440,11 +491,66 @@ func (s *Scheduler) newestFullCandidate(ctx context.Context) (string, error) {
 			continue
 		}
 		path := filepath.Join(s.backupDir, entry.Name())
-		info, err := entry.Info(); if err != nil { return "", err }
+		info, err := entry.Info()
+		if err != nil {
+			return "", err
+		}
 		candidateTime := info.ModTime()
-		if _, parsed, ok := s.classifyBackupName(entry.Name()); ok && !parsed.IsZero() { candidateTime = parsed }
+		if _, parsed, ok := s.classifyBackupName(entry.Name()); ok && !parsed.IsZero() {
+			candidateTime = parsed
+		}
 		if latestPath == "" || candidateTime.After(latestTime) {
 			latestPath, latestTime = path, candidateTime
+		}
+	}
+	return latestPath, nil
+}
+
+// NewestFullArchive selects a named full backup by filename date, then by
+// modification time for files from the same date. It never opens archives.
+func NewestFullArchive(ctx context.Context, projectName, backupDir string) (string, error) {
+	if strings.TrimSpace(projectName) == "" || strings.TrimSpace(backupDir) == "" {
+		return "", errors.New("newest full backup requires a project name and directory")
+	}
+	entries, err := os.ReadDir(backupDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	prefix := projectName + "_backup_"
+	var latestPath string
+	var latestDate, latestModTime time.Time
+	for _, entry := range entries {
+		if err := contextErr(ctx); err != nil {
+			return "", err
+		}
+		if entry.Type()&os.ModeSymlink != 0 || entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		stem := strings.TrimSuffix(strings.TrimSuffix(name, ".enc"), ".tar.gz")
+		if !strings.HasPrefix(stem, prefix) {
+			continue
+		}
+		parts := backupDatePattern.FindStringSubmatch(strings.TrimPrefix(stem, prefix))
+		if parts == nil {
+			continue
+		}
+		date, err := time.Parse("2006-01-02", parts[1])
+		if err != nil {
+			continue
+		}
+		info, err := os.Lstat(filepath.Join(backupDir, name))
+		if err != nil {
+			return "", err
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		if latestPath == "" || date.After(latestDate) || date.Equal(latestDate) && info.ModTime().After(latestModTime) {
+			latestPath, latestDate, latestModTime = filepath.Join(backupDir, name), date, info.ModTime()
 		}
 	}
 	return latestPath, nil
@@ -553,7 +659,9 @@ func (s *Scheduler) fullPath(snapshotAt time.Time) string {
 
 func (s *Scheduler) timestampedFullPath(snapshotAt time.Time) string {
 	extension := ".tar.gz"
-	if s.options.Backup.Password != "" { extension += ".enc" }
+	if s.options.Backup.Password != "" {
+		extension += ".enc"
+	}
 	return filepath.Join(s.backupDir, s.options.ProjectName+"_backup_"+snapshotAt.Format("2006-01-02_150405")+extension)
 }
 
@@ -577,14 +685,22 @@ func readManifest(ctx context.Context, path, password string, limits Limits) (Ma
 
 func incrementalBaseReference(ctx context.Context, path string, limits Limits) (string, bool, error) {
 	header, encrypted, err := readEncryptedBackupHeader(path)
-	if err != nil { return "", false, err }
+	if err != nil {
+		return "", false, err
+	}
 	if encrypted {
-		if header.baseBackup == "" { return "", false, errors.New("encrypted incremental header has no base reference") }
+		if header.baseBackup == "" {
+			return "", false, errors.New("encrypted incremental header has no base reference")
+		}
 		return header.baseBackup, true, nil
 	}
 	manifest, err := readManifest(ctx, path, "", limits)
-	if err != nil { return "", false, err }
-	if manifest.Type != "incremental" || manifest.BaseBackup == "" { return "", false, errors.New("incremental archive has no valid base reference") }
+	if err != nil {
+		return "", false, err
+	}
+	if manifest.Type != "incremental" || manifest.BaseBackup == "" {
+		return "", false, errors.New("incremental archive has no valid base reference")
+	}
 	return manifest.BaseBackup, true, nil
 }
 

@@ -53,25 +53,27 @@ func RecordPGPKeyserverPublication(ctx context.Context, db *sql.DB, fingerprint,
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	err := Write(ctx, db, func(tx *sql.Tx) error {
-	var encoded string
-	if err := tx.QueryRowContext(ctx, `SELECT keyservers_published FROM pgp_keys WHERE fingerprint = ? AND revoked = FALSE`, fingerprint).Scan(&encoded); err != nil {
-		return fmt.Errorf("read active OpenPGP key metadata: %w", err)
-	}
-	published := map[string]string{}
-	if err := json.Unmarshal([]byte(encoded), &published); err != nil {
-		return fmt.Errorf("decode OpenPGP publication metadata: %w", err)
-	}
-	published[keyserver] = publishedAt.UTC().Format(time.RFC3339Nano)
-	encodedBytes, err := json.Marshal(published)
-	if err != nil {
-		return fmt.Errorf("encode OpenPGP publication metadata: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE pgp_keys SET keyservers_published = ? WHERE fingerprint = ? AND revoked = FALSE`, string(encodedBytes), fingerprint); err != nil {
-		return fmt.Errorf("save OpenPGP publication metadata: %w", err)
-	}
-	return nil
+		var encoded string
+		if err := tx.QueryRowContext(ctx, `SELECT keyservers_published FROM pgp_keys WHERE fingerprint = ? AND revoked = FALSE`, fingerprint).Scan(&encoded); err != nil {
+			return fmt.Errorf("read active OpenPGP key metadata: %w", err)
+		}
+		published := map[string]string{}
+		if err := json.Unmarshal([]byte(encoded), &published); err != nil {
+			return fmt.Errorf("decode OpenPGP publication metadata: %w", err)
+		}
+		published[keyserver] = publishedAt.UTC().Format(time.RFC3339Nano)
+		encodedBytes, err := json.Marshal(published)
+		if err != nil {
+			return fmt.Errorf("encode OpenPGP publication metadata: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE pgp_keys SET keyservers_published = ? WHERE fingerprint = ? AND revoked = FALSE`, string(encodedBytes), fingerprint); err != nil {
+			return fmt.Errorf("save OpenPGP publication metadata: %w", err)
+		}
+		return nil
 	})
-	if err != nil { return fmt.Errorf("update OpenPGP publication metadata: %w", err) }
+	if err != nil {
+		return fmt.Errorf("update OpenPGP publication metadata: %w", err)
+	}
 	return nil
 }
 
@@ -114,19 +116,35 @@ func ClaimPGPPrivateExport(ctx context.Context, db *sql.DB, operator string, now
 	var remaining time.Duration
 	err := Write(ctx, db, func(tx *sql.Tx) error {
 		result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO rate_limits (key, count, window_start, updated_at) VALUES (?, 1, ?, ?)`, key, now.Unix(), now.Unix())
-		if err != nil { return fmt.Errorf("claim PGP export rate limit: %w", err) }
+		if err != nil {
+			return fmt.Errorf("claim PGP export rate limit: %w", err)
+		}
 		inserted, err := result.RowsAffected()
-		if err != nil { return fmt.Errorf("inspect PGP export rate limit: %w", err) }
-		if inserted > 0 { allowed = true; remaining = 0; return nil }
+		if err != nil {
+			return fmt.Errorf("inspect PGP export rate limit: %w", err)
+		}
+		if inserted > 0 {
+			allowed = true
+			remaining = 0
+			return nil
+		}
 		var windowStart int64
-		if err := tx.QueryRowContext(ctx, `SELECT window_start FROM rate_limits WHERE key = ?`, key).Scan(&windowStart); err != nil { return fmt.Errorf("read PGP export rate limit: %w", err) }
+		if err := tx.QueryRowContext(ctx, `SELECT window_start FROM rate_limits WHERE key = ?`, key).Scan(&windowStart); err != nil {
+			return fmt.Errorf("read PGP export rate limit: %w", err)
+		}
 		remaining = time.Hour - now.Sub(time.Unix(windowStart, 0))
-		if remaining > 0 { return nil }
-		if _, err := tx.ExecContext(ctx, `UPDATE rate_limits SET count = 1, window_start = ?, updated_at = ? WHERE key = ?`, now.Unix(), now.Unix(), key); err != nil { return fmt.Errorf("update PGP export rate limit: %w", err) }
+		if remaining > 0 {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE rate_limits SET count = 1, window_start = ?, updated_at = ? WHERE key = ?`, now.Unix(), now.Unix(), key); err != nil {
+			return fmt.Errorf("update PGP export rate limit: %w", err)
+		}
 		allowed = true
 		return nil
 	})
-	if err != nil { return false, 0, fmt.Errorf("update PGP export rate limit: %w", err) }
+	if err != nil {
+		return false, 0, fmt.Errorf("update PGP export rate limit: %w", err)
+	}
 	return allowed, remaining, nil
 }
 

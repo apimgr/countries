@@ -73,7 +73,7 @@ func RecordBackup(ctx context.Context, db *sql.DB, record BackupRecord) error {
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(filename) DO UPDATE SET filepath=excluded.filepath, size_bytes=excluded.size_bytes, type=excluded.type,
 		created_at=excluded.created_at, checksum=excluded.checksum, notes=excluded.notes`,
-		record.Filename, record.Filepath, record.SizeBytes, record.Type, record.CreatedAt.Unix(), nullableBackupValue(record.Checksum), nullableBackupValue(record.Notes))
+			record.Filename, record.Filepath, record.SizeBytes, record.Type, record.CreatedAt.Unix(), nullableBackupValue(record.Checksum), nullableBackupValue(record.Notes))
 		return err
 	})
 	if err != nil {

@@ -44,12 +44,7 @@ var schema = []string{
 	`CREATE TABLE IF NOT EXISTS backups (id INTEGER PRIMARY KEY AUTOINCREMENT, filename TEXT NOT NULL UNIQUE, filepath TEXT NOT NULL, size_bytes INTEGER NOT NULL, type TEXT NOT NULL DEFAULT 'auto', created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), checksum TEXT, notes TEXT)`,
 	`CREATE INDEX IF NOT EXISTS idx_backups_created ON backups(created_at)`,
 	`CREATE TABLE IF NOT EXISTS owners (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), last_seen_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')))`,
-	`CREATE TABLE IF NOT EXISTS api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK (kind IN ('primary', 'linked')), name TEXT, token_hash TEXT NOT NULL UNIQUE, token_prefix TEXT NOT NULL, token_last4 TEXT NOT NULL DEFAULT '', token_enc TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), rotated_at INTEGER, expires_at INTEGER, last_used_at INTEGER, revoked_at INTEGER, revoked_reason TEXT)`,
-	`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_primary ON api_tokens(owner_id) WHERE kind = 'primary' AND revoked_at IS NULL`,
-	`CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash)`,
-	`CREATE INDEX IF NOT EXISTS idx_api_tokens_prefix ON api_tokens(token_prefix)`,
-	`CREATE INDEX IF NOT EXISTS idx_api_tokens_owner ON api_tokens(owner_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_api_tokens_active ON api_tokens(revoked_at) WHERE revoked_at IS NULL`,
+	`CREATE TABLE IF NOT EXISTS api_tokens (id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK (kind IN ('primary', 'linked')), name TEXT, token_hash TEXT NOT NULL UNIQUE, token_prefix TEXT NOT NULL, token_last4 TEXT NOT NULL DEFAULT '', token_enc TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), rotated_at INTEGER, expires_at INTEGER, last_used_at INTEGER, revoked_at INTEGER, revoked_reason TEXT)`,
 }
 
 // Open initializes the configured SQLite file and applies the idempotent schema.
@@ -76,6 +71,12 @@ func EnsureSchema(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("initialize server database schema: %w", err)
 		}
 	}
+	if err := ensureTokenOwner(ctx, db); err != nil {
+		return fmt.Errorf("migrate API token ownership schema: %w", err)
+	}
+	if err := ensureTokenPublicID(ctx, db); err != nil {
+		return fmt.Errorf("migrate API token public identifiers: %w", err)
+	}
 	if err := ensureTokenLast4(ctx, db); err != nil {
 		return fmt.Errorf("migrate API token metadata schema: %w", err)
 	}
@@ -96,6 +97,132 @@ func EnsureSchema(ctx context.Context, db *sql.DB) error {
 			return err
 		}); err != nil {
 			return fmt.Errorf("migrate security report window metadata: %w", err)
+		}
+	}
+	return nil
+}
+
+func ensureTokenPublicID(ctx context.Context, db *sql.DB) error {
+	idType, err := columnType(ctx, db, "api_tokens", "id")
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(strings.ToUpper(idType), "INT") {
+		return nil
+	}
+	hasPublicID, err := hasColumn(ctx, db, "api_tokens", "public_id")
+	if err != nil {
+		return err
+	}
+	if !hasPublicID {
+		if err := Write(ctx, db, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `ALTER TABLE api_tokens ADD COLUMN public_id TEXT`)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	rows, err := db.QueryContext(ctx, `SELECT id FROM api_tokens WHERE public_id IS NULL OR public_id = '' ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	var internalIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		internalIDs = append(internalIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, internalID := range internalIDs {
+		publicID, err := newUUIDv7(time.Now())
+		if err != nil {
+			return err
+		}
+		if err := Write(ctx, db, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `UPDATE api_tokens SET public_id = ? WHERE id = ? AND (public_id IS NULL OR public_id = '')`, publicID, internalID)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	return Write(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_public_id ON api_tokens(public_id)`)
+		return err
+	})
+}
+
+func columnType(ctx context.Context, db *sql.DB, table, column string) (string, error) {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var index, notNull, primaryKey int
+		var name, dataType string
+		var defaultValue any
+		if err := rows.Scan(&index, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return "", err
+		}
+		if name == column {
+			return dataType, rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("column %s.%s does not exist", table, column)
+}
+
+func ensureTokenOwner(ctx context.Context, db *sql.DB) error {
+	hasOwner, err := hasColumn(ctx, db, "api_tokens", "owner_id")
+	if err != nil {
+		return err
+	}
+	if !hasOwner {
+		if err := Write(ctx, db, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `ALTER TABLE api_tokens ADD COLUMN owner_id TEXT REFERENCES owners(id)`)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	var rowsToBackfill int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_tokens WHERE owner_id IS NULL OR owner_id = ''`).Scan(&rowsToBackfill); err != nil {
+		return err
+	}
+	if rowsToBackfill > 0 {
+		if err := Write(ctx, db, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO owners(id) VALUES('system')`)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	if err := Write(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE api_tokens SET owner_id = 'system' WHERE owner_id IS NULL OR owner_id = ''`)
+		return err
+	}); err != nil {
+		return err
+	}
+	for _, statement := range []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_primary ON api_tokens(owner_id) WHERE kind = 'primary' AND revoked_at IS NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_tokens_prefix ON api_tokens(token_prefix)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_tokens_owner ON api_tokens(owner_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_tokens_active ON api_tokens(revoked_at) WHERE revoked_at IS NULL`,
+	} {
+		if err := Write(ctx, db, func(tx *sql.Tx) error { _, err := tx.ExecContext(ctx, statement); return err }); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -141,7 +141,7 @@ func (s *Server) languageForRequest(w http.ResponseWriter, r *http.Request) stri
 	}
 	if requestPrivacySignal(r) == "" {
 		if cookie, err := r.Cookie("lang"); err == nil && i18n.IsSupported(cookie.Value) {
-		return strings.ToLower(cookie.Value)
+			return strings.ToLower(cookie.Value)
 		}
 	}
 	for _, lang := range acceptedLanguages(r.Header.Get("Accept-Language")) {

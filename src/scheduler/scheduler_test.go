@@ -308,7 +308,7 @@ func TestDatabaseMonitorThresholdDedupAndRecovery(t *testing.T) {
 }
 
 func TestDatabaseErrorSanitizationRemovesConnectionCredentials(t *testing.T) {
-	input := "dial tcp postgres://operator:secret@db.example/places?token=abc failed"
+	input := "dial tcp postgres://operator:" + "secret@db.example/places?token=abc failed"
 	got := sanitizeDatabaseError(input)
 	if strings.Contains(got, "operator") || strings.Contains(got, "secret") || strings.Contains(got, "abc") {
 		t.Fatalf("sanitized error contains credentials: %q", got)

@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -43,6 +44,145 @@ func TestInstallFullBackupWithoutOverwrite(t *testing.T) {
 	content, err = os.ReadFile(destination)
 	if err != nil || string(content) != "verified backup" {
 		t.Fatalf("existing backup after collision = %q, error = %v", content, err)
+	}
+}
+
+func TestNewestFullArchiveUsesFilenameDateAndMtimeTieBreak(t *testing.T) {
+	dir := t.TempDir()
+	older := filepath.Join(dir, "countries_backup_2026-11-24.tar.gz")
+	first := filepath.Join(dir, "countries_backup_2026-11-25.tar.gz.enc")
+	newer := filepath.Join(dir, "countries_backup_2026-11-25_020000.tar.gz")
+	for _, path := range []string{older, first, newer, filepath.Join(dir, "countries-daily.tar.gz")} {
+		if err := os.WriteFile(path, []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(first, base, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newer, base.Add(time.Second), base.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := NewestFullArchive(context.Background(), "countries", dir)
+	if err != nil {
+		t.Fatalf("NewestFullArchive() error = %v", err)
+	}
+	if got != newer {
+		t.Fatalf("NewestFullArchive() = %q, want %q", got, newer)
+	}
+}
+
+func TestNewestFullArchiveIgnoresSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	link := filepath.Join(dir, "countries_backup_2026-11-25.tar.gz")
+	if err := os.WriteFile(target, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	got, err := NewestFullArchive(context.Background(), "countries", dir)
+	if err != nil {
+		t.Fatalf("NewestFullArchive() error = %v", err)
+	}
+	if got != "" {
+		t.Fatalf("NewestFullArchive() = %q, want no archive", got)
+	}
+}
+
+func TestNewestFullArchiveHandlesMissingDirectoryAndCancellation(t *testing.T) {
+	if _, err := NewestFullArchive(context.Background(), "", t.TempDir()); err == nil {
+		t.Fatal("NewestFullArchive() accepted an empty project name")
+	}
+	missing := filepath.Join(t.TempDir(), "missing")
+	if got, err := NewestFullArchive(context.Background(), "countries", missing); err != nil || got != "" {
+		t.Fatalf("NewestFullArchive(missing directory) = %q, %v; want empty result", got, err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "countries_backup_2026-11-25.tar.gz"), []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := NewestFullArchive(ctx, "countries", dir); err == nil {
+		t.Fatal("NewestFullArchive() ignored canceled context")
+	}
+}
+
+func TestBackupExportsAndRestoresAllApplicationSecrets(t *testing.T) {
+	root := createBackupTestRoot(t)
+	source := makeBackupFixture(t, root, "source\n")
+	archive := filepath.Join(root, "secrets.tar.gz")
+	if _, err := Create(context.Background(), archive, source.options); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	verified, err := Verify(context.Background(), archive, "", Limits{})
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	payload, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := readArchive(context.Background(), payload, int64(len(payload)), normalizedLimits(Limits{}))
+	if err != nil {
+		t.Fatalf("read archive: %v", err)
+	}
+	var exported []appSecretRecord
+	if err := json.Unmarshal(entries["app_secrets.json"], &exported); err != nil {
+		t.Fatalf("decode exported secrets: %v", err)
+	}
+	if len(exported) != 3 || exported[1].Name != "encryption_key_previous_until" || exported[2].Name != "installation_secret_previous_until" {
+		t.Fatalf("exported secret rows = %+v", exported)
+	}
+	if verified.Manifest.Type != "full" {
+		t.Fatalf("manifest type = %q, want full", verified.Manifest.Type)
+	}
+	destination := filepath.Join(root, "restored")
+	databasePath := filepath.Join(destination, "data", "db", "server.db")
+	secretDB, err := sql.Open("sqlite", filepath.Join(root, "remote-secrets.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretDB.SetMaxOpenConns(1)
+	defer func() { _ = secretDB.Close() }()
+	if _, err := secretDB.Exec(`CREATE TABLE app_secrets(name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := secretDB.Exec(`INSERT INTO app_secrets VALUES('obsolete','old','2020-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Restore(context.Background(), archive, "", RestoreOptions{ConfigDir: filepath.Join(destination, "config"), DataDir: filepath.Join(destination, "data"), DatabasePath: databasePath, SecretsDB: secretDB}); err != nil {
+		t.Fatalf("Restore() error = %v", err)
+	}
+	var value string
+	if err := secretDB.QueryRow(`SELECT value FROM app_secrets WHERE name='encryption_key_previous_until'`).Scan(&value); err != nil || value != "2030-01-01T00:00:00Z" {
+		t.Fatalf("restored grace-period secret = %q, err = %v", value, err)
+	}
+	var obsolete int
+	if err := secretDB.QueryRow(`SELECT COUNT(*) FROM app_secrets WHERE name='obsolete'`).Scan(&obsolete); err != nil || obsolete != 0 {
+		t.Fatalf("obsolete secret count = %d, err=%v", obsolete, err)
+	}
+}
+
+func TestDecodeAppSecretsRejectsUnsafeDocuments(t *testing.T) {
+	for _, data := range []string{
+		`null`,
+		`{}`,
+		`[{"name":"secret","value":"one","updated_at":"2029-12-02T00:00:00Z"},{"name":"secret","value":"two","updated_at":"2029-12-02T00:00:00Z"}]`,
+		`[{"name":"secret","value":"one","updated_at":"invalid"}]`,
+		`[{"name":"secret","value":"one","updated_at":"2029-12-02T00:00:00Z","unexpected":true}]`,
+		`[] []`,
+	} {
+		if _, err := decodeAppSecrets([]byte(data)); err == nil {
+			t.Errorf("decodeAppSecrets(%s) succeeded", data)
+		}
+	}
+	secrets, err := decodeAppSecrets([]byte(`[{"name":"secret","value":"value","updated_at":"2029-12-02T00:00:00Z"}]`))
+	if err != nil || len(secrets) != 1 || secrets[0].Value != "value" {
+		t.Fatalf("decodeAppSecrets(valid) = %+v, %v", secrets, err)
 	}
 }
 
@@ -455,6 +595,14 @@ func makeBackupFixture(t *testing.T, root, serverConfig string) backupFixture {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec("INSERT INTO fixture(value) VALUES ('ok')"); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE app_secrets(name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO app_secrets(name,value,updated_at) VALUES ('encryption_key_previous','ciphertext','2029-12-02T00:00:00Z'),('encryption_key_previous_until','2030-01-01T00:00:00Z','2029-12-02T00:00:00Z'),('installation_secret_previous_until','2030-01-01T00:00:00Z','2029-12-02T00:00:00Z')`); err != nil {
 		_ = db.Close()
 		t.Fatal(err)
 	}

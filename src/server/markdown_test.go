@@ -80,12 +80,24 @@ func TestOperatorHTMLNeverEmitsH1(t *testing.T) {
 	cfg.Server.Branding.Content["about"] = config.PageContentConfig{Format: "md", Body: map[string]any{"default": "# Custom heading"}}
 	server := &Server{config: cfg, version: "1.2.3", buildDate: "2026-01-02T03:04:05Z"}
 	got := string(server.operatorHTML(httptest.NewRequest("GET", "/server/about", nil), "about"))
-	if strings.Contains(got, "<h1") || !strings.Contains(got, "<h2>Custom heading</h2>") {
-		t.Fatalf("operator markdown heading = %q, want h2 and no h1", got)
+	if strings.Contains(got, "<h1") || !strings.Contains(got, "<h3>Custom heading</h3>") {
+		t.Fatalf("operator markdown heading = %q, want h3 and no h1", got)
 	}
 	cfg.Server.Branding.Content["about"] = config.PageContentConfig{Format: "html", Body: map[string]any{"default": "<h1>Unsafe heading</h1>"}}
-	if got = string(server.operatorHTML(httptest.NewRequest("GET", "/server/about", nil), "about")); strings.Contains(got, "<h1") {
-		t.Fatalf("operator HTML emitted h1: %q", got)
+	if got = string(server.operatorHTML(httptest.NewRequest("GET", "/server/about", nil), "about")); strings.Contains(got, "<h1") || !strings.Contains(got, "<h3>Unsafe heading</h3>") {
+		t.Fatalf("operator HTML heading was not shifted: %q", got)
+	}
+}
+
+func TestOperatorContentHeadingsShiftTwoLevelsAndCapAtH6(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Server.Branding.Content["about"] = config.PageContentConfig{Format: "md", Body: map[string]any{"default": "# One\n\n## Two\n\n#### Four\n\n###### Six"}}
+	server := &Server{config: cfg}
+	got := string(server.operatorHTML(httptest.NewRequest("GET", "/server/about", nil), "about"))
+	for _, heading := range []string{"<h3>One</h3>", "<h4>Two</h4>", "<h6>Four</h6>", "<h6>Six</h6>"} {
+		if !strings.Contains(got, heading) {
+			t.Errorf("operator content is missing shifted heading %q: %s", heading, got)
+		}
 	}
 }
 

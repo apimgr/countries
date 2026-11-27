@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -213,7 +213,7 @@ func TestSecretRotationReencryptAndAuditFailures(t *testing.T) {
 	if err := writeSecretRotationAudit(filepath.Join(testutil.TempDir(t), "logs"), "security.test", "test reason", time.Now().UTC()); err != nil {
 		t.Fatalf("writeSecretRotationAudit(): %v", err)
 	}
-	if err := secretDecryptFailure("", "api_tokens", "42", os.ErrPermission, time.Now().UTC()); err == nil {
+	if err := secretDecryptFailure("", "api_tokens", "019b3e57-4f80-7000-8000-000000000001", os.ErrPermission, time.Now().UTC()); err == nil {
 		t.Fatal("secretDecryptFailure() returned nil")
 	}
 }

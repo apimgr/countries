@@ -719,9 +719,6 @@ func requestClientIP(remoteAddr string) string {
 	if remoteAddr == "tor" || strings.HasPrefix(remoteAddr, "tor:") {
 		return remoteAddr
 	}
-	if identity := torCircuitIdentity(remoteAddr); identity != "" {
-		return identity
-	}
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err == nil {
 		remoteAddr = host
@@ -738,10 +735,10 @@ func torCircuitIdentity(remoteAddr string) string {
 		remoteAddr = host
 	}
 	ip := net.ParseIP(remoteAddr).To16()
-	if ip == nil || ip[0] != 0xfc {
+	if ip == nil || ip.To4() != nil {
 		return ""
 	}
-	return "tor:" + hex.EncodeToString(ip)
+	return "tor:" + hex.EncodeToString(ip[12:16])
 }
 
 func retrySeconds(first time.Time, window time.Duration, now time.Time) string {

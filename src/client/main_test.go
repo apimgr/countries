@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/apimgr/countries/src/common/api"
+	"github.com/apimgr/countries/src/common/display"
 	"github.com/apimgr/countries/src/paths"
 	tea "github.com/charmbracelet/bubbletea"
 	"gopkg.in/yaml.v3"
@@ -449,6 +450,16 @@ func TestClientScreenInventoryMatchesCommands(t *testing.T) {
 	}
 	if mode, err := clientDisplayMode("auto", false, io.Discard); err != nil || mode != "cli" {
 		t.Fatalf("command mode = %q, %v; want cli", mode, err)
+	}
+}
+
+func TestClientHeadlessModeRequiresACommand(t *testing.T) {
+	env := display.DisplayEnv{Mode: display.DisplayModeHeadless}
+	if mode, err := clientDisplayModeForEnv("auto", false, io.Discard, env, "en"); err != nil || mode != "cli" {
+		t.Fatalf("headless command mode = %q, %v; want cli", mode, err)
+	}
+	if mode, err := clientDisplayModeForEnv("auto", true, io.Discard, env, "en"); err == nil || mode != "" || !strings.Contains(err.Error(), "--help") {
+		t.Fatalf("headless interactive mode = %q, %v; want usage error", mode, err)
 	}
 }
 

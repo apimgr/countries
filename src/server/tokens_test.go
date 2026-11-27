@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -166,10 +165,10 @@ func TestOwnerTokenAPIRoutesEnforcePrimaryAndHideRawValues(t *testing.T) {
 	var linkedBody struct {
 		Data struct {
 			Token string `json:"token"`
-			ID    int64  `json:"id"`
+			ID    string `json:"id"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(linkedResponse.Body.Bytes(), &linkedBody); err != nil || linkedBody.Data.Token == "" || linkedBody.Data.ID == 0 {
+	if err := json.Unmarshal(linkedResponse.Body.Bytes(), &linkedBody); err != nil || linkedBody.Data.Token == "" || !database.ValidTokenID(linkedBody.Data.ID) {
 		t.Fatalf("decode linked issue response: body=%q error=%v", linkedResponse.Body.String(), err)
 	}
 	linked := linkedBody.Data.Token
@@ -182,8 +181,19 @@ func TestOwnerTokenAPIRoutesEnforcePrimaryAndHideRawValues(t *testing.T) {
 	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), primary) || strings.Contains(listed.Body.String(), linked) || strings.Contains(listed.Body.String(), "token_enc") {
 		t.Fatalf("token list leaked credential material: status=%d body=%q", listed.Code, listed.Body.String())
 	}
+	if !strings.Contains(listed.Body.String(), linkedBody.Data.ID) || strings.Contains(listed.Body.String(), `"id":2`) {
+		t.Fatalf("token list did not use the opaque token ID: %q", listed.Body.String())
+	}
+	legacyIntegerPath := httptest.NewRequest(http.MethodPost, "/api/v1/server/preferences/tokens/2/reveal", nil)
+	legacyIntegerPath.Header.Set("Accept", "application/json")
+	legacyIntegerPath.Header.Set("Authorization", "Bearer "+primary)
+	legacyIntegerResponse := httptest.NewRecorder()
+	s.router.ServeHTTP(legacyIntegerResponse, legacyIntegerPath)
+	if legacyIntegerResponse.Code != http.StatusNotFound {
+		t.Fatalf("integer token ID path status=%d body=%q, want 404", legacyIntegerResponse.Code, legacyIntegerResponse.Body.String())
+	}
 
-	linkedManagement := httptest.NewRequest(http.MethodPost, "/api/v1/server/preferences/tokens/"+strconv.FormatInt(linkedBody.Data.ID, 10)+"/reveal", nil)
+	linkedManagement := httptest.NewRequest(http.MethodPost, "/api/v1/server/preferences/tokens/"+linkedBody.Data.ID+"/reveal", nil)
 	linkedManagement.Header.Set("Accept", "application/json")
 	linkedManagement.Header.Set("Authorization", "Bearer "+linked)
 	denied := httptest.NewRecorder()
@@ -301,7 +311,7 @@ func TestPrimaryTokenRevocationWebRequiresLastFourAndDeletesOwner(t *testing.T) 
 		t.Fatal(err)
 	}
 	var audit map[string]interface{}
-	if err := json.Unmarshal([]byte(details), &audit); err != nil || audit["scope"] != "owner" || audit["source"] != "web" || audit["tokens"] != float64(2) || audit["resources"] != float64(0) {
+	if err := json.Unmarshal([]byte(details), &audit); err != nil || audit["scope"] != "owner" || audit["source"] != "web" || audit["revoked_count"] != float64(2) || audit["resources"] != float64(0) {
 		t.Fatalf("revoke audit details=%q parsed=%v err=%v", details, audit, err)
 	}
 }

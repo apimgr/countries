@@ -127,7 +127,7 @@ make dev
 make test
 ```
 
-`make dev` builds a static server and CLI/TUI client into a project-scoped operating system temporary directory. Set `BUILD_GUI=1` to also build the optional, dynamically linked GUI client. The Docker binary integration suite is `./tests/run_tests.sh`, the Incus service suite is `make test-incus` or `./tests/incus.sh`, and browser E2E is `make test-e2e` or `./tests/e2e.sh`. See [development](docs/development.md) for details.
+`make dev` builds a static server and CLI/TUI client into a project-scoped operating system temporary directory. Set `BUILD_GUI=1` to also build the optional, dynamically linked GUI client. The Docker binary integration suite is `make test-docker` or `./tests/run_tests.sh`, the Incus service suite is `make test-incus` or `./tests/incus.sh`, and browser E2E is `make test-e2e` or `./tests/e2e.sh`. See [development](docs/development.md) for details.
 
 ## Disclaimer
 

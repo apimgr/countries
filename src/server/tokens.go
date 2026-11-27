@@ -11,7 +11,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -133,13 +132,21 @@ func (s *Server) handleIssueOwnerToken(w http.ResponseWriter, r *http.Request) {
 func (s *Server) validOperatorToken(raw string) bool {
 	valid := false
 	if s.config == nil || s.config.Server.Token == "" || raw == "" {
-		if s.metrics != nil { s.metrics.RecordAuth("bearer", "failed") }
+		if s.metrics != nil {
+			s.metrics.RecordAuth("bearer", "failed")
+		}
 		return false
 	}
 	actual := sha256.Sum256([]byte(raw))
 	expected := sha256.Sum256([]byte(s.config.Server.Token))
 	valid = subtle.ConstantTimeCompare(actual[:], expected[:]) == 1
-	if s.metrics != nil { status := "failed"; if valid { status = "success" }; s.metrics.RecordAuth("bearer", status) }
+	if s.metrics != nil {
+		status := "failed"
+		if valid {
+			status = "success"
+		}
+		s.metrics.RecordAuth("bearer", status)
+	}
 	return valid
 }
 
@@ -170,7 +177,7 @@ func (s *Server) handleRestoreOwnerToken(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleRevealPrimaryToken(w http.ResponseWriter, r *http.Request) {
-	s.handleRevealToken(w, r, 0, true)
+	s.handleRevealToken(w, r, "", true)
 }
 
 func (s *Server) handleRevealLinkedToken(w http.ResponseWriter, r *http.Request) {
@@ -182,7 +189,7 @@ func (s *Server) handleRevealLinkedToken(w http.ResponseWriter, r *http.Request)
 	s.handleRevealToken(w, r, id, false)
 }
 
-func (s *Server) handleRevealToken(w http.ResponseWriter, r *http.Request, tokenID int64, primary bool) {
+func (s *Server) handleRevealToken(w http.ResponseWriter, r *http.Request, tokenID string, primary bool) {
 	isAPI := isTokenAPIRequest(r)
 	w.Header().Set("Cache-Control", "no-store")
 	if !s.takeStrictTokenLimit(w, r, "") {
@@ -223,7 +230,7 @@ func (s *Server) handleRevealToken(w http.ResponseWriter, r *http.Request, token
 }
 
 func (s *Server) handleRotatePrimaryToken(w http.ResponseWriter, r *http.Request) {
-	s.handleRotateToken(w, r, 0, true)
+	s.handleRotateToken(w, r, "", true)
 }
 
 func (s *Server) handleRotateLinkedToken(w http.ResponseWriter, r *http.Request) {
@@ -235,7 +242,7 @@ func (s *Server) handleRotateLinkedToken(w http.ResponseWriter, r *http.Request)
 	s.handleRotateToken(w, r, id, false)
 }
 
-func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request, tokenID int64, primary bool) {
+func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request, tokenID string, primary bool) {
 	isAPI := isTokenAPIRequest(r)
 	w.Header().Set("Cache-Control", "no-store")
 	if !s.takeStrictTokenLimit(w, r, "") {
@@ -374,7 +381,7 @@ func (s *Server) updateLinkedToken(w http.ResponseWriter, r *http.Request, isAPI
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": map[string]interface{}{"id": id, "name": name, "expires_at": expiry}})
 		return
 	}
-	s.tokenPageRedirect(w, r, "status=renamed#token-"+strconv.FormatInt(id, 10))
+	s.tokenPageRedirect(w, r, "status=renamed#token-"+id)
 }
 
 func (s *Server) handleRevokeLinkedTokenWeb(w http.ResponseWriter, r *http.Request) {
@@ -438,12 +445,13 @@ func (s *Server) revokePrimaryToken(w http.ResponseWriter, r *http.Request, isAP
 		s.tokenActionError(w, r, isAPI, http.StatusBadRequest, "VALIDATION_FAILED", "Type the last four characters of the primary token to confirm")
 		return
 	}
-	counts, err := revokePrimaryOwner(r.Context(), s.db, identity.OwnerID, requestClientIP(r.RemoteAddr), sourceForTokenRequest(isAPI))
+	counts, err := revokePrimaryOwner(r.Context(), s.db, identity.OwnerID)
 	if err != nil {
 		log.Printf("primary token revocation failed: owner=%s error=%v", identity.OwnerID, err)
 		s.tokenUnavailable(w, r, isAPI)
 		return
 	}
+	s.recordAudit(r, "token", "token.revoked", "owner", identity.OwnerID, map[string]any{"owner_id": identity.OwnerID, "scope": "owner", "revoked_count": counts.tokens, "resources": counts.resources, "source": sourceForTokenRequest(isAPI)}, true)
 	if isAPI {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": map[string]interface{}{"tokens": counts.tokens, "resources": counts.resources}})
 		return
@@ -464,24 +472,33 @@ type ownerSQL interface {
 	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
 }
 
-func revokePrimaryOwner(ctx context.Context, db *sql.DB, ownerID, actorIP, source string) (ownerRevocationCounts, error) {
+func revokePrimaryOwner(ctx context.Context, db *sql.DB, ownerID string) (ownerRevocationCounts, error) {
 	var counts ownerRevocationCounts
 	err := database.Write(ctx, db, func(tx *sql.Tx) error {
 		var err error
 		counts, err = countOwnerData(ctx, tx, ownerID)
-		if err != nil { return err }
-		if _, err := deleteOwnerResources(ctx, tx, ownerID); err != nil { return err }
+		if err != nil {
+			return err
+		}
+		if _, err := deleteOwnerResources(ctx, tx, ownerID); err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM owners WHERE id = ?`, ownerID)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		deleted, err := result.RowsAffected()
-		if err != nil { return err }
-		if deleted != 1 { return sql.ErrNoRows }
-		details, err := json.Marshal(map[string]interface{}{"owner_id": ownerID, "scope": "owner", "tokens": counts.tokens, "resources": counts.resources, "source": source})
-		if err != nil { return err }
-		_, err = tx.ExecContext(ctx, `INSERT INTO audit_log (level, category, action, actor_ip, target_type, target_id, details, success) VALUES ('info', 'token', 'token.revoked', ?, 'owner', ?, ?, 1)`, actorIP, ownerID, string(details))
-		return err
+		if err != nil {
+			return err
+		}
+		if deleted != 1 {
+			return sql.ErrNoRows
+		}
+		return nil
 	})
-	if err != nil { return ownerRevocationCounts{}, err }
+	if err != nil {
+		return ownerRevocationCounts{}, err
+	}
 	return counts, nil
 }
 
@@ -616,7 +633,7 @@ func (s *Server) revokeLinkedToken(w http.ResponseWriter, r *http.Request, isAPI
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": map[string]interface{}{"id": id, "revoked": true}})
 		return
 	}
-	s.tokenPageRedirect(w, r, "status=revoked#token-"+strconv.FormatInt(id, 10))
+	s.tokenPageRedirect(w, r, "status=revoked#token-"+id)
 }
 
 func (s *Server) setTokenRevocationClearSiteData(w http.ResponseWriter) {
@@ -751,9 +768,13 @@ func (s *Server) renderTokenPage(w http.ResponseWriter, r *http.Request, data ma
 
 func (s *Server) tokenIdentity(r *http.Request, apiRequest bool, w http.ResponseWriter) (database.TokenIdentity, error) {
 	method := "owner_token"
-	if apiRequest { method = "api_token" }
+	if apiRequest {
+		method = "api_token"
+	}
 	if s.db == nil {
-		if s.metrics != nil { s.metrics.RecordAuth(method, "failed") }
+		if s.metrics != nil {
+			s.metrics.RecordAuth(method, "failed")
+		}
 		return database.TokenIdentity{}, sql.ErrConnDone
 	}
 	raw := ""
@@ -764,13 +785,17 @@ func (s *Server) tokenIdentity(r *http.Request, apiRequest bool, w http.Response
 	}
 	identity, err := database.LookupOwnerToken(r.Context(), s.db, raw, time.Now())
 	if err != nil {
-		if s.metrics != nil { s.metrics.RecordAuth(method, "failed") }
+		if s.metrics != nil {
+			s.metrics.RecordAuth(method, "failed")
+		}
 		if !apiRequest && raw != "" {
 			s.clearOwnerTokenCookie(w, r)
 		}
 		return database.TokenIdentity{}, err
 	}
-	if s.metrics != nil { s.metrics.RecordAuth(method, "success") }
+	if s.metrics != nil {
+		s.metrics.RecordAuth(method, "success")
+	}
 	if !apiRequest {
 		if identity.Kind != "primary" {
 			s.clearOwnerTokenCookie(w, r)
@@ -912,16 +937,7 @@ func confirmTokenAction(w http.ResponseWriter, r *http.Request, isAPI bool) bool
 }
 
 func (s *Server) auditTokenEvent(r *http.Request, action, ownerID, prefix, source string) {
-	if s.db == nil {
-		return
-	}
-	details, _ := json.Marshal(map[string]string{"owner_id": ownerID, "prefix": prefix, "source": source})
-	if err := database.Write(r.Context(), s.db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(r.Context(), `INSERT INTO audit_log (level, category, action, actor_ip, target_type, target_id, details, success) VALUES ('info', 'token', ?, ?, 'owner', ?, ?, 1)`, action, requestClientIP(r.RemoteAddr), ownerID, string(details))
-		return err
-	}); err != nil {
-		log.Printf("token audit write failed: action=%s owner=%s prefix=%s error=%v", action, ownerID, prefix, err)
-	}
+	s.recordAudit(r, "token", action, "owner", ownerID, map[string]any{"owner_id": ownerID, "prefix": prefix, "source": source}, true)
 }
 
 func (s *Server) tokenPageRedirect(w http.ResponseWriter, r *http.Request, suffix string) {
@@ -951,9 +967,11 @@ func bearerValue(r *http.Request) string {
 	return ""
 }
 
-func parseTokenID(value string) (int64, bool) {
-	id, err := strconv.ParseInt(value, 10, 64)
-	return id, err == nil && id > 0
+func parseTokenID(value string) (string, bool) {
+	if !database.ValidTokenID(value) {
+		return "", false
+	}
+	return value, true
 }
 
 func (s *Server) jsonTokenList(w http.ResponseWriter, items []database.TokenRecord, now time.Time) {

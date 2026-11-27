@@ -816,16 +816,22 @@ func clientDisplayMode(configured string, noCommand bool, output io.Writer, sele
 	if len(selectedLanguage) > 0 && i18n.IsSupported(selectedLanguage[0]) {
 		lang = selectedLanguage[0]
 	}
+	return clientDisplayModeForEnv(configured, noCommand, output, display.DetectDisplayEnv(), lang)
+}
+
+func clientDisplayModeForEnv(configured string, noCommand bool, output io.Writer, env display.DisplayEnv, lang string) (string, error) {
 	if !noCommand {
 		return "cli", nil
 	}
-	env := display.DetectDisplayEnv()
 	mode := strings.ToLower(strings.TrimSpace(configured))
 	if mode == "" {
 		mode = "auto"
 	}
 	switch mode {
 	case "auto":
+		if env.IsAutoDetectDisplayModeHeadless() {
+			return "", errors.New(clientTextFormat(lang, "error.command_required", map[string]string{"binary": filepath.Base(os.Args[0])}))
+		}
 		if env.IsAutoDetectDisplayModeGUI() && clientGUIAvailable() {
 			return "gui", nil
 		}

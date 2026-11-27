@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -425,21 +424,12 @@ func (s *Server) validMCPBearer(r *http.Request) (bool, bool) {
 }
 
 func (s *Server) auditMCPRequest(r *http.Request, method string) {
-	if s.db == nil {
-		return
-	}
 	switch method {
 	case "initialize", "tools/list", "tools/call", "resources/read", "prompts/get":
 	default:
 		method = "unknown"
 	}
-	details, _ := json.Marshal(map[string]string{"source": "mcp", "method": method})
-	if err := database.Write(r.Context(), s.db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(r.Context(), `INSERT INTO audit_log (level, category, action, actor_ip, target_type, details, success) VALUES ('info', 'mcp', 'mcp.request', ?, 'endpoint', ?, 1)`, requestClientIP(r.RemoteAddr), string(details))
-		return err
-	}); err != nil {
-		log.Printf("MCP audit write failed: %v", err)
-	}
+	s.recordAudit(r, "mcp", "mcp.request", "endpoint", "", map[string]any{"source": "mcp", "method": method}, true)
 }
 
 func (s *Server) dispatchMCPTool(w http.ResponseWriter, r *http.Request, id json.RawMessage, tool mcpTool, arguments map[string]interface{}) {

@@ -83,8 +83,9 @@ func TestDropPrivilegesRejectsInvalidIdentity(t *testing.T) {
 	for _, identity := range []Identity{
 		{},
 		{Name: "invalid/name", UID: 500, GID: 500},
-		{Name: "countries", UID: 500, GID: 501},
-		{Name: "countries", UID: 999, GID: 999},
+		{Name: "countries", UID: 500, GID: 501, Created: true},
+		{Name: "countries", UID: 999, GID: 999, Created: true},
+		{Name: "countries", UID: 1000, GID: 1000},
 	} {
 		if err := DropPrivileges(identity); err == nil {
 			t.Errorf("DropPrivileges(%+v) succeeded, want invalid identity error", identity)

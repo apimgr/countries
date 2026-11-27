@@ -34,9 +34,9 @@ func GetConfigDir(appName string) string {
 		}
 		return filepath.Join(home, "Library", "Application Support", orgName, appName)
 	case "windows":
-		base := os.Getenv("APPDATA")
-		if privilege.IsElevated() {
-			base = os.Getenv("ProgramData")
+		base := os.Getenv("ProgramData")
+		if !privilege.IsElevated() {
+			base = os.Getenv("APPDATA")
 		}
 		return filepath.Join(base, orgName, appName)
 	case "freebsd", "openbsd", "netbsd":
@@ -76,9 +76,9 @@ func GetDataDir(appName string) string {
 		}
 		return filepath.Join(home, "Library", "Application Support", orgName, appName, "data")
 	case "windows":
-		base := os.Getenv("LOCALAPPDATA")
-		if privilege.IsElevated() {
-			base = os.Getenv("ProgramData")
+		base := os.Getenv("ProgramData")
+		if !privilege.IsElevated() {
+			base = os.Getenv("LOCALAPPDATA")
 		}
 		return filepath.Join(base, orgName, appName, "data")
 	case "freebsd", "openbsd", "netbsd":
@@ -138,9 +138,9 @@ func GetLogsDir(appName string) string {
 		}
 		return filepath.Join(home, "Library", "Logs", orgName, appName)
 	case "windows":
-		base := os.Getenv("LOCALAPPDATA")
-		if privilege.IsElevated() {
-			base = os.Getenv("ProgramData")
+		base := os.Getenv("ProgramData")
+		if !privilege.IsElevated() {
+			base = os.Getenv("LOCALAPPDATA")
 		}
 		return filepath.Join(base, orgName, appName, "logs")
 	case "freebsd", "openbsd", "netbsd":
@@ -173,9 +173,9 @@ func GetCacheDir(appName string) string {
 		}
 		return filepath.Join(home, "Library", "Caches", orgName, appName)
 	case "windows":
-		base := os.Getenv("LOCALAPPDATA")
-		if privilege.IsElevated() {
-			base = os.Getenv("ProgramData")
+		base := os.Getenv("ProgramData")
+		if !privilege.IsElevated() {
+			base = os.Getenv("LOCALAPPDATA")
 		}
 		return filepath.Join(base, orgName, appName, "cache")
 	case "freebsd", "openbsd", "netbsd":
@@ -202,12 +202,6 @@ func GetDatabaseDir(dataDir string) string {
 	}
 	if isContainer() {
 		return "/data/db/sqlite"
-	}
-	if os.Getenv("DATA_DIR") == "" && privilege.IsElevated() {
-		switch runtime.GOOS {
-		case "darwin", "windows":
-			return filepath.Join(filepath.Dir(dataDir), "db")
-		}
 	}
 	return filepath.Join(dataDir, "db")
 }

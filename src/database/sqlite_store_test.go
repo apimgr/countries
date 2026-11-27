@@ -14,27 +14,43 @@ import (
 
 func TestSQLiteGatewayRoutesReturningWriteThroughWriter(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "server.db"))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = Close(db) })
-	if _, err := db.Exec(`CREATE TABLE gateway_returning_test (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`); err != nil { t.Fatal(err) }
+	if _, err := db.Exec(`CREATE TABLE gateway_returning_test (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
 	var value string
-	if err := db.QueryRow(`INSERT INTO gateway_returning_test(value) VALUES (?) RETURNING value`, "saved").Scan(&value); err != nil { t.Fatal(err) }
-	if value != "saved" { t.Fatalf("RETURNING value = %q, want saved", value) }
+	if err := db.QueryRow(`INSERT INTO gateway_returning_test(value) VALUES (?) RETURNING value`, "saved").Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	if value != "saved" {
+		t.Fatalf("RETURNING value = %q, want saved", value)
+	}
 }
 
 func TestSQLiteStoreConcurrentReadersAndWriters(t *testing.T) {
 	store, err := OpenSQLiteStore(filepath.Join(t.TempDir(), "concurrent.db"), 25)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = store.Close() })
-	if _, err := store.writeDB.Exec(`CREATE TABLE concurrent_test (id INTEGER PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)`); err != nil { t.Fatal(err) }
+	if _, err := store.writeDB.Exec(`CREATE TABLE concurrent_test (id INTEGER PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)`); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var wait sync.WaitGroup
 	var errMu sync.Mutex
 	var failures []string
 	record := func(err error) {
-		if err == nil { return }
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) { return }
+		if err == nil {
+			return
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
 		errMu.Lock()
 		failures = append(failures, err.Error())
 		errMu.Unlock()
@@ -67,5 +83,7 @@ func TestSQLiteStoreConcurrentReadersAndWriters(t *testing.T) {
 			t.Fatalf("SQLite concurrency contract failed: %s", failure)
 		}
 	}
-	if len(failures) > 0 { t.Fatalf("SQLite concurrency reported errors: %s", fmt.Sprint(failures)) }
+	if len(failures) > 0 {
+		t.Fatalf("SQLite concurrency reported errors: %s", fmt.Sprint(failures))
+	}
 }

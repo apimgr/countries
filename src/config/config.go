@@ -31,15 +31,20 @@ import (
 )
 
 type Config struct {
-	ConfigDir        string            `yaml:"-"`
-	Lang             string            `yaml:"lang"`
-	GeneratedSecrets []string          `yaml:"-"`
-	Data             DataConfig        `yaml:"data"`
-	Server           ServerConfig      `yaml:"server"`
-	CLI              CLIConfig         `yaml:"cli"`
-	Web              WebConfig         `yaml:"web"`
-	WebUI            WebUIConfig       `yaml:"web-ui"`
-	WebRobots        WebRobotsConfig   `yaml:"web-robots"`
+	ConfigDir        string          `yaml:"-"`
+	Listener         net.Listener    `yaml:"-"`
+	Version          string          `yaml:"-"`
+	CommitID         string          `yaml:"-"`
+	BuildEpoch       string          `yaml:"-"`
+	OfficialSite     string          `yaml:"-"`
+	Lang             string          `yaml:"lang"`
+	GeneratedSecrets []string        `yaml:"-"`
+	Data             DataConfig      `yaml:"data"`
+	Server           ServerConfig    `yaml:"server"`
+	CLI              CLIConfig       `yaml:"cli"`
+	Web              WebConfig       `yaml:"web"`
+	WebUI            WebUIConfig     `yaml:"web-ui"`
+	WebRobots        WebRobotsConfig `yaml:"web-robots"`
 }
 
 type DataConfig struct {
@@ -65,7 +70,7 @@ type CLIConfig struct {
 
 type CLIBinaryDownloadConfig struct {
 	Dir         string `yaml:"dir"`
-	RequireAuth bool `yaml:"require_auth"`
+	RequireAuth bool   `yaml:"require_auth"`
 }
 
 type WebConfig struct {
@@ -119,32 +124,45 @@ type WebHeadersConfig struct {
 	SecFetchValidation      bool                `yaml:"sec_fetch_validation"`
 	ServerTimingInDebugOnly bool                `yaml:"server_timing_in_debug_only"`
 	NEL                     NELConfig           `yaml:"nel"`
-	ClearSiteData ClearSiteDataConfig `yaml:"clear_site_data"`
+	ClearSiteData           ClearSiteDataConfig `yaml:"clear_site_data"`
 }
 
-type HSTSConfig struct { Enabled bool `yaml:"enabled"`; MaxAgeSeconds int `yaml:"max_age_seconds"`; IncludeSubdomains bool `yaml:"include_subdomains"`; Preload bool `yaml:"preload"` }
-type ReportsConfig struct { RateLimitPerMinute int `yaml:"rate_limit_per_minute"`; RateLimitPerIPBurst int `yaml:"rate_limit_per_ip_burst"` }
-type NELConfig struct { Enabled bool `yaml:"enabled"`; MaxAgeSeconds int `yaml:"max_age_seconds"`; IncludeSubdomains bool `yaml:"include_subdomains"`; SampleRate float64 `yaml:"sample_rate"` }
+type HSTSConfig struct {
+	Enabled           bool `yaml:"enabled"`
+	MaxAgeSeconds     int  `yaml:"max_age_seconds"`
+	IncludeSubdomains bool `yaml:"include_subdomains"`
+	Preload           bool `yaml:"preload"`
+}
+type ReportsConfig struct {
+	RateLimitPerMinute  int `yaml:"rate_limit_per_minute"`
+	RateLimitPerIPBurst int `yaml:"rate_limit_per_ip_burst"`
+}
+type NELConfig struct {
+	Enabled           bool    `yaml:"enabled"`
+	MaxAgeSeconds     int     `yaml:"max_age_seconds"`
+	IncludeSubdomains bool    `yaml:"include_subdomains"`
+	SampleRate        float64 `yaml:"sample_rate"`
+}
 type CSPConfig struct {
-	Enabled bool `yaml:"enabled"`
-	Mode string `yaml:"mode"`
-	ModeExplicit bool `yaml:"-"`
-	ScriptSrcExtra string `yaml:"script_src_extra"`
-	StyleSrcExtra string `yaml:"style_src_extra"`
-	ImgSrcExtra string `yaml:"img_src_extra"`
-	FontSrcExtra string `yaml:"font_src_extra"`
-	ConnectSrcExtra string `yaml:"connect_src_extra"`
-	FrameSrcExtra string `yaml:"frame_src_extra"`
-	FormActionExtra string `yaml:"form_action_extra"`
-	ScriptSrcOverride string `yaml:"script_src_override"`
-	StyleSrcOverride string `yaml:"style_src_override"`
-	ImgSrcOverride string `yaml:"img_src_override"`
-	FontSrcOverride string `yaml:"font_src_override"`
-	ConnectSrcOverride string `yaml:"connect_src_override"`
-	FrameSrcOverride string `yaml:"frame_src_override"`
-	FormActionOverride string `yaml:"form_action_override"`
-	ReportsEnabled bool `yaml:"reports_enabled"`
-	ReportsSampleRate float64 `yaml:"reports_sample_rate"`
+	Enabled            bool    `yaml:"enabled"`
+	Mode               string  `yaml:"mode"`
+	ModeExplicit       bool    `yaml:"-"`
+	ScriptSrcExtra     string  `yaml:"script_src_extra"`
+	StyleSrcExtra      string  `yaml:"style_src_extra"`
+	ImgSrcExtra        string  `yaml:"img_src_extra"`
+	FontSrcExtra       string  `yaml:"font_src_extra"`
+	ConnectSrcExtra    string  `yaml:"connect_src_extra"`
+	FrameSrcExtra      string  `yaml:"frame_src_extra"`
+	FormActionExtra    string  `yaml:"form_action_extra"`
+	ScriptSrcOverride  string  `yaml:"script_src_override"`
+	StyleSrcOverride   string  `yaml:"style_src_override"`
+	ImgSrcOverride     string  `yaml:"img_src_override"`
+	FontSrcOverride    string  `yaml:"font_src_override"`
+	ConnectSrcOverride string  `yaml:"connect_src_override"`
+	FrameSrcOverride   string  `yaml:"frame_src_override"`
+	FormActionOverride string  `yaml:"form_action_override"`
+	ReportsEnabled     bool    `yaml:"reports_enabled"`
+	ReportsSampleRate  float64 `yaml:"reports_sample_rate"`
 }
 
 type ClearSiteDataConfig struct {
@@ -199,7 +217,7 @@ type ServerConfig struct {
 	GeoIP          GeoIPConfig               `yaml:"geoip"`
 	Scheduler      SchedulerConfig           `yaml:"scheduler"`
 	RateLimit      RateLimitConfig           `yaml:"rate_limit"`
-	Logging        LoggingConfig             `yaml:"logging"`
+	Logging        LoggingConfig             `yaml:"logs"`
 	TrustedProxies TrustedProxiesConfig      `yaml:"trusted_proxies"`
 	Contact        ContactConfig             `yaml:"contact"`
 	Pages          PagesConfig               `yaml:"pages"`
@@ -215,7 +233,7 @@ type ServerConfig struct {
 }
 
 type CORSConfig struct {
-	AllowedOrigins  []string `yaml:"allowed_origins"`
+	AllowedOrigins   []string `yaml:"allowed_origins"`
 	AllowCredentials bool     `yaml:"allow_credentials"`
 	MaxAge           int      `yaml:"max_age"`
 }
@@ -690,10 +708,10 @@ type PublicContactConfig struct {
 }
 
 type DatabaseConfig struct {
-	Driver string             `yaml:"driver"`
-	URL    string             `yaml:"url"`
-	Token  string             `yaml:"-"`
-	Pool   DatabasePoolConfig `yaml:"pool"`
+	Driver string              `yaml:"driver"`
+	URL    string              `yaml:"url"`
+	Token  string              `yaml:"-"`
+	Pool   DatabasePoolConfig  `yaml:"pool"`
 	Cache  DatabaseCacheConfig `yaml:"cache"`
 }
 
@@ -713,23 +731,23 @@ type DatabasePoolConfig struct {
 }
 
 type CacheConfig struct {
-	Type             string `yaml:"type"`
-	URL              string `yaml:"url"`
-	Host             string `yaml:"host"`
-	Port             int    `yaml:"port"`
-	Username         string `yaml:"username"`
-	Password         string `yaml:"-"`
-	Database         int    `yaml:"db"`
-	TLS              bool   `yaml:"tls"`
-	TLSSkipVerify     bool   `yaml:"tls_skip_verify"`
-	TLSCA             string `yaml:"tls_ca"`
-	TLSCert           string `yaml:"tls_cert"`
-	TLSKey            string `yaml:"tls_key"`
-	PoolSize          int    `yaml:"pool_size"`
-	MinIdle           int    `yaml:"min_idle"`
-	Timeout           string `yaml:"timeout"`
-	Prefix            string `yaml:"prefix"`
-	TTL               string `yaml:"ttl"`
+	Type          string `yaml:"type"`
+	URL           string `yaml:"url"`
+	Host          string `yaml:"host"`
+	Port          int    `yaml:"port"`
+	Username      string `yaml:"username"`
+	Password      string `yaml:"-"`
+	Database      int    `yaml:"db"`
+	TLS           bool   `yaml:"tls"`
+	TLSSkipVerify bool   `yaml:"tls_skip_verify"`
+	TLSCA         string `yaml:"tls_ca"`
+	TLSCert       string `yaml:"tls_cert"`
+	TLSKey        string `yaml:"tls_key"`
+	PoolSize      int    `yaml:"pool_size"`
+	MinIdle       int    `yaml:"min_idle"`
+	Timeout       string `yaml:"timeout"`
+	Prefix        string `yaml:"prefix"`
+	TTL           string `yaml:"ttl"`
 }
 
 type UpdateConfig struct {
@@ -899,8 +917,58 @@ type MetricsLokiConfig struct {
 }
 
 type LoggingConfig struct {
-	AccessFormat string `yaml:"access_format"`
-	Level        string `yaml:"level"`
+	Defaults LoggingDefaultsConfig `yaml:"defaults"`
+	Access   AccessLogConfig       `yaml:"access"`
+	Server   LogKindConfig         `yaml:"server"`
+	Error    LogKindConfig         `yaml:"error"`
+	Audit    AuditLogConfig        `yaml:"audit"`
+	Security LogKindConfig         `yaml:"security"`
+	Debug    DebugLogConfig        `yaml:"debug"`
+	Level    string                `yaml:"level"`
+}
+
+type LoggingDefaultsConfig struct {
+	Custom string `yaml:"custom"`
+	Rotate string `yaml:"rotate"`
+	Keep   string `yaml:"keep"`
+}
+
+type AccessLogConfig struct {
+	Filename string `yaml:"filename"`
+	Format   string `yaml:"format"`
+	Rotate   string `yaml:"rotate"`
+	Keep     string `yaml:"keep"`
+}
+
+type LogKindConfig struct {
+	Filename string `yaml:"filename"`
+	Format   string `yaml:"format"`
+	Rotate   string `yaml:"rotate"`
+	Keep     string `yaml:"keep"`
+}
+
+type DebugLogConfig struct {
+	LogKindConfig `yaml:",inline"`
+	Enabled       bool `yaml:"enabled"`
+}
+
+type AuditLogConfig struct {
+	Enabled          bool             `yaml:"enabled"`
+	Filename         string           `yaml:"filename"`
+	Format           string           `yaml:"format"`
+	Rotate           string           `yaml:"rotate"`
+	Keep             string           `yaml:"keep"`
+	Compress         bool             `yaml:"compress"`
+	TokenUsage       bool             `yaml:"token_usage"`
+	Events           AuditEventConfig `yaml:"events"`
+	IncludeUserAgent bool             `yaml:"include_user_agent"`
+}
+
+type AuditEventConfig struct {
+	Configuration bool `yaml:"configuration"`
+	Security      bool `yaml:"security"`
+	Backup        bool `yaml:"backup"`
+	Server        bool `yaml:"server"`
 }
 
 type WebUIConfig struct {
@@ -988,9 +1056,9 @@ func DefaultConfig() *Config {
 		},
 		CLI: CLIConfig{BinaryDownload: CLIBinaryDownloadConfig{Dir: "{data_dir}/cli", RequireAuth: false}},
 		Web: WebConfig{
-			HSTS: HSTSConfig{Enabled: true, MaxAgeSeconds: 63072000, IncludeSubdomains: true, Preload: true},
+			HSTS:    HSTSConfig{Enabled: true, MaxAgeSeconds: 63072000, IncludeSubdomains: true, Preload: true},
 			Reports: ReportsConfig{RateLimitPerMinute: 60, RateLimitPerIPBurst: 10},
-			CSP: CSPConfig{Enabled: true, Mode: "enforce", ReportsEnabled: true, ReportsSampleRate: 1},
+			CSP:     CSPConfig{Enabled: true, Mode: "enforce", ReportsEnabled: true, ReportsSampleRate: 1},
 			Headers: WebHeadersConfig{COOP: "unsafe-none", COEP: "unsafe-none", CORP: "cross-origin", OriginAgentCluster: true, CrossDomainPolicies: "none", HonorSecGPC: true, SecFetchValidation: true, ServerTimingInDebugOnly: true, NEL: NELConfig{Enabled: true, MaxAgeSeconds: 2592000, IncludeSubdomains: true, SampleRate: 1}, ClearSiteData: ClearSiteDataConfig{
 				OnTokenRevocation: true, OnConsentWithdrawal: true,
 			}},
@@ -1060,8 +1128,18 @@ func DefaultConfig() *Config {
 				GlobalBurst:  240,
 			},
 			Logging: LoggingConfig{
-				AccessFormat: "apache",
-				Level:        "info",
+				Defaults: LoggingDefaultsConfig{Rotate: "weekly,50MB", Keep: "none"},
+				Access:   AccessLogConfig{Filename: "access.log", Format: "apache", Rotate: "monthly"},
+				Server:   LogKindConfig{Filename: "server.log", Format: "text"},
+				Error:    LogKindConfig{Filename: "error.log", Format: "text"},
+				Audit: AuditLogConfig{
+					Enabled: true, Filename: "audit.log", Format: "json", Rotate: "daily",
+					Events:           AuditEventConfig{Configuration: true, Security: true, Backup: true, Server: true},
+					IncludeUserAgent: true,
+				},
+				Security: LogKindConfig{Filename: "security.log", Format: "fail2ban"},
+				Debug:    DebugLogConfig{LogKindConfig: LogKindConfig{Filename: "debug.log", Format: "text"}},
+				Level:    "",
 			},
 		},
 		WebUI: WebUIConfig{

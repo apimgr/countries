@@ -18,6 +18,12 @@ func TestWindowsServiceBinaryPathQuotesSpaces(t *testing.T) {
 	}
 }
 
+func TestSystemServiceTargetRejectsNonLifecycleCommands(t *testing.T) {
+	if SystemServiceTarget("--help") {
+		t.Fatal("help was treated as a system service operation")
+	}
+}
+
 func TestConfirmUninstall(t *testing.T) {
 	for _, test := range []struct {
 		answer  string

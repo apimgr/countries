@@ -12,6 +12,7 @@ import (
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/yuin/goldmark"
 	xhtml "golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 )
 
 const maxOperatorPageBody = 256 * 1024
@@ -73,13 +74,13 @@ func (s *Server) operatorHTML(r *http.Request, name string) template.HTML {
 		if name == "header" || name == "footer" {
 			return ""
 		}
-		return template.HTML(sanitizePageHTML(markdownSourceToHTML(body), richHTMLPolicy))
+		return template.HTML(sanitizePageHTML(shiftPageHeadings(renderMarkdownSource(body)), richHTMLPolicy))
 	case "html":
 		policy := richHTMLPolicy
 		if name == "header" || name == "footer" {
 			policy = strictHTMLPolicy
 		}
-		return template.HTML(sanitizePageHTML(body, policy))
+		return template.HTML(sanitizePageHTML(shiftPageHeadings(body), policy))
 	case "txt":
 		if name == "header" || name == "footer" {
 			return ""
@@ -90,12 +91,46 @@ func (s *Server) operatorHTML(r *http.Request, name string) template.HTML {
 	}
 }
 
+func shiftPageHeadings(source string) string {
+	context := &xhtml.Node{Type: xhtml.ElementNode, Data: "div", DataAtom: atom.Div}
+	nodes, err := xhtml.ParseFragment(strings.NewReader(source), context)
+	if err != nil {
+		return ""
+	}
+	var shift func(*xhtml.Node)
+	shift = func(node *xhtml.Node) {
+		if node.Type == xhtml.ElementNode && len(node.Data) == 2 && node.Data[0] == 'h' && node.Data[1] >= '1' && node.Data[1] <= '6' {
+			level := int(node.Data[1]-'0') + 2
+			if level > 6 {
+				level = 6
+			}
+			node.Data = fmt.Sprintf("h%d", level)
+			node.DataAtom = atom.Lookup([]byte(node.Data))
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			shift(child)
+		}
+	}
+	var output bytes.Buffer
+	for _, node := range nodes {
+		shift(node)
+		if err := xhtml.Render(&output, node); err != nil {
+			return ""
+		}
+	}
+	return output.String()
+}
+
 func markdownSourceToHTML(source string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(renderMarkdownSource(source), "<h1>", "<h2>"), "</h1>", "</h2>")
+}
+
+func renderMarkdownSource(source string) string {
 	var rendered bytes.Buffer
 	if err := goldmark.Convert([]byte(source), &rendered); err != nil {
 		return "<p>Content unavailable.</p>"
 	}
-	return strings.ReplaceAll(strings.ReplaceAll(rendered.String(), "<h1>", "<h2>"), "</h1>", "</h2>")
+	return rendered.String()
 }
 
 func sanitizePageHTML(source string, policy *bluemonday.Policy) string {

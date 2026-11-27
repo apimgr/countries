@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bufio"
@@ -766,13 +766,13 @@ func exportPGP(args []string, db *sql.DB, keyDir, logsDir string) error {
 	if err := writePGPFile(args[1], private); err != nil {
 		return err
 	}
-	ip := "127.0.0.1"
+	ip := "local"
 	if ssh := strings.Fields(os.Getenv("SSH_CONNECTION")); len(ssh) > 0 {
 		if parsed := net.ParseIP(ssh[0]); parsed != nil {
 			ip = parsed.String()
 		}
 	}
-	if err := auditlog.Write(logsDir, auditlog.Event{Event: "security.private_key_exported", Category: "security", Severity: "high", Actor: auditlog.Actor{Type: "operator", ID: operator, IP: &ip}, Details: map[string]any{"reason": reason, "path": filepath.Base(args[1])}, Result: "success"}, time.Now()); err != nil {
+	if err := auditlog.WriteAndMirror(logsDir, db, auditlog.Event{Event: "security.private_key_exported", Category: "security", Severity: "high", Actor: auditlog.Actor{Type: "operator", ID: operator, IP: &ip}, Details: map[string]any{"reason": reason, "path": filepath.Base(args[1])}, Result: "success"}, time.Now()); err != nil {
 		return errors.Join(fmt.Errorf("write private key export audit event: %w", err), os.Remove(args[1]))
 	}
 	return nil

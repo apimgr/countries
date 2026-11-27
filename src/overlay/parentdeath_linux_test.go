@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -52,12 +53,28 @@ func TestParentDeathSignalKillsManagedChild(t *testing.T) {
 	defer func() { _ = syscall.Kill(pid, syscall.SIGKILL) }()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := syscall.Kill(pid, 0); err == syscall.ESRCH {
+		if !processIsRunning(pid) {
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatalf("managed child PID %d remained alive after its parent exited", pid)
+}
+
+func processIsRunning(pid int) bool {
+	if err := syscall.Kill(pid, 0); err == syscall.ESRCH {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return !os.IsNotExist(err)
+	}
+	closingCommand := strings.LastIndexByte(string(data), ')')
+	if closingCommand < 0 {
+		return true
+	}
+	fields := strings.Fields(string(data[closingCommand+1:]))
+	return len(fields) == 0 || (fields[0] != "Z" && fields[0] != "X")
 }
 
 func TestParentDeathSignalBlocker(t *testing.T) {

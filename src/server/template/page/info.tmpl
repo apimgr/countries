@@ -205,6 +205,7 @@
       {{if .Bullets}}<ul>{{range .Bullets}}<li>{{.}}</li>{{end}}</ul>{{end}}
       {{end}}
       {{if and (eq $.Path "/server/about") (eq .ID "about-project")}}<p><a href="https://github.com/apimgr/countries">{{t $.Lang "about.repository"}}</a></p>{{end}}
+      {{if and (eq $.Path "/server/about") (eq .ID "about-attribution")}}<p><a href="https://db-ip.com/">IP Geolocation by DB-IP</a></p>{{end}}
     </section>
     {{end}}
     {{end}}
@@ -212,7 +213,6 @@
     {{if eq .Path "/server/help"}}<section class="section-card" aria-labelledby="more-help"><h2 id="more-help">{{t .Lang "help.more"}}</h2><ul class="hub-list">{{range .HelpPages}}<li class="hub-item"><a class="hub-link" href="{{path $.URLPrefix .Path}}"><span class="hub-title">{{t $.Lang .TitleKey}}</span><span class="hub-desc">{{t $.Lang .DescriptionKey}}</span></a></li>{{end}}</ul></section>{{end}}
     {{if eq .Path "/server/about"}}{{with operatorHTML .Request "about"}}<section class="section-card" aria-labelledby="about-operator-content"><h2 id="about-operator-content">{{t $.Lang "about.additional_information"}}</h2>{{.}}</section>{{end}}{{end}}
     {{if and (eq .Path "/server/terms") $termsContent}}<section class="section-card" aria-labelledby="terms-operator-content"><h2 id="terms-operator-content">{{t .Lang "terms.operator_content"}}</h2>{{$termsContent}}</section>{{end}}
-    {{if eq .Path "/server/about"}}<section class="section-card" aria-labelledby="about-attribution"><h2 id="about-attribution">{{t .Lang "about.additional_information"}}</h2><p><a href="https://db-ip.com/">IP Geolocation by DB-IP</a></p></section>{{end}}
     {{if and .Version (eq .Path "/server/about")}}<section class="section-card" aria-labelledby="about-version"><h2 id="about-version">{{t .Lang "about.version"}}</h2><p>{{.Version}}{{if .BuildDate}} · {{t .Lang "about.built"}} {{.BuildDate}}{{end}}</p></section>{{end}}
   </main>
 {{end}}

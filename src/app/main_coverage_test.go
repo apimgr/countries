@@ -1,7 +1,8 @@
-package main
+package app
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,8 +10,27 @@ import (
 
 	"github.com/apimgr/countries/src/config"
 	"github.com/apimgr/countries/src/database"
+	"github.com/apimgr/countries/src/overlay"
 	"github.com/apimgr/countries/src/testutil"
 )
+
+func TestServerTimezoneAndStartupOverlayDefaults(t *testing.T) {
+	t.Setenv("TZ", "UTC")
+	if got := serverTimezone().String(); got != "UTC" {
+		t.Fatalf("serverTimezone() = %q, want UTC", got)
+	}
+	manager := overlay.NewManager(overlay.Options{Config: *config.DefaultConfig()})
+	torStatus, i2pStatus := waitForStartupOverlayAddresses(context.Background(), manager, false, false)
+	if torStatus.Status != "disabled" || i2pStatus.Status != "disabled" {
+		t.Fatalf("disabled overlay statuses = (%+v, %+v)", torStatus, i2pStatus)
+	}
+}
+
+func TestMaybeEscalateSystemServiceRejectsUnrecognizedCommand(t *testing.T) {
+	if maybeEscalateSystemService("not-a-service-command", false) {
+		t.Fatal("unrecognized command attempted privilege escalation")
+	}
+}
 
 // Restore emptiness decides whether an unprivileged restore can overwrite
 // current state, so cover absent, fresh, and populated databases.

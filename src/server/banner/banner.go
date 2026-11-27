@@ -11,53 +11,94 @@ import (
 	"golang.org/x/term"
 )
 
+type ServerBannerInfo struct {
+	AppName         string
+	Version         string
+	AppMode         string
+	StartupDatetime string
+	URLs            []string
+	OnionAddress    string
+	I2PAddress      string
+	SMTPAddress     string
+	SetupToken      string
+	ForceColor      *bool
+	Lang            string
+}
+
 // PrintServerStartupBanner selects a compact banner suitable for the current terminal.
-func PrintServerStartupBanner(appName, version, appMode string, urls []string, forceColor *bool, lang string) {
+func PrintServerStartupBanner(info ServerBannerInfo) {
 	width, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || width <= 0 {
 		width = 80
 	}
 	emojis := os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
-	colors := terminalColor(forceColor)
+	colors := terminalColor(info.ForceColor)
+	appMode := info.AppMode
+	started := info.StartupDatetime
+	if started == "" {
+		started = formatStartupTimestamp(time.Now())
+	}
 	if !emojis {
-		printPlain(appName, version, appMode, urls, lang)
+		printPlain(info.AppName, info.Version, appMode, info.URLs, info.Lang, started, info.SetupToken, info.OnionAddress, info.I2PAddress, info.SMTPAddress)
 		return
 	}
 	switch {
 	case width >= 80:
-		fmt.Printf("╭──────────────────────────────────────────────────────────────╮\n│  🚀 %s · 📦 %s\n", appName, version)
+		fmt.Printf("  ____  ____  _   _ _   _ _____ ____  _   _ _____ ____\n")
+		fmt.Printf(" / ___||  _ \\| | | | | | |_   _/ ___|| | | | ____/ ___|\n")
+		fmt.Printf(" \\___ \\| |_) | |_| | | | | | || |    | |_| |  _| \\___ \\\n")
+		fmt.Printf("  ___) |  __/|  _  | |_| | | || |___ |  _  | |___ ___) |\n")
+		fmt.Printf(" |____/|_|   |_| |_|\\___/  |_| \\____||_| |_|_____|____/\n\n")
+		fmt.Printf("╭──────────────────────────────────────────────────────────────╮\n│  🚀 %s · 📦 %s\n", info.AppName, info.Version)
 		fmt.Println("├──────────────────────────────────────────────────────────────┤")
-		printMode(appMode, lang, true, colors)
+		printMode(appMode, info.Lang, true, colors)
 		fmt.Println("├──────────────────────────────────────────────────────────────┤")
-		printURLs(urls, true)
-		fmt.Printf("│  ✅ Started: %s\n╰──────────────────────────────────────────────────────────────╯\n", startupTimestamp())
+		printURLs(info.URLs, true)
+		printOptional(info)
+		fmt.Printf("│  ✅ Started: %s\n╰──────────────────────────────────────────────────────────────╯\n", started)
 	case width >= 60:
-		fmt.Printf("🚀 %s v%s\n", appName, version)
-		printMode(appMode, lang, true, colors)
-		printURLs(urls, true)
-		fmt.Printf("✅ Started: %s\n", startupTimestamp())
+		fmt.Printf("🚀 %s v%s\n", info.AppName, info.Version)
+		printMode(appMode, info.Lang, true, colors)
+		printURLs(info.URLs, true)
+		printOptional(info)
+		fmt.Printf("✅ Started: %s\n", started)
 	case width >= 40:
-		fmt.Printf("%s %s\n%s", appName, version, strings.TrimSuffix(appMode, " [debugging]"))
-		if len(urls) > 0 {
-			fmt.Printf("\n%s", hostPort(urls[0]))
+		fmt.Printf("%s %s\n%s", info.AppName, info.Version, strings.TrimSuffix(appMode, " [debugging]"))
+		if len(info.URLs) > 0 {
+			fmt.Printf("\n%s", hostPort(info.URLs[0]))
 		}
 		fmt.Println()
 	default:
-		fmt.Printf("%s", appName)
-		if len(urls) > 0 {
-			fmt.Printf(" :%s", portPart(urls[0]))
+		fmt.Printf("%s", info.AppName)
+		if len(info.URLs) > 0 {
+			fmt.Printf(" :%s", portPart(info.URLs[0]))
+		}
+		if info.SetupToken != "" {
+			fmt.Print(" [SETUP]")
 		}
 		fmt.Println()
 	}
 }
 
-func printPlain(appName, version, appMode string, urls []string, lang string) {
+func printPlain(appName, version, appMode string, urls []string, lang, started, setupToken, onion, i2p, smtp string) {
 	fmt.Printf("%s v%s\n", appName, version)
 	fmt.Printf("%s: %s\n", i18n.Translate(lang, "cli.running_in_mode_label"), appMode)
 	for _, address := range urls {
 		fmt.Printf("%s: %s\n", i18n.Translate(lang, "cli.listening_label"), address)
 	}
-	fmt.Printf("%s: %s\n", i18n.Translate(lang, "cli.started_label"), startupTimestamp())
+	fmt.Printf("%s: %s\n", i18n.Translate(lang, "cli.started_label"), started)
+	if onion != "" {
+		fmt.Printf("Tor: http://%s\n", onion)
+	}
+	if i2p != "" {
+		fmt.Printf("I2P: http://%s\n", i2p)
+	}
+	if smtp != "" {
+		fmt.Printf("SMTP: %s\n", smtp)
+	}
+	if setupToken != "" {
+		fmt.Printf("Setup token: %s\n", setupToken)
+	}
 	fmt.Println()
 }
 
@@ -134,7 +175,7 @@ func portPart(address string) string {
 	return ""
 }
 
-func startupTimestamp() string {
+func formatStartupTimestamp(timestamp time.Time) string {
 	location, err := time.LoadLocation("America/New_York")
 	if configured := os.Getenv("TZ"); configured != "" {
 		if configuredLocation, loadErr := time.LoadLocation(configured); loadErr == nil {
@@ -144,5 +185,20 @@ func startupTimestamp() string {
 	if err != nil || location == nil {
 		location = time.FixedZone("UTC", 0)
 	}
-	return time.Now().In(location).Format("January 02, 2006 at 15:04:05 MST")
+	return timestamp.In(location).Format("January 02, 2006 at 15:04:05 MST")
+}
+
+func printOptional(info ServerBannerInfo) {
+	if info.OnionAddress != "" {
+		fmt.Printf("🧅 Tor: http://%s\n", info.OnionAddress)
+	}
+	if info.I2PAddress != "" {
+		fmt.Printf("🔗 I2P: http://%s\n", info.I2PAddress)
+	}
+	if info.SMTPAddress != "" {
+		fmt.Printf("📧 SMTP: %s\n", info.SMTPAddress)
+	}
+	if info.SetupToken != "" {
+		fmt.Printf("🔑 Setup token: %s\n", info.SetupToken)
+	}
 }

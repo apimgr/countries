@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -54,28 +55,20 @@ func ensureSystemAccount(name, homeDir string) (Identity, error) {
 	if account != nil {
 		uid, err := strconv.Atoi(account.Uid)
 		if err != nil {
-			return Identity{}, errors.New("service account has an invalid UID")
+			return Identity{}, fmt.Errorf("service account %q has an invalid UID", name)
 		}
 		gid, err := strconv.Atoi(account.Gid)
-		if err != nil || gid != uid {
-			return Identity{}, errors.New("service account UID and primary GID must match")
+		if err != nil {
+			return Identity{}, fmt.Errorf("service account %q has an invalid primary GID", name)
 		}
-		id = uid
-		if !validSystemID(id, runtime.GOOS) {
-			return Identity{}, errors.New("service account UID is outside the safe system range")
+		shell, err := lookupAccountShell(name)
+		if err != nil {
+			return Identity{}, fmt.Errorf("inspect service account %q shell: %w", name, err)
 		}
-		if group != nil {
-			groupID, err := strconv.Atoi(group.Gid)
-			if err != nil || groupID != id {
-				return Identity{}, errors.New("service account group GID must match its UID")
-			}
-		} else {
-			if err := createGroup(name, id); err != nil {
-				return Identity{}, err
-			}
-			return Identity{Name: name, UID: id, GID: id, GroupCreated: true}, nil
+		if err := validateReusableAccount(uid, gid, shell); err != nil {
+			return Identity{}, fmt.Errorf("service account %q conflicts with the required system account: %w", name, err)
 		}
-		return Identity{Name: name, UID: id, GID: id}, nil
+		return Identity{Name: name, UID: uid, GID: gid}, nil
 	}
 
 	if group != nil {
@@ -111,6 +104,65 @@ func ensureSystemAccount(name, homeDir string) (Identity, error) {
 		return Identity{}, err
 	}
 	return Identity{Name: name, UID: id, GID: id, Created: true, GroupCreated: group == nil}, nil
+}
+
+func validateReusableAccount(uid, gid int, shell string) error {
+	if uid <= 0 || uid >= 1000 {
+		return errors.New("UID must be between 1 and 999")
+	}
+	if gid <= 0 || gid >= 1000 {
+		return errors.New("primary GID must be in the non-privileged system range")
+	}
+	switch filepath.Base(shell) {
+	case "nologin", "false":
+		return nil
+	default:
+		return errors.New("account must use a nologin or false shell")
+	}
+}
+
+func lookupAccountShell(name string) (string, error) {
+	if runtime.GOOS == "linux" {
+		if getent, err := exec.LookPath("getent"); err == nil {
+			output, lookupErr := exec.Command(getent, "passwd", name).Output()
+			if lookupErr == nil {
+				if shell, ok := passwdShell(string(output), name); ok {
+					return shell, nil
+				}
+			}
+		}
+	}
+	if runtime.GOOS == "darwin" {
+		if dscl, err := exec.LookPath("dscl"); err == nil {
+			output, lookupErr := exec.Command(dscl, ".", "-read", "/Users/"+name, "UserShell").Output()
+			if lookupErr == nil {
+				fields := strings.Fields(string(output))
+				if len(fields) >= 2 {
+					return fields[len(fields)-1], nil
+				}
+			}
+		}
+	}
+	for _, passwdPath := range []string{"/etc/passwd", "/etc/master.passwd"} {
+		data, err := os.ReadFile(passwdPath)
+		if err != nil {
+			continue
+		}
+		if shell, ok := passwdShell(string(data), name); ok {
+			return shell, nil
+		}
+	}
+	return "", errors.New("login shell is unavailable")
+}
+
+func passwdShell(contents, name string) (string, bool) {
+	for _, line := range strings.Split(contents, "\n") {
+		fields := strings.Split(line, ":")
+		if len(fields) >= 7 && fields[0] == name {
+			return fields[6], true
+		}
+	}
+	return "", false
 }
 
 // RemoveSystemAccount deletes an account only when its current IDs still match
@@ -328,7 +380,7 @@ func isUnknownGID(err error) bool {
 
 // DropPrivileges changes the process's real and effective group and user IDs.
 func DropPrivileges(identity Identity) error {
-	if !accountNamePattern.MatchString(identity.Name) || identity.UID != identity.GID || !validSystemID(identity.UID, runtime.GOOS) {
+	if !validIdentityForDrop(identity, runtime.GOOS) {
 		return errors.New("invalid service identity")
 	}
 	if os.Geteuid() != 0 {
@@ -347,4 +399,14 @@ func DropPrivileges(identity Identity) error {
 		return errors.New("service privilege drop could not be verified")
 	}
 	return nil
+}
+
+func validIdentityForDrop(identity Identity, goos string) bool {
+	if !accountNamePattern.MatchString(identity.Name) || identity.UID < 0 || identity.GID < 0 {
+		return false
+	}
+	if identity.Created || identity.GroupCreated {
+		return identity.UID == identity.GID && validSystemID(identity.UID, goos)
+	}
+	return identity.UID > 0 && identity.UID < 1000 && identity.GID > 0 && identity.GID < 1000
 }

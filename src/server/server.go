@@ -11,8 +11,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
-	"expvar"
 	"errors"
+	"expvar"
 	"fmt"
 	"html/template"
 	"io"
@@ -22,9 +22,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"net/http/pprof"
 	"net/mail"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -35,6 +35,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/apimgr/countries/src/auditlog"
 	"github.com/apimgr/countries/src/common/api"
 	"github.com/apimgr/countries/src/common/i18n"
 	"github.com/apimgr/countries/src/common/network"
@@ -46,13 +47,13 @@ import (
 	appmode "github.com/apimgr/countries/src/mode"
 	"github.com/apimgr/countries/src/notifications"
 	"github.com/apimgr/countries/src/paths"
-	"github.com/redis/go-redis/v9"
 	backgroundscheduler "github.com/apimgr/countries/src/scheduler"
 	"github.com/apimgr/countries/src/securitydata"
 	servermetrics "github.com/apimgr/countries/src/server/metrics"
 	"github.com/apimgr/countries/src/ssl"
 	"github.com/apimgr/countries/src/swagger"
 	"github.com/go-chi/chi/v5"
+	"github.com/redis/go-redis/v9"
 	"github.com/shirou/gopsutil/v3/disk"
 	xhtml "golang.org/x/net/html"
 )
@@ -85,6 +86,9 @@ type Server struct {
 	config                 *config.Config
 	configMu               sync.RWMutex
 	dataDir                string
+	auditLogDir            string
+	accessLogMu            sync.Mutex
+	logDir                 string
 	templates              map[string]*template.Template
 	version                string
 	buildDate              string
@@ -111,8 +115,8 @@ type Server struct {
 	healthStateMu          sync.RWMutex
 	restartReasons         []string
 	trustedProxies         []*net.IPNet
-	learnedCORSOriginsMu    sync.RWMutex
-	learnedCORSOrigins      map[string]struct{}
+	learnedCORSOriginsMu   sync.RWMutex
+	learnedCORSOrigins     map[string]struct{}
 	allowlist              []*net.IPNet
 	graphqlHandler         http.Handler
 	rateLimiter            *rateLimiter
@@ -135,6 +139,7 @@ func New(countriesService *countries.Service, cfg *config.Config, address, port,
 	s := &Server{
 		router:               chi.NewRouter(),
 		db:                   db,
+		auditLogDir:          paths.GetLogsDir("countries"),
 		contactKey:           loadContactKey(db),
 		contactPreviousKey:   previousContactKey,
 		contactPreviousUntil: previousContactUntil,
@@ -190,9 +195,16 @@ func New(countriesService *countries.Service, cfg *config.Config, address, port,
 				for _, asset := range assets {
 					name := asset.name
 					_ = healthStore.RegisterCheck(asset.check, false, func(context.Context) string {
-						manager, ok := s.geoIPManager.(interface { HasDatabase(string) bool; IsStale(time.Time, time.Duration) bool })
-						if !ok || !manager.HasDatabase(name) { return "error" }
-						if manager.IsStale(time.Now().UTC(), 21*24*time.Hour) { return "degraded" }
+						manager, ok := s.geoIPManager.(interface {
+							HasDatabase(string) bool
+							IsStale(time.Time, time.Duration) bool
+						})
+						if !ok || !manager.HasDatabase(name) {
+							return "error"
+						}
+						if manager.IsStale(time.Now().UTC(), 21*24*time.Hour) {
+							return "degraded"
+						}
 						return "ok"
 					})
 				}
@@ -634,7 +646,7 @@ func (s *Server) setupRoutes() {
 	// Middleware
 	r.Use(s.trustedProxyMiddleware)
 	r.Use(s.debugMiddleware)
-	r.Use(requestLogMiddleware)
+	r.Use(requestLogMiddleware(s))
 	r.Use(s.corsMiddleware)
 	r.Use(s.allowlistMiddleware)
 	r.Use(s.blocklistMiddleware)
@@ -1220,20 +1232,58 @@ func (s *Server) SetDataDir(directory string) {
 	}
 }
 
+// SetAuditLogDir sets the audit and application log directory.
+func (s *Server) SetAuditLogDir(directory string) {
+	s.auditLogDir = directory
+	s.accessLogMu.Lock()
+	s.logDir = directory
+	s.accessLogMu.Unlock()
+}
+
+func (s *Server) recordAudit(r *http.Request, category, action, targetType, targetID string, details map[string]any, success bool) {
+	if s.auditLogDir == "" {
+		return
+	}
+	actor := auditlog.Actor{Type: "system"}
+	source := ""
+	if r != nil {
+		ip := requestClientIP(r.RemoteAddr)
+		actor = auditlog.Actor{Type: "anonymous", IP: &ip}
+		if targetType == "owner" && targetID != "" && !(action == "token.created" && fmt.Sprint(details["source"]) == "issue") {
+			actor.Type = "owner"
+			actor.ID = targetID
+		}
+		source = "web"
+		if strings.HasPrefix(r.URL.Path, api.APIBasePath()+"/") {
+			source = "api"
+		}
+		if category == "mcp" {
+			source = "mcp"
+		}
+		if details == nil {
+			details = make(map[string]any)
+		}
+		details["user_agent"] = cleanLogValue(r.UserAgent())
+	}
+	result, severity := "success", "info"
+	if !success {
+		result, severity = "failure", "error"
+	}
+	event := auditlog.Event{Event: action, Category: category, Severity: severity, Actor: actor, Result: result, Details: details, Source: source}
+	if targetType != "" {
+		event.Target = &auditlog.Target{Type: targetType, ID: targetID}
+	}
+	if err := auditlog.WriteAndMirror(s.auditLogDir, s.db, event, time.Now().UTC()); err != nil {
+		log.Printf("audit.write_failed: event=%s error=%v", action, err)
+	}
+}
+
 func (s *Server) writeCLIAuditEvent(r *http.Request, action string, details map[string]string, success bool) {
-	if s.db == nil {
-		return
+	values := make(map[string]any, len(details))
+	for key, value := range details {
+		values[key] = value
 	}
-	encoded, err := json.Marshal(details)
-	if err != nil {
-		return
-	}
-	if err := database.Write(r.Context(), s.db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(r.Context(), `INSERT INTO audit_log (level, category, action, actor_ip, target_type, target_id, details, success) VALUES ('info', 'cli', ?, ?, 'binary', '', ?, ?)`, action, requestClientIP(r.RemoteAddr), string(encoded), success)
-		return err
-	}); err != nil {
-		log.Printf("cli audit write failed: action=%s error=%v", action, err)
-	}
+	s.recordAudit(r, "cli", action, "binary", "", values, success)
 }
 
 func cliTokenPrefix(token string) string {
@@ -1529,7 +1579,9 @@ func (s *Server) RunListenersWithPrebound(ctx context.Context, httpAddr, httpsAd
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			primary, linked, err := database.CountActiveOwnerTokens(ctx, s.db, time.Now().UTC())
 			cancel()
-			if err == nil { s.metrics.SetActiveOwnerTokens(primary, linked) }
+			if err == nil {
+				s.metrics.SetActiveOwnerTokens(primary, linked)
+			}
 		}
 		updateDatabaseMetrics()
 		go func() {

@@ -20,17 +20,17 @@ import (
 )
 
 type Manager struct {
-	Config      *config.Config
-	Templates   fs.FS
-	OverrideDir string
-	ProjectName string
-	FQDN        string
-	Hostname    string
-	Version     string
-	Mode        string
-	Language    string
-	Sender      Sender
-	Sent        atomic.Int64
+	Config       *config.Config
+	Templates    fs.FS
+	OverrideDir  string
+	ProjectName  string
+	FQDN         string
+	Hostname     string
+	Version      string
+	Mode         string
+	Language     string
+	Sender       Sender
+	Sent         atomic.Int64
 	webhookOnce  sync.Once
 	webhookQueue chan webhookDelivery
 	webhookCtx   context.Context

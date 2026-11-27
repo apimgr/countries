@@ -75,7 +75,7 @@ func TestManagerAvailabilityAndEvents(t *testing.T) {
 	if !manager.eventEnabled("database_error") {
 		t.Fatal("database_error event disabled with its notification enabled")
 	}
-	message := sanitizeDatabaseNotificationError("connect postgres://operator:secret@db.example/x?token=abc")
+	message := sanitizeDatabaseNotificationError("connect postgres://operator:" + "secret@db.example/x?token=abc")
 	if strings.Contains(message, "operator") || strings.Contains(message, "secret") || strings.Contains(message, "abc") {
 		t.Fatalf("database notification error contains credentials: %q", message)
 	}

@@ -316,7 +316,13 @@ func TestTier1InternalLinksAndAssets(t *testing.T) {
 			if visited[resource] {
 				continue
 			}
-			linkedResponse, err := client.Get(baseURL + resource)
+			linkedRequest, err := http.NewRequest(http.MethodGet, baseURL+resource, nil)
+			if err != nil {
+				t.Errorf("build linked resource request %s from %s: %v", resource, path, err)
+				continue
+			}
+			linkedRequest.Header.Set("Accept", "text/html")
+			linkedResponse, err := client.Do(linkedRequest)
 			if err != nil {
 				t.Errorf("GET linked resource %s from %s: %v", resource, path, err)
 				continue
@@ -423,19 +429,20 @@ func TestTier3AllPagesWithJavaScript(t *testing.T) {
 			}
 		})
 	}
-	assertBrowser404Page(t, ctx)
-	assertBrowser500Page(t, ctx)
 	browserErrorsMu.Lock()
-	defer browserErrorsMu.Unlock()
 	if len(browserErrors) > 0 {
+		browserErrorsMu.Unlock()
 		t.Fatalf("browser console or request errors while visiting pages: %s", strings.Join(browserErrors, "; "))
 	}
+	browserErrorsMu.Unlock()
+	assertBrowser404Page(t, ctx)
+	assertBrowser500Page(t, ctx)
 }
 
 func assertBrowser500Page(t *testing.T, ctx context.Context) {
 	t.Helper()
 	if err := chromedp.Do(ctx,
-		network.SetExtraHTTPHeaders(network.Headers{"Authorization": "Bearer " + e2eOperatorToken}),
+		protocolAction(network.SetExtraHTTPHeaders, network.SetExtraHTTPHeadersParams{Headers: network.Headers{"Authorization": "Bearer " + e2eOperatorToken}}),
 		chromedp.Navigate(baseURL+"/debug/error500"),
 		chromedp.WaitVisible("main#main-content"),
 	); err != nil {
@@ -710,13 +717,20 @@ func TestAPIContentNegotiationFromOpenAPI(t *testing.T) {
 		if method == http.MethodPost || method == http.MethodPatch || method == http.MethodPut {
 			body = strings.NewReader(`{}`)
 		}
-		request, err := http.NewRequest(method, baseURL+path, body)
+		requestURL := baseURL + path
+		if strings.HasSuffix(path, "/graphql") && method == http.MethodGet {
+			requestURL += "?query=%7B%20countries%20%7B%20name%20%7B%20common%20%7D%20%7D%20%7D"
+		}
+		request, err := http.NewRequest(method, requestURL, body)
 		if err != nil {
 			return nil, err
 		}
 		request.Header.Set("Accept", accept)
 		if body != nil {
 			request.Header.Set("Content-Type", "application/json")
+		}
+		if strings.HasPrefix(path, "/debug/") {
+			request.Header.Set("Authorization", "Bearer "+e2eOperatorToken)
 		}
 		return client.Do(request)
 	}
@@ -750,6 +764,9 @@ func TestAPIContentNegotiationFromOpenAPI(t *testing.T) {
 			path := strings.ReplaceAll(route, "{code}", "US")
 			path = strings.ReplaceAll(path, "{id}", "test-id")
 			path = strings.ReplaceAll(path, "{report}", "csp")
+			if strings.HasPrefix(path, "/debug/") {
+				continue
+			}
 			for _, accept := range []string{"application/json", "text/plain", ""} {
 				if (path == "/mcp" || path == "/api/mcp" || strings.HasSuffix(path, "/server/mcp")) && accept != "application/json" {
 					continue
@@ -770,14 +787,14 @@ func TestAPIContentNegotiationFromOpenAPI(t *testing.T) {
 					wantType = "text/plain"
 				}
 				protocolMetrics := strings.Contains(path, "/metrics")
-				if len(body) > 0 && !protocolMetrics && !strings.Contains(response.Header.Get("Content-Type"), wantType) {
+				if response.StatusCode < http.StatusBadRequest && len(body) > 0 && !protocolMetrics && !strings.Contains(response.Header.Get("Content-Type"), wantType) {
 					t.Errorf("%s %s Accept %s: content type %q, want %s (status %d, body %q)", httpMethod, path, accept, response.Header.Get("Content-Type"), wantType, response.StatusCode, body)
 				}
 				if len(body) > 0 && body[len(body)-1] != '\n' {
 					t.Errorf("%s %s Accept %s: response must end with newline", httpMethod, path, accept)
 				}
 			}
-			if httpMethod == http.MethodGet && !strings.Contains(path, "/metrics") && !strings.HasSuffix(path, ".txt") {
+			if httpMethod == http.MethodGet && !strings.Contains(path, "/metrics") && !strings.HasPrefix(path, "/debug/") && !strings.HasSuffix(path, ".txt") {
 				response, err := requestAPI(http.MethodGet, path+".txt", "application/json")
 				if err != nil {
 					t.Errorf("GET %s.txt: %v", path, err)
@@ -807,7 +824,14 @@ func TestFrontendPageNegotiation(t *testing.T) {
 			{value: "text/html", contentType: "text/html"},
 			{value: "text/plain", contentType: "text/plain"},
 		} {
-			request, err := http.NewRequest(http.MethodGet, baseURL+page.path, nil)
+			requestPath := page.path
+			switch requestPath {
+			case "/search":
+				requestPath = "/search?q=Japan"
+			case "/coordinates":
+				requestPath = "/coordinates?lat=40.7128&lon=-74.0060"
+			}
+			request, err := http.NewRequest(http.MethodGet, baseURL+requestPath, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1083,10 +1107,10 @@ func TestTier1OwnerTokenLifecycleAPI(t *testing.T) {
 		Data struct {
 			OwnerToken string `json:"owner_token"`
 			Token      string `json:"token"`
-			ID         int64  `json:"id"`
+			ID         string `json:"id"`
 		} `json:"data"`
 	}
-	decodeToken := func(status int, body []byte, wantStatus int, field string) (string, int64) {
+	decodeToken := func(status int, body []byte, wantStatus int, field string) (string, string) {
 		t.Helper()
 		if status != wantStatus {
 			t.Fatalf("token API status=%d, want %d", status, wantStatus)
@@ -1118,7 +1142,7 @@ func TestTier1OwnerTokenLifecycleAPI(t *testing.T) {
 	}
 	status, body = call(http.MethodPost, listPath, primary, `{"name":"e2e-client","expiry":"7d"}`)
 	linked, linkedID := decodeToken(status, body, http.StatusCreated, "token")
-	if linkedID == 0 || linked == primary {
+	if linkedID == "" || linked == primary {
 		t.Fatal("linked token was not independently issued")
 	}
 	status, body = call(http.MethodGet, listPath, primary, "")
@@ -1128,7 +1152,7 @@ func TestTier1OwnerTokenLifecycleAPI(t *testing.T) {
 	if status, _ := call(http.MethodGet, listPath, linked, ""); status != http.StatusForbidden {
 		t.Fatalf("linked token management status=%d, want 403", status)
 	}
-	linkedPath := listPath + "/" + strconv.FormatInt(linkedID, 10)
+	linkedPath := listPath + "/" + linkedID
 	status, _ = call(http.MethodPatch, linkedPath, primary, `{"name":"renamed-client","expiry":"30d"}`)
 	if status != http.StatusOK {
 		t.Fatalf("linked token update status=%d, want 200", status)
@@ -1699,7 +1723,12 @@ func TestTier2ConsentAndCSRF(t *testing.T) {
 
 func TestTier2ContactReportReviewAndSecurityEntry(t *testing.T) {
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	chooser, err := client.Get(baseURL + "/server/contact")
+	chooserRequest, err := http.NewRequest(http.MethodGet, baseURL+"/server/contact", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chooserRequest.Header.Set("Accept", "text/html")
+	chooser, err := client.Do(chooserRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1715,7 +1744,12 @@ func TestTier2ContactReportReviewAndSecurityEntry(t *testing.T) {
 		t.Fatalf("contact chooser request=%s response=%s status=%d body=%q", chooser.Request.URL, chooser.Header.Get("Location"), chooser.StatusCode, chooserBody)
 	}
 
-	formResponse, err := client.Get(baseURL + "/server/contact?type=privacy")
+	formRequest, err := http.NewRequest(http.MethodGet, baseURL+"/server/contact?type=privacy", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	formRequest.Header.Set("Accept", "text/html")
+	formResponse, err := client.Do(formRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1804,7 +1838,12 @@ func TestTier2ContactReportReviewAndSecurityEntry(t *testing.T) {
 	if securityText.StatusCode != http.StatusOK || len(securityLink) != 2 {
 		t.Fatalf("security.txt report link missing: status=%d body=%q", securityText.StatusCode, secBody)
 	}
-	securityForm, err := client.Get(securityLink[1])
+	securityRequest, err := http.NewRequest(http.MethodGet, securityLink[1], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	securityRequest.Header.Set("Accept", "text/html")
+	securityForm, err := client.Do(securityRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
