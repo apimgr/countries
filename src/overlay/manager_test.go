@@ -54,7 +54,7 @@ func TestPureOverlayHelpers(t *testing.T) {
 	t.Run("binary resolution", func(t *testing.T) {
 		root := testutil.TempDir(t)
 		candidate := filepath.Join(root, "candidate")
-		if err := os.WriteFile(candidate, []byte("binary"), 0700); err != nil {
+		if err := os.WriteFile(candidate, []byte("binary"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		if got := resolveBinary("", "not-on-path", []string{filepath.Join(root, "missing"), candidate}); got != candidate {
@@ -90,7 +90,7 @@ func TestPureOverlayHelpers(t *testing.T) {
 			t.Fatalf("removeStaleControlFile(missing) error = %v", err)
 		}
 		file := filepath.Join(root, "control_port")
-		if err := os.WriteFile(file, []byte("PORT=127.0.0.1:1\n"), 0600); err != nil {
+		if err := os.WriteFile(file, []byte("PORT=127.0.0.1:1\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if err := removeStaleControlFile(file); err != nil {
@@ -100,10 +100,10 @@ func TestPureOverlayHelpers(t *testing.T) {
 			t.Fatalf("stale control file still exists: %v", err)
 		}
 		nonemptyDir := filepath.Join(root, "control_dir")
-		if err := os.Mkdir(nonemptyDir, 0700); err != nil {
+		if err := os.Mkdir(nonemptyDir, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(nonemptyDir, "child"), []byte("x"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(nonemptyDir, "child"), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if err := removeStaleControlFile(nonemptyDir); err == nil {
@@ -113,7 +113,7 @@ func TestPureOverlayHelpers(t *testing.T) {
 
 	t.Run("process log tail", func(t *testing.T) {
 		path := filepath.Join(testutil.TempDir(t), "tor.log")
-		if err := os.WriteFile(path, []byte("first\nsecond\nthird\n"), 0600); err != nil {
+		if err := os.WriteFile(path, []byte("first\nsecond\nthird\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if got := sanitizedProcessTail(path); got != "first | second | third" {
@@ -176,10 +176,10 @@ func TestTorStartupFailureCleansBackend(t *testing.T) {
 	dataDir := filepath.Join(root, "data")
 	logsDir := filepath.Join(root, "logs")
 	controlDir := filepath.Join(dataDir, "tor", "control_port")
-	if err := os.MkdirAll(controlDir, 0700); err != nil {
+	if err := os.MkdirAll(controlDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(controlDir, "stale"), []byte("stale"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(controlDir, "stale"), []byte("stale"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	manager := NewManager(Options{Config: *cfg, ConfigDir: configDir, DataDir: dataDir, LogsDir: logsDir})
@@ -206,17 +206,17 @@ func TestTorControlPortWaitAcceptsLateCompleteFileAndRejectsPartialData(t *testi
 	}
 
 	path := filepath.Join(testutil.TempDir(t), "control_port")
-	if err := os.WriteFile(path, []byte("PORT=127.0.0.1:"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("PORT=127.0.0.1:"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		if err := os.WriteFile(path, []byte("PORT=127.0.0.1:"), 0600); err != nil {
+		if err := os.WriteFile(path, []byte("PORT=127.0.0.1:"), 0o600); err != nil {
 			t.Errorf("write partial Tor control-port file: %v", err)
 			return
 		}
 		time.Sleep(30 * time.Millisecond)
-		if err := os.WriteFile(path, []byte("PORT=127.0.0.1:9051\n"), 0600); err != nil {
+		if err := os.WriteFile(path, []byte("PORT=127.0.0.1:9051\n"), 0o600); err != nil {
 			t.Errorf("complete Tor control-port file: %v", err)
 		}
 	}()
@@ -234,7 +234,7 @@ func TestTorControlPortWaitAcceptsLateCompleteFileAndRejectsPartialData(t *testi
 func TestTorCookieRecoveryIsLimitedToOneRestart(t *testing.T) {
 	dataDir := testutil.TempDir(t)
 	cookiePath := filepath.Join(dataDir, "control_auth_cookie")
-	if err := os.WriteFile(cookiePath, []byte("stale"), 0600); err != nil {
+	if err := os.WriteFile(cookiePath, []byte("stale"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	manager := NewManager(Options{DataDir: dataDir})

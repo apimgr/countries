@@ -36,7 +36,7 @@ func TestPGPPublicKeyUnavailableAndMethodHandling(t *testing.T) {
 func TestSecurityReportBodyUsesPGPWhenPublicKeyExists(t *testing.T) {
 	configDir := testutil.TempDir(t)
 	securityDir := filepath.Join(configDir, "security")
-	if err := os.MkdirAll(securityDir, 0700); err != nil {
+	if err := os.MkdirAll(securityDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	entity, err := openpgp.NewEntity("Countries Security", "", "security@example.test", nil)
@@ -54,7 +54,7 @@ func TestSecurityReportBodyUsesPGPWhenPublicKeyExists(t *testing.T) {
 	if err := writer.Close(); err != nil {
 		t.Fatalf("finish test PGP public key: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(securityDir, "pgp.pub.asc"), armored.Bytes(), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(securityDir, "pgp.pub.asc"), armored.Bytes(), 0o600); err != nil {
 		t.Fatalf("write test PGP public key: %v", err)
 	}
 

@@ -24,7 +24,7 @@ func TestParentDeathSignalKillsManagedChild(t *testing.T) {
 		if err := child.Start(); err != nil {
 			os.Exit(2)
 		}
-		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(child.Process.Pid)), 0600); err != nil {
+		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
 			_ = child.Process.Kill()
 			os.Exit(3)
 		}

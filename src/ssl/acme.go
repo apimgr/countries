@@ -146,10 +146,10 @@ func (m *Manager) accountDirectory() (string, error) {
 		environment = "staging"
 	}
 	directory := filepath.Join(m.config.CertPath, "letsencrypt", "accounts", environment)
-	if err := os.MkdirAll(directory, 0700); err != nil {
+	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return "", fmt.Errorf("create ACME account directory: %w", err)
 	}
-	if err := os.Chmod(directory, 0700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil {
 		return "", fmt.Errorf("secure ACME account directory: %w", err)
 	}
 	return directory, nil
@@ -213,10 +213,10 @@ func saveAccount(directory string, account *acmeAccount) error {
 
 func saveManagedCertificate(root, domain string, cert *certificate.Resource) error {
 	directory := filepath.Join(root, "letsencrypt", domain)
-	if err := os.MkdirAll(directory, 0700); err != nil {
+	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
 	}
-	if err := os.Chmod(directory, 0700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil {
 		return err
 	}
 	if err := writeAtomicPrivateFile(filepath.Join(directory, "fullchain.pem"), cert.Certificate); err != nil {
@@ -227,10 +227,10 @@ func saveManagedCertificate(root, domain string, cert *certificate.Resource) err
 
 func writeAtomicPrivateFile(path string, data []byte) error {
 	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0700); err != nil {
+	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
 	}
-	if err := os.Chmod(directory, 0700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil {
 		return err
 	}
 	file, err := os.CreateTemp(directory, ".ssl-*.tmp")
@@ -238,7 +238,7 @@ func writeAtomicPrivateFile(path string, data []byte) error {
 		return err
 	}
 	temporary := file.Name()
-	if err := file.Chmod(0600); err != nil {
+	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
 		_ = os.Remove(temporary)
 		return err
@@ -261,7 +261,7 @@ func writeAtomicPrivateFile(path string, data []byte) error {
 		_ = os.Remove(temporary)
 		return err
 	}
-	if err := os.Chmod(path, 0600); err != nil {
+	if err := os.Chmod(path, 0o600); err != nil {
 		return err
 	}
 	parent, err := os.Open(directory)

@@ -38,9 +38,11 @@ type Manager struct {
 	webhookWG    sync.WaitGroup
 }
 
-var templateVariable = regexp.MustCompile(`\{([a-z][a-z0-9_]*)\}`)
-var notificationCredentialURL = regexp.MustCompile(`(?i)(://)[^/@\s]+:[^/@\s]+@`)
-var notificationCredentialQuery = regexp.MustCompile(`(?i)((?:auth[_-]?)?(?:token|password|passwd|secret|key)\s*[=:]\s*)[^&#\s,;]+`)
+var (
+	templateVariable            = regexp.MustCompile(`\{([a-z][a-z0-9_]*)\}`)
+	notificationCredentialURL   = regexp.MustCompile(`(?i)(://)[^/@\s]+:[^/@\s]+@`)
+	notificationCredentialQuery = regexp.MustCompile(`(?i)((?:auth[_-]?)?(?:token|password|passwd|secret|key)\s*[=:]\s*)[^&#\s,;]+`)
+)
 
 var templateVariables = map[string]bool{
 	"app_name": true, "app_url": true, "fqdn": true, "onion_url": true, "onion_address": true,

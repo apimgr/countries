@@ -82,7 +82,7 @@ func (w *ConfigWatcher) check(force bool) error {
 	if !force && reflect.DeepEqual(w.snapshot, nextSnapshot) {
 		return nil
 	}
-	loaded, err := Load(w.configPath)
+	loaded, err := LoadConfigFromFile(w.configPath)
 	if err != nil {
 		return err
 	}

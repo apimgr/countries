@@ -95,7 +95,8 @@ func (q *queryResolver) Search(_ context.Context, args struct {
 	Region   *string
 	Currency *string
 	Language *string
-}) []*countryResolver {
+},
+) []*countryResolver {
 	filters := countries.SearchFilters{}
 	if args.Query != nil {
 		filters.Query = strings.TrimSpace(*args.Query)
@@ -123,7 +124,8 @@ func (q *queryResolver) Search(_ context.Context, args struct {
 func (q *queryResolver) Nearest(_ context.Context, args struct {
 	Lat float64
 	Lon float64
-}) *distanceResolver {
+},
+) *distanceResolver {
 	item := q.service.FindNearest(args.Lat, args.Lon)
 	if item == nil {
 		return nil
@@ -135,7 +137,8 @@ func (q *queryResolver) Nearby(_ context.Context, args struct {
 	Lat      float64
 	Lon      float64
 	RadiusKm float64
-}) []*distanceResolver {
+},
+) []*distanceResolver {
 	items := q.service.FindNearby(args.Lat, args.Lon, args.RadiusKm)
 	result := make([]*distanceResolver, 0, len(items))
 	for _, item := range items {
@@ -169,6 +172,7 @@ func (r *countryResolver) Currencies() []*currencyResolver {
 	}
 	return items
 }
+
 func (r *countryResolver) Languages() []*languageResolver {
 	codes := make([]string, 0, len(r.value.Languages))
 	for code := range r.value.Languages {
@@ -181,6 +185,7 @@ func (r *countryResolver) Languages() []*languageResolver {
 	}
 	return items
 }
+
 func (r *countryResolver) Population() *float64 {
 	if r.value.Population == nil {
 		return nil
@@ -188,6 +193,7 @@ func (r *countryResolver) Population() *float64 {
 	value := float64(*r.value.Population)
 	return &value
 }
+
 func (r *countryResolver) PopulationYear() *int32 {
 	if r.value.PopulationYear == 0 {
 		return nil

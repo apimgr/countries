@@ -6,9 +6,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"github.com/apimgr/countries/src/config"
-	"github.com/apimgr/countries/src/paths"
-	"github.com/apimgr/countries/src/privilege"
 	"io"
 	"os"
 	"os/exec"
@@ -18,6 +15,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/apimgr/countries/src/config"
+	"github.com/apimgr/countries/src/paths"
+	"github.com/apimgr/countries/src/privilege"
 )
 
 var detectServiceManager = DetectServiceManager
@@ -308,7 +309,7 @@ func installUserSystemd() error {
 	if err != nil {
 		return fmt.Errorf("resolve current executable path: %w", err)
 	}
-	if err := os.MkdirAll(unitDir, 0700); err != nil {
+	if err := os.MkdirAll(unitDir, 0o700); err != nil {
 		return fmt.Errorf("create user systemd unit directory: %w", err)
 	}
 	unitPath := filepath.Join(unitDir, appName+".service")
@@ -326,7 +327,7 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 `, executable)
-	if err := os.WriteFile(unitPath, []byte(unit), 0600); err != nil {
+	if err := os.WriteFile(unitPath, []byte(unit), 0o600); err != nil {
 		return fmt.Errorf("write user systemd unit: %w", err)
 	}
 	if err := exec.Command("systemctl", "--user", "daemon-reload").Run(); err != nil {
@@ -415,7 +416,7 @@ func installUserLaunchAgent() error {
 		return fmt.Errorf("resolve current executable path: %w", err)
 	}
 	agentDir := filepath.Join(home, "Library", "LaunchAgents")
-	if err := os.MkdirAll(agentDir, 0700); err != nil {
+	if err := os.MkdirAll(agentDir, 0o700); err != nil {
 		return fmt.Errorf("create user LaunchAgents directory: %w", err)
 	}
 	label := "com." + orgName + "." + appName
@@ -433,7 +434,7 @@ func installUserLaunchAgent() error {
 <key>KeepAlive</key><true/>
 </dict></plist>
 `, label, escapedExecutable.String())
-	if err := os.WriteFile(plistPath, []byte(plist), 0600); err != nil {
+	if err := os.WriteFile(plistPath, []byte(plist), 0o600); err != nil {
 		return fmt.Errorf("write user LaunchAgent: %w", err)
 	}
 	domain := fmt.Sprintf("gui/%d", uid)
@@ -462,7 +463,7 @@ func RecordServiceAccount(identity privilege.Identity, serviceName string) error
 		return rollback(errors.New("service account marker path is unavailable"))
 	}
 	markerDir := filepath.Dir(marker)
-	if err := os.MkdirAll(markerDir, 0755); err != nil {
+	if err := os.MkdirAll(markerDir, 0o755); err != nil {
 		return rollback(fmt.Errorf("prepare service account marker directory: %w", err))
 	}
 	info, err := os.Lstat(markerDir)
@@ -472,11 +473,11 @@ func RecordServiceAccount(identity privilege.Identity, serviceName string) error
 	if err := os.Chown(markerDir, 0, 0); err != nil {
 		return rollback(fmt.Errorf("secure service account marker directory: %w", err))
 	}
-	if err := os.Chmod(markerDir, 0755); err != nil {
+	if err := os.Chmod(markerDir, 0o755); err != nil {
 		return rollback(fmt.Errorf("secure service account marker directory: %w", err))
 	}
 	contents := fmt.Sprintf("%s %d %d %t %t\n", identity.Name, identity.UID, identity.GID, identity.Created, identity.GroupCreated)
-	if err := os.WriteFile(marker, []byte(contents), 0600); err != nil {
+	if err := os.WriteFile(marker, []byte(contents), 0o600); err != nil {
 		return rollback(fmt.Errorf("write service account marker: %w", err))
 	}
 	return nil
@@ -684,13 +685,13 @@ func installSystemd() error {
 		fmt.Sprintf("/etc/%s/%s", orgName, appName),
 	}
 	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
 
 	// Write service file
-	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
+	if err := os.WriteFile(servicePath, []byte(serviceContent), 0o644); err != nil {
 		return fmt.Errorf("failed to write service file: %w", err)
 	}
 
@@ -791,7 +792,7 @@ func installRunit() error {
 	}
 
 	// Create service directory
-	if err := os.MkdirAll(svDir, 0755); err != nil {
+	if err := os.MkdirAll(svDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create service directory: %w", err)
 	}
 
@@ -800,13 +801,13 @@ exec %s 2>&1
 `, binaryPath)
 
 	runPath := filepath.Join(svDir, "run")
-	if err := os.WriteFile(runPath, []byte(runScript), 0755); err != nil {
+	if err := os.WriteFile(runPath, []byte(runScript), 0o755); err != nil {
 		return fmt.Errorf("failed to write run script: %w", err)
 	}
 
 	// Create log directory
 	logDir := filepath.Join(svDir, "log")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
 
@@ -814,7 +815,7 @@ exec %s 2>&1
 exec svlogd -tt /var/log/%s/%s
 `, orgName, appName)
 	logRunPath := filepath.Join(logDir, "run")
-	if err := os.WriteFile(logRunPath, []byte(logRunScript), 0755); err != nil {
+	if err := os.WriteFile(logRunPath, []byte(logRunScript), 0o755); err != nil {
 		return fmt.Errorf("failed to write log run script: %w", err)
 	}
 
@@ -841,7 +842,7 @@ func installOpenRC() error {
 		return err
 	}
 	content := openRCServiceContent(GetBinaryPath())
-	if err := os.WriteFile(path, []byte(content), 0755); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		return fmt.Errorf("write OpenRC service: %w", err)
 	}
 	if err := exec.Command("rc-update", "add", appName, "default").Run(); err != nil {
@@ -926,7 +927,7 @@ case "$1" in
 esac
 `, appName, appName, GetBinaryPath(), appName, orgName, appName, appName, orgName, appName,
 		orgName, appName, orgName, appName, orgName, appName, orgName, appName)
-	if err := os.WriteFile(path, []byte(content), 0755); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		return fmt.Errorf("write SysV service: %w", err)
 	}
 	if _, err := exec.LookPath("update-rc.d"); err == nil {
@@ -959,14 +960,14 @@ func installS6() error {
 		return err
 	}
 	logDir := filepath.Join(svDir, "log")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return fmt.Errorf("create s6 service directory: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(svDir, "run"), []byte(fmt.Sprintf("#!/bin/sh\nexec %s 2>&1\n", GetBinaryPath())), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(svDir, "run"), []byte(fmt.Sprintf("#!/bin/sh\nexec %s 2>&1\n", GetBinaryPath())), 0o755); err != nil {
 		return fmt.Errorf("write s6 run script: %w", err)
 	}
 	logScript := fmt.Sprintf("#!/bin/sh\nexec s6-log n10 s1000000 /var/log/%s/%s\n", orgName, appName)
-	if err := os.WriteFile(filepath.Join(logDir, "run"), []byte(logScript), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(logDir, "run"), []byte(logScript), 0o755); err != nil {
 		return fmt.Errorf("write s6 log script: %w", err)
 	}
 	scanDir := s6ScanDir()
@@ -1048,13 +1049,13 @@ func installLaunchd() error {
 		fmt.Sprintf("/Library/Logs/%s/%s", orgName, appName),
 	}
 	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
 
 	// Write plist file
-	if err := os.WriteFile(plistPath, []byte(plistContent), 0644); err != nil {
+	if err := os.WriteFile(plistPath, []byte(plistContent), 0o644); err != nil {
 		return fmt.Errorf("failed to write plist file: %w", err)
 	}
 
@@ -1094,7 +1095,7 @@ func installWindows() error {
 
 	// Copy binary
 	binDir := filepath.Dir(binaryPath)
-	if err := os.MkdirAll(binDir, 0755); err != nil {
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
@@ -1128,7 +1129,7 @@ func installWindows() error {
 		if strings.TrimSpace(dir) == "" {
 			return rollback(errors.New("windows service runtime directory is empty"))
 		}
-		if err := os.MkdirAll(dir, 0750); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return rollback(fmt.Errorf("create Windows service directory %s: %w", dir, err))
 		}
 		grant := `NT SERVICE\` + appName + ":(OI)(CI)F"
@@ -1228,7 +1229,7 @@ run_rc_command "$1"
 `, appName, appName, appName, orgName, appName, appName, binaryPath, appName,
 		appName, orgName, appName, orgName, appName)
 
-	if err := os.WriteFile(rcPath, []byte(rcContent), 0755); err != nil {
+	if err := os.WriteFile(rcPath, []byte(rcContent), 0o755); err != nil {
 		return fmt.Errorf("failed to write rc.d script: %w", err)
 	}
 
@@ -1266,7 +1267,7 @@ func uninstallBSDRC() error {
 // copyBinary copies the binary to the destination
 func copyBinary(src, dst string) error {
 	// Create destination directory if needed
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
 
@@ -1277,7 +1278,7 @@ func copyBinary(src, dst string) error {
 	}
 
 	// Write to destination
-	if err := os.WriteFile(dst, data, 0755); err != nil {
+	if err := os.WriteFile(dst, data, 0o755); err != nil {
 		return err
 	}
 

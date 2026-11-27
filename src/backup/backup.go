@@ -238,7 +238,7 @@ func Create(ctx context.Context, destination string, options Options) (Result, e
 	if int64(len(payload)) > limits.MaxArchiveSize {
 		return Result{}, fmt.Errorf("backup archive exceeds maximum size of %d bytes", limits.MaxArchiveSize)
 	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
 		return Result{}, fmt.Errorf("create backup directory: %w", err)
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(destination), ".backup-verify-*.tmp")
@@ -247,7 +247,7 @@ func Create(ctx context.Context, destination string, options Options) (Result, e
 	}
 	candidatePath := temporary.Name()
 	defer func() { _ = os.Remove(candidatePath) }()
-	if err := temporary.Chmod(0600); err != nil {
+	if err := temporary.Chmod(0o600); err != nil {
 		_ = temporary.Close()
 		return Result{}, err
 	}
@@ -324,7 +324,7 @@ func captureSnapshotFiles(ctx context.Context, options Options) (map[string]file
 			return nil, fmt.Errorf("create database snapshot workspace: %w", err)
 		}
 		defer func() { _ = os.RemoveAll(snapshotDir) }()
-		if err := os.Chmod(snapshotDir, 0700); err != nil {
+		if err := os.Chmod(snapshotDir, 0o700); err != nil {
 			return nil, fmt.Errorf("secure database snapshot workspace: %w", err)
 		}
 		databaseSnapshot := filepath.Join(snapshotDir, "server.db")
@@ -430,7 +430,7 @@ func exportAppSecrets(ctx context.Context, options Options) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	secrets := make([]appSecretRecord, 0)
 	for rows.Next() {
 		var item appSecretRecord
@@ -475,7 +475,7 @@ func verifyArchiveExtraction(ctx context.Context, entries map[string][]byte, lim
 		return fmt.Errorf("create backup verification extraction directory: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
-	if err := os.Chmod(tempDir, 0700); err != nil {
+	if err := os.Chmod(tempDir, 0o700); err != nil {
 		return fmt.Errorf("secure backup verification extraction directory: %w", err)
 	}
 	for name, content := range entries {
@@ -492,10 +492,10 @@ func verifyArchiveExtraction(ctx context.Context, entries map[string][]byte, lim
 			return fmt.Errorf("backup verification file %q exceeds size limit", name)
 		}
 		destination := filepath.Join(tempDir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
 			return fmt.Errorf("extract backup verification file %q: %w", name, err)
 		}
-		if err := os.WriteFile(destination, content, 0600); err != nil {
+		if err := os.WriteFile(destination, content, 0o600); err != nil {
 			return fmt.Errorf("extract backup verification file %q: %w", name, err)
 		}
 	}
@@ -700,7 +700,7 @@ func Restore(ctx context.Context, path, password string, options RestoreOptions)
 		return Manifest{}, err
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
-	if err := os.Chmod(tempDir, 0700); err != nil {
+	if err := os.Chmod(tempDir, 0o700); err != nil {
 		return Manifest{}, fmt.Errorf("secure restore workspace: %w", err)
 	}
 	staged := filepath.Join(tempDir, "staged")
@@ -718,10 +718,10 @@ func Restore(ctx context.Context, path, password string, options RestoreOptions)
 			return Manifest{}, fmt.Errorf("restore requires a destination for connection TLS file %q", name)
 		}
 		target := filepath.Join(staged, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 			return Manifest{}, fmt.Errorf("stage restore file %s: %w", name, err)
 		}
-		if err := os.WriteFile(target, content, 0600); err != nil {
+		if err := os.WriteFile(target, content, 0o600); err != nil {
 			return Manifest{}, fmt.Errorf("stage restore file %s: %w", name, err)
 		}
 	}
@@ -1055,7 +1055,7 @@ func marshalArchive(files map[string]fileData, manifest Manifest) ([]byte, error
 	tarWriter := tar.NewWriter(gzipWriter)
 	for _, name := range names {
 		content := files[name].content
-		header := &tar.Header{Name: name, Mode: 0600, Size: int64(len(content)), ModTime: time.Unix(0, 0), Typeflag: tar.TypeReg, Format: tar.FormatPAX}
+		header := &tar.Header{Name: name, Mode: 0o600, Size: int64(len(content)), ModTime: time.Unix(0, 0), Typeflag: tar.TypeReg, Format: tar.FormatPAX}
 		if err := tarWriter.WriteHeader(header); err != nil {
 			return nil, err
 		}
@@ -1072,10 +1072,12 @@ func marshalArchive(files map[string]fileData, manifest Manifest) ([]byte, error
 	return raw.Bytes(), nil
 }
 
-const backupArgonMemory = uint32(64 * 1024)
-const backupArgonIterations = uint32(3)
-const backupArgonParallelism = uint32(4)
-const backupHeaderFixedSize = 55
+const (
+	backupArgonMemory      = uint32(64 * 1024)
+	backupArgonIterations  = uint32(3)
+	backupArgonParallelism = uint32(4)
+	backupHeaderFixedSize  = 55
+)
 
 type encryptedBackupHeader struct {
 	bytes       []byte
@@ -1339,11 +1341,11 @@ func verifySQLite(ctx context.Context, content []byte) error {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
-	if err := os.Chmod(tempDir, 0700); err != nil {
+	if err := os.Chmod(tempDir, 0o700); err != nil {
 		return err
 	}
 	path := filepath.Join(tempDir, "server.db")
-	if err := os.WriteFile(path, content, 0600); err != nil {
+	if err := os.WriteFile(path, content, 0o600); err != nil {
 		return err
 	}
 	db, err := sql.Open("sqlite", path)
@@ -1385,7 +1387,7 @@ func snapshotSQLite(ctx context.Context, source, destination string) error {
 	if _, err := db.ExecContext(queryCtx, "VACUUM INTO '"+quoted+"'"); err != nil {
 		return fmt.Errorf("create SQLite online snapshot: %w", err)
 	}
-	return os.Chmod(destination, 0600)
+	return os.Chmod(destination, 0o600)
 }
 
 type restoreOriginal struct {
@@ -1529,7 +1531,7 @@ func installStagedUnchecked(ctx context.Context, staged, configDir, dataDir, dat
 			if err := ensureNoSymlinkAncestors(destination); err != nil {
 				return err
 			}
-			if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+			if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
 				return err
 			}
 			content, err := os.ReadFile(current)
@@ -1684,7 +1686,7 @@ func supportedArchiveRoot(name string) bool {
 
 func writeAtomic(path string, content []byte) error {
 	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0700); err != nil {
+	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return fmt.Errorf("create destination directory: %w", err)
 	}
 	file, err := os.CreateTemp(directory, ".backup-*.tmp")
@@ -1693,7 +1695,7 @@ func writeAtomic(path string, content []byte) error {
 	}
 	temp := file.Name()
 	defer func() { _ = os.Remove(temp) }()
-	if err := file.Chmod(0600); err != nil {
+	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
 		return err
 	}

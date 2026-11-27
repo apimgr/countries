@@ -15,7 +15,7 @@ func TestReadYAMLConfigSourcesOrderFilterAndPermissions(t *testing.T) {
 	directory := testutil.TempDir(t)
 	configPath := filepath.Join(directory, "server.yml")
 	dropInDirectory := filepath.Join(directory, "yaml.d")
-	if err := os.Mkdir(dropInDirectory, 0755); err != nil {
+	if err := os.Mkdir(dropInDirectory, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	files := map[string]string{
@@ -34,11 +34,11 @@ func TestReadYAMLConfigSourcesOrderFilterAndPermissions(t *testing.T) {
 		if name != "server.yml" && name != "secrets.yml" {
 			path = filepath.Join(dropInDirectory, name)
 		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(dropInDirectory, "60-directory.yml"), 0755); err != nil {
+	if err := os.Mkdir(filepath.Join(dropInDirectory, "60-directory.yml"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -66,7 +66,7 @@ func TestReadYAMLConfigSourcesOrderFilterAndPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if directoryInfo.Mode().Perm() != 0700 {
+	if directoryInfo.Mode().Perm() != 0o700 {
 		t.Errorf("yaml.d mode = %04o, want 0700", directoryInfo.Mode().Perm())
 	}
 	for _, path := range want {
@@ -74,7 +74,7 @@ func TestReadYAMLConfigSourcesOrderFilterAndPermissions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm() != 0600 {
+		if info.Mode().Perm() != 0o600 {
 			t.Errorf("%s mode = %04o, want 0600", path, info.Mode().Perm())
 		}
 	}
@@ -84,15 +84,15 @@ func TestReadYAMLConfigSourcesSymlinkBoundary(t *testing.T) {
 	directory := testutil.TempDir(t)
 	configPath := filepath.Join(directory, "server.yml")
 	dropInDirectory := filepath.Join(directory, "yaml.d")
-	if err := os.Mkdir(dropInDirectory, 0700); err != nil {
+	if err := os.Mkdir(dropInDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	insideTarget := filepath.Join(dropInDirectory, "actual.conf")
-	if err := os.WriteFile(insideTarget, []byte("web:\n  title: inside\n"), 0600); err != nil {
+	if err := os.WriteFile(insideTarget, []byte("web:\n  title: inside\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	outsideTarget := filepath.Join(directory, "outside.yml")
-	if err := os.WriteFile(outsideTarget, []byte("web:\n  title: outside\n"), 0600); err != nil {
+	if err := os.WriteFile(outsideTarget, []byte("web:\n  title: outside\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(insideTarget, filepath.Join(dropInDirectory, "10-inside.yml")); err != nil {
@@ -149,7 +149,7 @@ func TestMergeYAMLConfigNodesRejectsDuplicateAndNull(t *testing.T) {
 func TestReadYAMLConfigSourcesKeepsParseErrorSourceIdentity(t *testing.T) {
 	directory := testutil.TempDir(t)
 	configPath := filepath.Join(directory, "server.yml")
-	if err := os.WriteFile(configPath, []byte("server: [unterminated\n"), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte("server: [unterminated\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	sources, _ := readYAMLConfigSources(configPath)

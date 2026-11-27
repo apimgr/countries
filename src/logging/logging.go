@@ -46,10 +46,10 @@ func Open(dir string, cfg config.LoggingConfig, mode string) (*Manager, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, errors.New("log directory is empty")
 	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create log directory: %w", err)
 	}
-	if err := os.Chmod(dir, 0700); err != nil {
+	if err := os.Chmod(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("protect log directory: %w", err)
 	}
 	level := strings.ToLower(strings.TrimSpace(cfg.Level))
@@ -111,12 +111,12 @@ func Open(dir string, cfg config.LoggingConfig, mode string) (*Manager, error) {
 			return nil, fmt.Errorf("invalid %s retention: %w", kind, err)
 		}
 		path := filepath.Join(dir, name)
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {
 			_ = m.Close()
 			return nil, fmt.Errorf("open %s log: %w", kind, err)
 		}
-		if err := f.Chmod(0600); err != nil {
+		if err := f.Chmod(0o600); err != nil {
 			_ = f.Close()
 			_ = m.Close()
 			return nil, err
@@ -277,11 +277,11 @@ func (m *Manager) rotate(f *file, now time.Time) error {
 	if err := os.Rename(f.path, rotated); err != nil {
 		return err
 	}
-	f.handle, err = os.OpenFile(f.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	f.handle, err = os.OpenFile(f.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
-	if err = f.handle.Chmod(0600); err != nil {
+	if err = f.handle.Chmod(0o600); err != nil {
 		return err
 	}
 	f.opened = now
@@ -300,6 +300,7 @@ func normalize(s string) string {
 	}
 	return s
 }
+
 func infer(s string) string {
 	u := strings.ToUpper(s)
 	if strings.Contains(u, "FATAL") || strings.Contains(u, "[ERROR]") || strings.HasPrefix(u, "ERROR:") || strings.Contains(u, " FAILED") || strings.Contains(u, " FAILURE") || strings.Contains(u, "ERROR:") {
@@ -313,12 +314,14 @@ func infer(s string) string {
 	}
 	return "info"
 }
+
 func fallback(s, d string) string {
 	if strings.TrimSpace(s) == "" {
 		return d
 	}
 	return strings.ToLower(strings.TrimSpace(s))
 }
+
 func validFormat(kind, format string) error {
 	allowed := map[string]string{"server": "text json", "error": "text json", "debug": "text json", "security": "fail2ban syslog cef json text"}
 	if !strings.Contains(" "+allowed[kind]+" ", " "+strings.ToLower(format)+" ") {
@@ -326,6 +329,7 @@ func validFormat(kind, format string) error {
 	}
 	return nil
 }
+
 func sensitive(s string) bool {
 	s = strings.ToLower(s)
 	for _, part := range []string{"password", "secret", "token", "authorization", "credential", "private_key", "api_key"} {
@@ -357,14 +361,17 @@ func clean(s string) string {
 	}
 	return strings.TrimSpace(b.String())
 }
+
 func escape(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "|", "\\|")
 	return strings.ReplaceAll(s, "=", "\\=")
 }
+
 func priority(s string) int {
 	return 16 + map[string]int{"error": 3, "warn": 4, "info": 6, "debug": 7}[s]
 }
+
 func cefSeverity(s string) int {
 	return map[string]int{"error": 10, "warn": 6, "info": 3, "debug": 1}[s]
 }
@@ -406,6 +413,7 @@ func parseRotation(s string) (rotationPolicy, error) {
 	}
 	return p, nil
 }
+
 func elapsed(period string, a, b time.Time) bool {
 	switch period {
 	case "daily":
@@ -421,6 +429,7 @@ func elapsed(period string, a, b time.Time) bool {
 	}
 	return false
 }
+
 func validRetention(s string) error {
 	s = strings.ToLower(strings.TrimSpace(s))
 	if s == "none" || s == "forever" {
@@ -445,6 +454,7 @@ func validRetention(s string) error {
 	}
 	return nil
 }
+
 func prune(path, keep string) error {
 	entries, err := filepath.Glob(filepath.Join(filepath.Dir(path), filepath.Base(path)+".*"))
 	if err != nil {

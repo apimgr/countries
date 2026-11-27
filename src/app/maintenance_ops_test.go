@@ -35,7 +35,7 @@ func createMaintenanceTestOwner(t *testing.T, db *sql.DB, name string) (database
 		t.Fatalf("CreateOwnerToken(): %v", err)
 	}
 	if name != "" {
-		if _, _, err := database.CreateLinkedOwnerToken(context.Background(), db, primary.OwnerID, name, nil, 25, key, time.Now().UTC()); err != nil {
+		if _, _, err := database.CreateLinkedOwnerToken(context.Background(), db, primary.OwnerID, name, "read-write", nil, 25, key, time.Now().UTC()); err != nil {
 			t.Fatalf("CreateLinkedOwnerToken(): %v", err)
 		}
 	}
@@ -45,7 +45,7 @@ func createMaintenanceTestOwner(t *testing.T, db *sql.DB, name string) (database
 func TestMaintenanceTokenListAndRevoke(t *testing.T) {
 	db, root := maintenanceTestDB(t)
 	primary, primaryRaw := createMaintenanceTestOwner(t, db, "")
-	linked, linkedRaw, err := database.CreateLinkedOwnerToken(context.Background(), db, primary.OwnerID, "worker", nil, 25, base64.StdEncoding.EncodeToString(make([]byte, 32)), time.Now().UTC())
+	linked, linkedRaw, err := database.CreateLinkedOwnerToken(context.Background(), db, primary.OwnerID, "worker", "read-write", nil, 25, base64.StdEncoding.EncodeToString(make([]byte, 32)), time.Now().UTC())
 	if err != nil {
 		t.Fatalf("CreateLinkedOwnerToken(): %v", err)
 	}
@@ -96,7 +96,7 @@ func TestMaintenanceDataExportAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("export mode = %04o, want 0600", info.Mode().Perm())
 	}
 	data, err := os.ReadFile(output)
@@ -132,7 +132,7 @@ func TestMaintenanceComplianceReport(t *testing.T) {
 	db, root := maintenanceTestDB(t)
 	configPath := filepath.Join(root, "server.yml")
 	configData := []byte("server:\n  compliance:\n    gdpr: true\n    hipaa: true\n  logs:\n    defaults:\n      keep: 6y\n    audit:\n      keep: 6y\n")
-	if err := os.WriteFile(configPath, configData, 0600); err != nil {
+	if err := os.WriteFile(configPath, configData, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO backups (filename, filepath, size_bytes, type, created_at) VALUES ('backup.tar', '/backup/backup.tar', 10, 'manual', ?)`, time.Now().Unix()); err != nil {
@@ -244,7 +244,7 @@ func TestMaintenanceOwnerResourcesAndSafeMetadata(t *testing.T) {
 func TestWritePrivateExportRejectsSymlinksAndInvalidPaths(t *testing.T) {
 	root := testutil.TempDir(t)
 	target := filepath.Join(root, "target")
-	if err := os.WriteFile(target, []byte("keep"), 0600); err != nil {
+	if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(root, "export")
@@ -265,7 +265,7 @@ func TestAuditLogCountsReportsMissingAndCorruptFiles(t *testing.T) {
 		t.Fatalf("missing audit log = (%d, %d, %v)", entries, events, err)
 	}
 	corrupt := filepath.Join(filepath.Dir(missing), "corrupt-audit.log")
-	if err := os.WriteFile(corrupt, []byte("not-json\n"), 0600); err != nil {
+	if err := os.WriteFile(corrupt, []byte("not-json\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := auditLogCounts(corrupt, time.Now()); err == nil || !strings.Contains(err.Error(), "corrupt-audit.log:1") {
@@ -276,14 +276,14 @@ func TestAuditLogCountsReportsMissingAndCorruptFiles(t *testing.T) {
 func TestReadAuditLogRetentionDropInsAndMalformedYAML(t *testing.T) {
 	root := testutil.TempDir(t)
 	configPath := filepath.Join(root, "server.yml")
-	if err := os.WriteFile(configPath, []byte("server:\n  logs:\n    defaults:\n      keep: 2y\n"), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte("server:\n  logs:\n    defaults:\n      keep: 2y\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	dropins := filepath.Join(root, "yaml.d")
-	if err := os.Mkdir(dropins, 0700); err != nil {
+	if err := os.Mkdir(dropins, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dropins, "audit.yml"), []byte("server:\n  logs:\n    audit:\n      keep: 6y\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dropins, "audit.yml"), []byte("server:\n  logs:\n    audit:\n      keep: 6y\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := readAuditLogRetention(configPath); err != nil || got != "6y" {
@@ -292,7 +292,7 @@ func TestReadAuditLogRetentionDropInsAndMalformedYAML(t *testing.T) {
 	if auditRetentionYears(6) != "6y" || auditRetentionYears(0) != "none specified" {
 		t.Fatal("audit retention display is incorrect")
 	}
-	if err := os.WriteFile(filepath.Join(dropins, "bad.yaml"), []byte("server: ["), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dropins, "bad.yaml"), []byte("server: ["), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := readAuditLogRetention(configPath); err == nil {
@@ -302,7 +302,7 @@ func TestReadAuditLogRetentionDropInsAndMalformedYAML(t *testing.T) {
 
 func TestReadComplianceStandardsRejectsMalformedYAML(t *testing.T) {
 	configPath := filepath.Join(testutil.TempDir(t), "server.yml")
-	if err := os.WriteFile(configPath, []byte("server: ["), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte("server: ["), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := readComplianceStandards(configPath); err == nil {

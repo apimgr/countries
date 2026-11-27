@@ -122,7 +122,7 @@ func PrepareStartupConfig(serverConfigPath string) error {
 		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 			continue
 		}
-		if err := os.Chmod(path, 0600); err != nil {
+		if err := os.Chmod(path, 0o600); err != nil {
 			return err
 		}
 	}

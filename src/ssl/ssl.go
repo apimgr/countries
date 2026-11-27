@@ -495,8 +495,10 @@ func (p tlsALPNChallengeProvider) CleanUp(_ context.Context, domain, _, _ string
 	return nil
 }
 
-var _ challenge.Provider = httpChallengeProvider{}
-var _ challenge.Provider = tlsALPNChallengeProvider{}
+var (
+	_ challenge.Provider = httpChallengeProvider{}
+	_ challenge.Provider = tlsALPNChallengeProvider{}
+)
 
 func (m *Manager) validateChallengeConfiguration() error {
 	if m.config.CertPath == "" {

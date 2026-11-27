@@ -36,9 +36,12 @@ type clientTUI struct {
 	input       string
 	result      string
 	errorText   string
+	setupInfo   string
 	width       int
 	height      int
 	showHelp    bool
+	saveSetup   bool
+	setDefault  bool
 	theme       TUITheme
 	stdout      io.Writer
 	stderr      io.Writer
@@ -79,6 +82,7 @@ func newClientTUI(server string, cfg *cliConfig, configPath string, stdout, stde
 		stderr:     stderr,
 		width:      80,
 		height:     24,
+		saveSetup:  true,
 	}
 	if server == "" {
 		view.screen = "setup-server"
@@ -121,6 +125,26 @@ func (model clientTUI) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		switch model.screen {
 		case "setup-server", "setup-token", "arguments", "request":
 			return model.updateInput(message)
+		case "setup-options":
+			switch key {
+			case "s":
+				model.saveSetup = !model.saveSetup
+			case "d":
+				model.setDefault = !model.setDefault
+			case "enter":
+				if err := persistWizardSettings(model.configPath, model.server, model.token, model.saveSetup, model.setDefault); err != nil {
+					model.errorText = err.Error()
+					return model, nil
+				}
+				model.config.Server.Primary = model.server
+				model.config.Server.Token, model.config.Auth.Token = model.token, model.token
+				model.screen = "menu"
+				model.errorText = ""
+				if !model.saveSetup {
+					model.errorText = "Configuration was not saved; this connection is available for this run only."
+				}
+			}
+			return model, nil
 		case "menu":
 			if key == "enter" {
 				selected, ok := model.menu.SelectedItem().(tuiItem)
@@ -169,10 +193,6 @@ func (model clientTUI) updateInput(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 				model.errorText = err.Error()
 				return model, nil
 			}
-			if err := checkServer(server, "", model.config.Lang); err != nil {
-				model.errorText = i18n.TranslateFormat(model.config.Lang, "client.tui.connect_error", map[string]string{"message": err.Error()})
-				return model, nil
-			}
 			model.server = server
 			model.screen = "setup-token"
 			model.input = ""
@@ -180,15 +200,15 @@ func (model clientTUI) updateInput(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return model, nil
 		case "setup-token":
 			model.token = value
-			model.config.Server.Primary = model.server
-			model.config.Server.Token = model.token
-			if err := saveConfigAt(*model.config, model.configPath); err != nil {
+			info, err := validateClientSetup(model.server, model.token, model.config.Lang)
+			if err != nil {
 				model.errorText = err.Error()
 				return model, nil
 			}
-			model.screen = "menu"
+			model.setupInfo = clientSetupInfoText(info)
+			model.screen = "setup-options"
 			model.input = ""
-			model.errorText = clientText(model.config.Lang, "tui.saved")
+			model.errorText = ""
 			return model, nil
 		case "arguments", "request":
 			model.fields[model.fieldIndex] = value
@@ -272,7 +292,16 @@ func (model clientTUI) View() string {
 	case model.screen == "setup-server":
 		content = clientText(model.config.Lang, "tui.first_setup") + "\n\n" + clientText(model.config.Lang, "tui.connect_server") + "\n" + clientText(model.config.Lang, "tui.server_url") + ": " + model.input + "▏\n\n" + clientText(model.config.Lang, "tui.test_connection")
 	case model.screen == "setup-token":
-		content = clientText(model.config.Lang, "tui.first_setup") + "\n\n" + clientText(model.config.Lang, "tui.server_url") + ": " + model.server + "\n" + clientText(model.config.Lang, "tui.optional_token") + ": " + model.input + "▏\n\n" + clientText(model.config.Lang, "tui.token_prompt")
+		content = clientText(model.config.Lang, "tui.first_setup") + "\n\n" + clientText(model.config.Lang, "tui.server_url") + ": " + model.server + "\n" + clientText(model.config.Lang, "tui.optional_token") + ": " + strings.Repeat("•", utf8.RuneCountInString(model.input)) + "▏\n\n" + clientText(model.config.Lang, "tui.token_prompt")
+	case model.screen == "setup-options":
+		saveMark, defaultMark := "[ ]", "[ ]"
+		if model.saveSetup {
+			saveMark = "[x]"
+		}
+		if model.setDefault {
+			defaultMark = "[x]"
+		}
+		content = strings.Join([]string{clientText(model.config.Lang, "tui.first_setup"), "", clientTextFormat(model.config.Lang, "gui.connected", map[string]string{"server": model.setupInfo}), "s  " + saveMark + " " + clientText(model.config.Lang, "gui.save_config"), "d  " + defaultMark + " " + clientText(model.config.Lang, "gui.set_default"), "", clientText(model.config.Lang, "tui.select_help") + " · " + clientText(model.config.Lang, "tui.setup_toggle")}, "\n")
 	case model.screen == "arguments":
 		lines := []string{clientText(model.config.Lang, "tui.title") + " · " + clientText(model.config.Lang, "command_title."+model.command), ""}
 		for i, label := range model.fieldLabels {

@@ -39,7 +39,8 @@ func PrintServerStartupBanner(info ServerBannerInfo) {
 		started = formatStartupTimestamp(time.Now())
 	}
 	if !emojis {
-		printPlain(info.AppName, info.Version, appMode, info.URLs, info.Lang, started, info.SetupToken, info.OnionAddress, info.I2PAddress, info.SMTPAddress)
+		printPlain(info.AppName, info.Version, appMode, info.URLs, info.Lang, started, info.OnionAddress, info.I2PAddress, info.SMTPAddress)
+		printFirstRunToken(info.SetupToken)
 		return
 	}
 	switch {
@@ -78,9 +79,10 @@ func PrintServerStartupBanner(info ServerBannerInfo) {
 		}
 		fmt.Println()
 	}
+	printFirstRunToken(info.SetupToken)
 }
 
-func printPlain(appName, version, appMode string, urls []string, lang, started, setupToken, onion, i2p, smtp string) {
+func printPlain(appName, version, appMode string, urls []string, lang, started, onion, i2p, smtp string) {
 	fmt.Printf("%s v%s\n", appName, version)
 	fmt.Printf("%s: %s\n", i18n.Translate(lang, "cli.running_in_mode_label"), appMode)
 	for _, address := range urls {
@@ -96,10 +98,13 @@ func printPlain(appName, version, appMode string, urls []string, lang, started, 
 	if smtp != "" {
 		fmt.Printf("SMTP: %s\n", smtp)
 	}
-	if setupToken != "" {
-		fmt.Printf("Setup token: %s\n", setupToken)
-	}
 	fmt.Println()
+}
+
+func printFirstRunToken(token string) {
+	if token != "" {
+		fmt.Printf("Admin token (shown once): %s\n", token)
+	}
 }
 
 func printMode(appMode, lang string, emoji, color bool) {
@@ -197,8 +202,5 @@ func printOptional(info ServerBannerInfo) {
 	}
 	if info.SMTPAddress != "" {
 		fmt.Printf("📧 SMTP: %s\n", info.SMTPAddress)
-	}
-	if info.SetupToken != "" {
-		fmt.Printf("🔑 Setup token: %s\n", info.SetupToken)
 	}
 }

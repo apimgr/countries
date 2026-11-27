@@ -313,6 +313,24 @@ func TestStaticAssetCacheRequiresMatchingBuildStamp(t *testing.T) {
 	}
 }
 
+func TestNotificationStylesheetReflectsConfiguredDurations(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Server.Notifications.WebUI.Duration = 3
+	cfg.Server.Notifications.WebUI.WarningDuration = 5
+	s := newTestServerWithConfig(t, cfg)
+	request := httptest.NewRequest(http.MethodGet, "/static/css/notifications.css?duration=3&warning_duration=5&v="+s.assetStamp(), nil)
+	response := httptest.NewRecorder()
+	s.router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Header().Get("Content-Type"), "text/css") {
+		t.Fatalf("notification stylesheet status=%d content-type=%q", response.Code, response.Header().Get("Content-Type"))
+	}
+	for _, rule := range []string{"--toast-duration:3s", "--toast-duration-warning:5s"} {
+		if !strings.Contains(response.Body.String(), rule) {
+			t.Errorf("notification stylesheet is missing %q: %s", rule, response.Body.String())
+		}
+	}
+}
+
 func TestSecFetchValidationRejectsCrossSiteFrontendWritesOnly(t *testing.T) {
 	s := newTestServer(t)
 
@@ -1273,8 +1291,10 @@ func TestHandleManifest(t *testing.T) {
 		t.Fatalf("decode manifest: %v", err)
 	}
 	for _, want := range []struct{ name, size, purpose string }{
-		{"icon-192.png", "192x192", "any"}, {"icon-512.png", "512x512", "any"},
-		{"icon-maskable-192.png", "192x192", "maskable"}, {"icon-maskable-512.png", "512x512", "maskable"},
+		{"icon-192.png", "192x192", "any"},
+		{"icon-512.png", "512x512", "any"},
+		{"icon-maskable-192.png", "192x192", "maskable"},
+		{"icon-maskable-512.png", "512x512", "maskable"},
 	} {
 		found := false
 		for _, icon := range manifest.Icons {

@@ -166,7 +166,7 @@ func generate(countriesFile, populationFile, tzdbFile, outputFile string) error 
 		return fmt.Errorf("encode generated dataset: %w", err)
 	}
 	encoded = append(encoded, '\n')
-	if err := os.WriteFile(outputFile, encoded, 0644); err != nil {
+	if err := os.WriteFile(outputFile, encoded, 0o644); err != nil {
 		return fmt.Errorf("write generated dataset: %w", err)
 	}
 	fmt.Printf("Generated %d country records at %s\n", len(result), outputFile)

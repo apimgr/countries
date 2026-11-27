@@ -17,7 +17,7 @@ import (
 func TestTorBootstrapTimeoutReapsFakeProcessAndBackend(t *testing.T) {
 	root := testutil.TempDir(t)
 	torStub := filepath.Join(root, "tor")
-	if err := os.WriteFile(torStub, []byte("#!/bin/sh\nexec sleep 1\n"), 0700); err != nil {
+	if err := os.WriteFile(torStub, []byte("#!/bin/sh\nexec sleep 1\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.DefaultConfig()

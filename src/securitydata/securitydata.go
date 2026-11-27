@@ -266,7 +266,7 @@ func (m *Manager) UpdateBlocklists(ctx context.Context) error {
 		}{s, ips, domains, skipped}
 	}
 	dir := filepath.Join(m.opts.SecurityDir, "blocklists")
-	if err := os.MkdirAll(filepath.Dir(dir), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return err
 	}
 	tmp, err := os.MkdirTemp(filepath.Dir(dir), ".blocklists-update-")
@@ -290,7 +290,7 @@ func (m *Manager) UpdateBlocklists(ctx context.Context) error {
 			if e != nil {
 				return e
 			}
-			if e = os.WriteFile(filepath.Join(tmp, entry.Name()), data, 0600); e != nil {
+			if e = os.WriteFile(filepath.Join(tmp, entry.Name()), data, 0o600); e != nil {
 				return e
 			}
 		}
@@ -298,7 +298,7 @@ func (m *Manager) UpdateBlocklists(ctx context.Context) error {
 		return e
 	}
 	for id, p := range parsed {
-		if err = os.WriteFile(filepath.Join(tmp, id+".txt"), serializeEntries(p.ips, p.domains), 0600); err != nil {
+		if err = os.WriteFile(filepath.Join(tmp, id+".txt"), serializeEntries(p.ips, p.domains), 0o600); err != nil {
 			return err
 		}
 	}
@@ -413,6 +413,7 @@ func parseIPs(raw []byte, trusted []netip.Prefix) ([]netip.Prefix, int, error) {
 	}
 	return out, skipped, nil
 }
+
 func parseFireHOL(raw []byte, trusted []netip.Prefix) ([]netip.Prefix, int, error) {
 	valid := make([]string, 0)
 	skipped := 0
@@ -430,12 +431,14 @@ func parseFireHOL(raw []byte, trusted []netip.Prefix) ([]netip.Prefix, int, erro
 	ips, filtered, err := parseIPs([]byte(strings.Join(valid, "\n")), trusted)
 	return ips, skipped + filtered, err
 }
+
 func parsePrefix(s string) (netip.Prefix, error) {
 	if a, e := netip.ParseAddr(s); e == nil {
 		return netip.PrefixFrom(a, a.BitLen()), nil
 	}
 	return netip.ParsePrefix(s)
 }
+
 func cleanLine(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" || strings.HasPrefix(s, "#") || strings.HasPrefix(s, ";") {
@@ -446,6 +449,7 @@ func cleanLine(s string) string {
 	}
 	return strings.TrimSpace(s)
 }
+
 func parseDomains(raw []byte) ([]string, int, error) {
 	out := []string{}
 	skipped := 0
@@ -478,6 +482,7 @@ func parseDomains(raw []byte) ([]string, int, error) {
 	}
 	return out, skipped, nil
 }
+
 func normalizeHost(v string) (string, error) {
 	v = strings.TrimSpace(strings.ToLower(v))
 	if v == "" {
@@ -523,6 +528,7 @@ func (m *Manager) MatchIP(ip netip.Addr) (string, bool) {
 	}
 	return "", false
 }
+
 func (m *Manager) MatchDomain(value string) (string, bool) {
 	host, e := normalizeHost(value)
 	if e != nil {
@@ -542,6 +548,7 @@ func (m *Manager) MatchDomain(value string) (string, bool) {
 	}
 	return "", false
 }
+
 func (m *Manager) Health() map[string]Health {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -720,7 +727,7 @@ func (m *Manager) updateNVD(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	if e = os.MkdirAll(filepath.Dir(dir), 0755); e != nil {
+	if e = os.MkdirAll(filepath.Dir(dir), 0o755); e != nil {
 		return e
 	}
 	tmp, e := os.MkdirTemp(filepath.Dir(dir), ".cve-update-")
@@ -732,7 +739,7 @@ func (m *Manager) updateNVD(ctx context.Context) error {
 			m.opts.Logger.Printf("remove temporary NVD directory: %v", err)
 		}
 	}()
-	if e = os.WriteFile(filepath.Join(tmp, "nvd.json"), encoded, 0600); e != nil {
+	if e = os.WriteFile(filepath.Join(tmp, "nvd.json"), encoded, 0o600); e != nil {
 		return e
 	}
 	if e = writeUpdatedAt(tmp, m.now()); e != nil {
@@ -803,7 +810,7 @@ func (m *Manager) updateTrivy(ctx context.Context) error {
 	if len(data) == 0 {
 		return errors.New("empty Trivy layer")
 	}
-	if e = os.MkdirAll(filepath.Dir(dir), 0755); e != nil {
+	if e = os.MkdirAll(filepath.Dir(dir), 0o755); e != nil {
 		return e
 	}
 	tmp, e := os.MkdirTemp(filepath.Dir(dir), ".trivy-update-")
@@ -853,7 +860,7 @@ func extractTrivy(data []byte, dir string) (resultErr error) {
 		if h.Typeflag != tar.TypeReg || h.Size <= 0 || h.Size > 2<<30 {
 			return fmt.Errorf("invalid Trivy archive member %q", name)
 		}
-		f, e := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		f, e := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if e != nil {
 			return e
 		}
@@ -880,6 +887,7 @@ func extractTrivy(data []byte, dir string) (resultErr error) {
 	}
 	return nil
 }
+
 func parseOCIRef(ref string) (string, string, string, error) {
 	if !strings.Contains(ref, "/") {
 		return "", "", "", errors.New("invalid OCI reference")
@@ -895,6 +903,7 @@ func parseOCIRef(ref string) (string, string, string, error) {
 	}
 	return registry, rest[:i], rest[i+1:], nil
 }
+
 func ociGet(ctx context.Context, c *http.Client, repo, target, accept string) ([]byte, error) {
 	request := func(token string) (*http.Response, error) {
 		req, e := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
@@ -1025,6 +1034,7 @@ func (m *Manager) fetch(ctx context.Context, u string) ([]byte, error) {
 	}
 	return b, e
 }
+
 func serializeEntries(ips []netip.Prefix, ds []string) []byte {
 	var b strings.Builder
 	for _, p := range ips {
@@ -1037,12 +1047,13 @@ func serializeEntries(ips []netip.Prefix, ds []string) []byte {
 	}
 	return []byte(b.String())
 }
+
 func atomicFile(path string, data []byte) (resultErr error) {
 	if len(data) == 0 {
 		return errors.New("refusing empty data")
 	}
 	dir := filepath.Dir(path)
-	if e := os.MkdirAll(dir, 0755); e != nil {
+	if e := os.MkdirAll(dir, 0o755); e != nil {
 		return e
 	}
 	f, e := os.CreateTemp(dir, ".security-update-")
@@ -1066,9 +1077,11 @@ func atomicFile(path string, data []byte) (resultErr error) {
 	}
 	return os.Rename(tmp, path)
 }
+
 func writeUpdatedAt(dir string, now time.Time) error {
 	return atomicFile(filepath.Join(dir, ".last_updated"), []byte(now.UTC().Format(time.RFC3339)+"\n"))
 }
+
 func recoverDir(dest string) error {
 	old := dest + ".old"
 	_, destErr := os.Stat(dest)
@@ -1087,9 +1100,10 @@ func recoverDir(dest string) error {
 	}
 	return nil
 }
+
 func swapDir(tmp, dest string) error {
 	parent := filepath.Dir(dest)
-	if e := os.MkdirAll(parent, 0755); e != nil {
+	if e := os.MkdirAll(parent, 0o755); e != nil {
 		return e
 	}
 	if e := recoverDir(dest); e != nil {

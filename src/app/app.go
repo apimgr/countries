@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -11,7 +12,10 @@ import (
 )
 
 // Run starts the application and returns when it shuts down.
-func Run(ctx context.Context, cfg config.Config) error {
+func Run(ctx context.Context, cfg config.ServerConfig) error {
+	if !cfg.Command.Parsed {
+		return errors.New("runtime configuration must be loaded with config.Load")
+	}
 	Version = cfg.Version
 	if Version == "" {
 		Version = "devel"
@@ -25,6 +29,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		BuildEpoch = "0"
 	}
 	OfficialSite = cfg.OfficialSite
+	applyCommandOptions(cfg.Command)
 	BuildDate = "N/A"
 	if epoch, err := strconv.ParseInt(BuildEpoch, 10, 64); err == nil && epoch > 0 {
 		BuildDate = time.Unix(epoch, 0).UTC().Format("2006-01-02T15:04:05Z")

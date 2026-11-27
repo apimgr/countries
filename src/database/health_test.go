@@ -2,10 +2,11 @@ package database
 
 import (
 	"context"
-	"github.com/apimgr/countries/src/testutil"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/apimgr/countries/src/testutil"
 )
 
 func TestHealthStorePersistsRequestCounters(t *testing.T) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 
@@ -11,8 +12,15 @@ import (
 )
 
 func main() {
-	app.ParseFlags(os.Args[1:])
-	cfg := *config.DefaultConfig()
+	cfg, err := config.Load(os.Args[1:])
+	if err != nil {
+		log.Printf("Failed to load configuration: %v", err)
+		var parseError *config.CLIFlagParseError
+		if errors.As(err, &parseError) {
+			os.Exit(2)
+		}
+		os.Exit(1)
+	}
 	cfg.Version = Version
 	cfg.CommitID = CommitID
 	cfg.BuildEpoch = BuildEpoch

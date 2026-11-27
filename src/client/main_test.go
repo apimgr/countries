@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/apimgr/countries/src/testutil"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/apimgr/countries/src/testutil"
 
 	"github.com/apimgr/countries/src/common/api"
 	"github.com/apimgr/countries/src/common/display"
@@ -340,7 +341,7 @@ func TestSaveConfigUsesOwnerOnlyPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if info.Mode().Perm() != 0o600 {
 		t.Errorf("CLI config permissions = %04o, want 0600", info.Mode().Perm())
 	}
 	loaded, err := loadConfig()
@@ -352,7 +353,7 @@ func TestSaveConfigUsesOwnerOnlyPermissions(t *testing.T) {
 func TestPersistClientSettingsPreservesUnrelatedValues(t *testing.T) {
 	configRoot := testutil.TempDir(t)
 	path := filepath.Join(configRoot, "cli.yml")
-	if err := os.WriteFile(path, []byte("server:\n  primary: invalid\n  timeout: 45s\nauth:\n  token: invalid\n  token_file: /tmp/token\ndisplay:\n  mode: tui\nfuture:\n  retained: true\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("server:\n  primary: invalid\n  timeout: 45s\nauth:\n  token: invalid\n  token_file: /tmp/token\ndisplay:\n  mode: tui\nfuture:\n  retained: true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	server := "https://countries.example.test"
@@ -379,7 +380,7 @@ func TestPersistClientSettingsPreservesUnrelatedValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("config mode = %v; want 0600", info.Mode().Perm())
 	}
 }
@@ -413,8 +414,12 @@ func TestInteractiveSetupValidatesAndSavesServer(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(configRoot) })
 	t.Setenv("XDG_CONFIG_HOME", configRoot)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/autodiscover" {
+			_, _ = io.WriteString(w, `{"ok":true,"data":{"name":"Countries API","version":"1.0.0"}}`)
+			return
+		}
 		if r.URL.Path != api.APIPath("server/healthz") {
-			t.Errorf("setup checked %q, want health endpoint", r.URL.Path)
+			t.Errorf("setup checked %q, want health or autodiscover endpoint", r.URL.Path)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -430,6 +435,11 @@ func TestInteractiveSetupValidatesAndSavesServer(t *testing.T) {
 		t.Fatalf("setup state = (%q, %q), want token screen and checked server", model.screen, model.server)
 	}
 	updated, _ = model.updateInput(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(clientTUI)
+	if model.screen != "setup-options" {
+		t.Fatalf("setup state = %q, want options screen", model.screen)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(clientTUI)
 	loaded, err := loadConfigAt(configPath)
 	if err != nil || loaded.Server.Primary != server.URL {
@@ -458,8 +468,8 @@ func TestClientHeadlessModeRequiresACommand(t *testing.T) {
 	if mode, err := clientDisplayModeForEnv("auto", false, io.Discard, env, "en"); err != nil || mode != "cli" {
 		t.Fatalf("headless command mode = %q, %v; want cli", mode, err)
 	}
-	if mode, err := clientDisplayModeForEnv("auto", true, io.Discard, env, "en"); err == nil || mode != "" || !strings.Contains(err.Error(), "--help") {
-		t.Fatalf("headless interactive mode = %q, %v; want usage error", mode, err)
+	if mode, err := clientDisplayModeForEnv("auto", true, io.Discard, env, "en"); err != nil || mode != "cli" {
+		t.Fatalf("headless auto mode = %q, %v; want cli so startup can process updates before setup guidance", mode, err)
 	}
 }
 

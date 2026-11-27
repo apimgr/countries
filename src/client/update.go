@@ -22,8 +22,10 @@ import (
 	"github.com/apimgr/countries/src/updater"
 )
 
-const maxClientUpdateBytes = 256 << 20
-const pendingClientUpdateEvent = "COUNTRIES_CLI_UPDATE_EVENT"
+const (
+	maxClientUpdateBytes     = 256 << 20
+	pendingClientUpdateEvent = "COUNTRIES_CLI_UPDATE_EVENT"
+)
 
 func clientUpdateError(lang, key string, args map[string]string) error {
 	return errors.New(i18n.TranslateFormat(lang, "client.update.error."+key, args))
@@ -45,6 +47,10 @@ type clientDiscovery struct {
 }
 
 func checkAndApplyClientUpdate(serverURL, token, action string, auto, interactive bool, input io.Reader, output, stderr io.Writer, selectedLanguage ...string) error {
+	return checkAndApplyClientUpdateWithPrompt(serverURL, token, action, auto, interactive, input, output, stderr, selectedLanguage, nil)
+}
+
+func checkAndApplyClientUpdateWithPrompt(serverURL, token, action string, auto, interactive bool, input io.Reader, output, stderr io.Writer, selectedLanguage []string, guiPrompt func(string, string) (bool, error)) error {
 	if serverURL == "" {
 		return nil
 	}
@@ -119,9 +125,17 @@ func checkAndApplyClientUpdate(serverURL, token, action string, auto, interactiv
 		_, err := fmt.Fprintln(output, i18n.TranslateFormat(lang, "client.update.available", map[string]string{"version": available.Version, "current": Version}))
 		return err
 	}
-	install := auto && action == "yes" && !interactive
-	if interactive {
-		answer, err := askClientUpdate(input, output, available.Version, lang)
+	install := action == "yes"
+	if action != "yes" && !interactive && auto {
+		install = true
+	}
+	if action != "yes" && interactive {
+		answer, err := false, error(nil)
+		if guiPrompt != nil {
+			answer, err = guiPrompt(available.Version, lang)
+		} else {
+			answer, err = askClientUpdate(input, output, available.Version, lang)
+		}
 		if err != nil {
 			return err
 		}
@@ -208,7 +222,7 @@ func installClientUpdate(ctx context.Context, client *http.Client, serverURL, to
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 	tempPath := filepath.Join(tempDir, "cli.update.tmp")
-	file, err := os.OpenFile(tempPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0700)
+	file, err := os.OpenFile(tempPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
 	if err != nil {
 		return clientUpdateWrap(lang, "create_file", err)
 	}
@@ -276,10 +290,10 @@ func recordClientAudit(stderr io.Writer, event string, fields map[string]string,
 		return clientUpdateWrap(lang, "audit_encode", err)
 	}
 	logPath := filepath.Join(paths.GetLogsDir(internalName), "cli.log")
-	if err := os.MkdirAll(filepath.Dir(logPath), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		return clientUpdateWrap(lang, "audit_directory", err)
 	}
-	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return clientUpdateWrap(lang, "audit_open", err)
 	}

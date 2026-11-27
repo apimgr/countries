@@ -115,10 +115,10 @@ func NewManagerWithHTTP(directory string, client *http.Client) (*GeoIPManager, e
 		copyClient.Timeout = 30 * time.Second
 		client = &copyClient
 	}
-	if err := os.MkdirAll(directory, 0700); err != nil {
+	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return nil, fmt.Errorf("create GeoIP directory: %w", err)
 	}
-	if err := os.Chmod(directory, 0700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil {
 		return nil, fmt.Errorf("secure GeoIP directory: %w", err)
 	}
 	return newManager(directory, client, defaultBaseURL, func(path string) (databaseReader, error) {
@@ -228,7 +228,7 @@ func (m *GeoIPManager) writeLastUpdated(updated time.Time) (resultErr error) {
 			resultErr = errors.Join(resultErr, fmt.Errorf("remove temporary GeoIP timestamp: %w", removeErr))
 		}
 	}()
-	if err := file.Chmod(0600); err != nil {
+	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
 		return err
 	}
@@ -320,7 +320,7 @@ func (m *GeoIPManager) installAsset(asset DatabaseAsset, data []byte) (resultErr
 			resultErr = errors.Join(resultErr, fmt.Errorf("remove temporary database: %w", removeErr))
 		}
 	}()
-	if err := temporary.Chmod(0600); err != nil {
+	if err := temporary.Chmod(0o600); err != nil {
 		_ = temporary.Close()
 		return fmt.Errorf("secure temporary database: %w", err)
 	}

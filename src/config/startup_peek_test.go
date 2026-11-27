@@ -9,12 +9,12 @@ import (
 func TestPeekStartupSettingsUsesOrderedDropInsAndSkipsInvalidFiles(t *testing.T) {
 	directory := t.TempDir()
 	dropInDirectory := filepath.Join(directory, "yaml.d")
-	if err := os.Mkdir(dropInDirectory, 0700); err != nil {
+	if err := os.Mkdir(dropInDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	write := func(path, contents string) {
 		t.Helper()
-		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -42,7 +42,7 @@ func TestPeekStartupSettingsPIDFileDefaultsAndOverrides(t *testing.T) {
 	if got := PeekStartupSettings(path); !got.PIDFile {
 		t.Fatal("missing server.pidfile should use the enabled default")
 	}
-	if err := os.WriteFile(path, []byte("server:\n  pidfile: false\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("server:\n  pidfile: false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got := PeekStartupSettings(path); got.PIDFile {
@@ -53,7 +53,7 @@ func TestPeekStartupSettingsPIDFileDefaultsAndOverrides(t *testing.T) {
 func TestPeekStartupSettingsReadsLegacyYAMLFile(t *testing.T) {
 	directory := t.TempDir()
 	legacyPath := filepath.Join(directory, "server.yaml")
-	if err := os.WriteFile(legacyPath, []byte("server:\n  port: '8124'\n  address: 127.0.0.1\n"), 0600); err != nil {
+	if err := os.WriteFile(legacyPath, []byte("server:\n  port: '8124'\n  address: 127.0.0.1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	settings := PeekStartupSettings(filepath.Join(directory, "server.yml"))
@@ -72,10 +72,10 @@ func TestPeekStartupSettingsDoesNotCreateOrChangeFiles(t *testing.T) {
 		t.Fatalf("PeekStartupSettings created the config directory: stat error = %v", err)
 	}
 
-	if err := os.MkdirAll(filepath.Join(directory, "yaml.d"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(directory, "yaml.d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(configPath, []byte("server:\n  port: '8123'\n"), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte("server:\n  port: '8123'\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	modeBefore := fileMode(t, configPath)
@@ -91,7 +91,7 @@ func TestPrepareStartupConfigDoesNotChangeSymlinkTargetMode(t *testing.T) {
 	directory := t.TempDir()
 	target := filepath.Join(directory, "external.yml")
 	configPath := filepath.Join(directory, "server.yml")
-	if err := os.WriteFile(target, []byte("server:\n  port: '8123'\n"), 0644); err != nil {
+	if err := os.WriteFile(target, []byte("server:\n  port: '8123'\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, configPath); err != nil {
@@ -100,7 +100,7 @@ func TestPrepareStartupConfigDoesNotChangeSymlinkTargetMode(t *testing.T) {
 	if err := PrepareStartupConfig(configPath); err != nil {
 		t.Fatal(err)
 	}
-	if got := fileMode(t, target); got != 0644 {
+	if got := fileMode(t, target); got != 0o644 {
 		t.Fatalf("PrepareStartupConfig changed symlink target mode to %04o, want 0644", got)
 	}
 }

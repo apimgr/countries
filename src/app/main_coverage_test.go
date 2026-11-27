@@ -46,7 +46,7 @@ func TestRestoreDatabaseIsEmpty(t *testing.T) {
 
 	t.Run("zero byte database", func(t *testing.T) {
 		path := filepath.Join(dir, "zero.db")
-		if err := os.WriteFile(path, nil, 0600); err != nil {
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		empty, err := restoreDatabaseIsEmpty(path)
@@ -91,7 +91,7 @@ func TestRestoreDatabaseIsEmpty(t *testing.T) {
 
 	t.Run("unreadable database reports inspection error", func(t *testing.T) {
 		path := filepath.Join(dir, "invalid.db")
-		if err := os.WriteFile(path, []byte("not a sqlite database"), 0600); err != nil {
+		if err := os.WriteFile(path, []byte("not a sqlite database"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if empty, err := restoreDatabaseIsEmpty(path); err == nil || empty {
@@ -201,14 +201,14 @@ func TestRestoreAuthorizationAndPasswordPrompt(t *testing.T) {
 		t.Fatalf("prompt missing backup = %q, %v", password, err)
 	}
 	plainPath := filepath.Join(dir, "plain-backup")
-	if err := os.WriteFile(plainPath, []byte("plain archive"), 0600); err != nil {
+	if err := os.WriteFile(plainPath, []byte("plain archive"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if password, err := promptBackupPassword(plainPath, input, output); err != nil || password != "" {
 		t.Fatalf("prompt unencrypted backup = %q, %v", password, err)
 	}
 	encryptedPath := filepath.Join(dir, "encrypted-backup")
-	if err := os.WriteFile(encryptedPath, []byte("BKUP1"+"payload"), 0600); err != nil {
+	if err := os.WriteFile(encryptedPath, []byte("BKUP1"+"payload"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if password, err := promptBackupPassword(encryptedPath, input, output); err == nil || password != "" {

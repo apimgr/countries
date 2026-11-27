@@ -80,11 +80,11 @@ func TestUpdateNVDFailurePreservesPreviousData(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	dir := filepath.Join(root, "cve")
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	old := `[{"id":"CVE-2025-9999"}]`
-	if err := os.WriteFile(filepath.Join(dir, "nvd.json"), []byte(old), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "nvd.json"), []byte(old), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	m, err := New(Options{SecurityDir: root, NVDSource: server.URL, HTTPClient: server.Client()})
@@ -135,11 +135,11 @@ func TestTrivyUpdateSkipsCurrentDatabaseAndUsesContractKey(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	dir := filepath.Join(root, "trivy")
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	metadata := `{"NextUpdate":"2026-01-03T03:04:05Z"}`
-	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), []byte(metadata), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), []byte(metadata), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	m, err := New(Options{SecurityDir: root, TrivySource: "invalid", Now: func() time.Time { return now }})
@@ -218,7 +218,7 @@ func TestExtractTrivyRequiresAndWritesDatabaseFilesPrivately(t *testing.T) {
 		info, err := os.Stat(path)
 		if err != nil {
 			t.Errorf("stat extracted %s: %v", name, err)
-		} else if info.Mode().Perm() != 0600 {
+		} else if info.Mode().Perm() != 0o600 {
 			t.Errorf("extracted %s mode = %04o, want 0600", name, info.Mode().Perm())
 		}
 	}
@@ -248,7 +248,7 @@ func makeTrivyLayer(t *testing.T, files map[string]string) []byte {
 	compressed := gzip.NewWriter(&output)
 	archive := tar.NewWriter(compressed)
 	for name, content := range files {
-		if err := archive.WriteHeader(&tar.Header{Name: name, Mode: 0600, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
+		if err := archive.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := archive.Write([]byte(content)); err != nil {
@@ -334,7 +334,7 @@ func TestAtomicFilePreservesOldFileOnEmpty(t *testing.T) {
 		}
 	})
 	path := filepath.Join(dir, "list.txt")
-	if err = os.WriteFile(path, []byte("old\n"), 0600); err != nil {
+	if err = os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err = atomicFile(path, nil); err == nil {
@@ -373,14 +373,14 @@ func TestNewLoadsPersistedBlocklists(t *testing.T) {
 	})
 	securityDir := filepath.Join(root, "security")
 	blocklistDir := filepath.Join(securityDir, "blocklists")
-	if err = os.MkdirAll(blocklistDir, 0700); err != nil {
+	if err = os.MkdirAll(blocklistDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	updated := time.Now().UTC().Format(time.RFC3339) + "\n"
-	if err = os.WriteFile(filepath.Join(blocklistDir, ".last_updated"), []byte(updated), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(blocklistDir, ".last_updated"), []byte(updated), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(blocklistDir, "persisted.txt"), []byte("198.51.100.9/32\n"), 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(blocklistDir, "persisted.txt"), []byte("198.51.100.9/32\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	enabled := true

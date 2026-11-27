@@ -123,7 +123,7 @@ func TestManagerGlobalVariablesAndTemplateResolution(t *testing.T) {
 
 	directory := testutil.TempDir(t)
 	manager.OverrideDir = directory
-	if err := os.WriteFile(filepath.Join(directory, "event.tmpl"), []byte("Subject: Override\n---\nCustom body"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "event.tmpl"), []byte("Subject: Override\n---\nCustom body"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := manager.loadTemplate("event"); err != nil || !strings.Contains(got, "Custom body") {
@@ -227,13 +227,13 @@ func TestManagerDryRunOverrideValidationAndRenderedNotifications(t *testing.T) {
 	}
 	directory := testutil.TempDir(t)
 	manager.OverrideDir = directory
-	if err := os.WriteFile(filepath.Join(directory, "bad.tmpl"), []byte("Subject: Bad {unknown}\n---\nBody"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "bad.tmpl"), []byte("Subject: Bad {unknown}\n---\nBody"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.CheckOverrides(); err == nil || !strings.Contains(err.Error(), "unknown variable") {
 		t.Fatalf("CheckOverrides(unknown variable) = %v", err)
 	}
-	if err := os.Mkdir(filepath.Join(directory, "folder.tmpl"), 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(directory, "folder.tmpl"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(directory, "bad.tmpl")); err != nil {

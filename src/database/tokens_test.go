@@ -5,11 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"github.com/apimgr/countries/src/testutil"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/apimgr/countries/src/testutil"
 )
 
 func TestOwnerTokenLifecycleAndMetadataIsolation(t *testing.T) {
@@ -30,7 +31,7 @@ func TestOwnerTokenLifecycleAndMetadataIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateOwnerToken(): %v", err)
 	}
-	if primary.Kind != "primary" || primary.OwnerID == "" || primary.Last4 != rawPrimary[len(rawPrimary)-4:] {
+	if primary.Kind != "primary" || primary.Scope != "global" || primary.OwnerID == "" || primary.Last4 != rawPrimary[len(rawPrimary)-4:] {
 		t.Fatalf("created primary metadata = %+v", primary)
 	}
 	if !ValidTokenID(primary.ID) {
@@ -71,24 +72,24 @@ func TestOwnerTokenLifecycleAndMetadataIsolation(t *testing.T) {
 	}
 
 	expires := now.Add(24 * time.Hour)
-	linked, rawLinked, err := CreateLinkedOwnerToken(ctx, db, primary.OwnerID, "build agent", &expires, 2, key, now)
+	linked, rawLinked, err := CreateLinkedOwnerToken(ctx, db, primary.OwnerID, "build agent", "read-write", &expires, 2, key, now)
 	if err != nil {
 		t.Fatalf("CreateLinkedOwnerToken(): %v", err)
 	}
-	if linked.Kind != "linked" || linked.Name != "build agent" || linked.ExpiresAt == nil || !linked.ExpiresAt.Equal(expires) {
+	if linked.Kind != "linked" || linked.Scope != "read-write" || linked.Name != "build agent" || linked.ExpiresAt == nil || !linked.ExpiresAt.Equal(expires) {
 		t.Fatalf("created linked metadata = %+v", linked)
 	}
-	if _, _, err := CreateLinkedOwnerToken(ctx, db, primary.OwnerID, "BUILD AGENT", nil, 2, key, now); !errors.Is(err, ErrTokenName) {
+	if _, _, err := CreateLinkedOwnerToken(ctx, db, primary.OwnerID, "BUILD AGENT", "read-write", nil, 2, key, now); !errors.Is(err, ErrTokenName) {
 		t.Fatalf("duplicate name error = %v, want ErrTokenName", err)
 	}
-	second, _, err := CreateLinkedOwnerToken(ctx, db, primary.OwnerID, "another", nil, 2, key, now)
+	second, _, err := CreateLinkedOwnerToken(ctx, db, primary.OwnerID, "another", "read-write", nil, 2, key, now)
 	if err != nil {
 		t.Fatalf("CreateLinkedOwnerToken(second): %v", err)
 	}
 	if err := UpdateLinkedOwnerToken(ctx, db, primary.OwnerID, linked.ID, "ANOTHER", nil, now); !errors.Is(err, ErrTokenName) {
 		t.Fatalf("duplicate rename error = %v, want ErrTokenName", err)
 	}
-	if _, _, err := CreateLinkedOwnerToken(ctx, db, primary.OwnerID, "second", nil, 1, key, now); !errors.Is(err, ErrTokenLimit) {
+	if _, _, err := CreateLinkedOwnerToken(ctx, db, primary.OwnerID, "second", "read-write", nil, 1, key, now); !errors.Is(err, ErrTokenLimit) {
 		t.Fatalf("token limit error = %v, want ErrTokenLimit", err)
 	}
 
@@ -131,6 +132,31 @@ func TestOwnerTokenLifecycleAndMetadataIsolation(t *testing.T) {
 	}
 }
 
+func TestCheckOwnerTokenDoesNotUpdateUsage(t *testing.T) {
+	db, err := Open(filepath.Join(testutil.TempDir(t), "server.db"))
+	if err != nil {
+		t.Fatalf("Open(): %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	_, raw, err := CreateOwnerToken(ctx, db, key)
+	if err != nil {
+		t.Fatalf("CreateOwnerToken(): %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE api_tokens SET last_used_at = ? WHERE token_hash = ?`, int64(123), tokenHash(raw)); err != nil {
+		t.Fatalf("set last_used_at: %v", err)
+	}
+	identity, err := CheckOwnerToken(ctx, db, raw, time.Unix(456, 0))
+	if err != nil || identity.Kind != "primary" || !identity.Active {
+		t.Fatalf("CheckOwnerToken() = (%+v, %v)", identity, err)
+	}
+	var lastUsed int64
+	if err := db.QueryRowContext(ctx, `SELECT last_used_at FROM api_tokens WHERE token_hash = ?`, tokenHash(raw)).Scan(&lastUsed); err != nil || lastUsed != 123 {
+		t.Fatalf("last_used_at after check = %d, %v; want unchanged 123", lastUsed, err)
+	}
+}
+
 func TestValidTokenIDRequiresUUIDv7(t *testing.T) {
 	for _, value := range []string{
 		"019b3e57-4f80-7000-8000-000000000001",
@@ -169,7 +195,7 @@ func TestOwnerTokenExpiryAndSchemaMigration(t *testing.T) {
 		t.Fatalf("CreateOwnerToken(): %v", err)
 	}
 	expiry := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
-	_, raw, err := CreateLinkedOwnerToken(ctx, db, primary.OwnerID, "short-lived", &expiry, 5, key, expiry.Add(-time.Hour))
+	_, raw, err := CreateLinkedOwnerToken(ctx, db, primary.OwnerID, "short-lived", "read-write", &expiry, 5, key, expiry.Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("CreateLinkedOwnerToken(): %v", err)
 	}

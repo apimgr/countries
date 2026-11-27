@@ -112,7 +112,7 @@ func (s *Server) loggingConfigSnapshot() config.LoggingConfig {
 }
 
 func writeRotatingLog(directory, filename, line, rotation, retention string, now time.Time) error {
-	if err := os.MkdirAll(directory, 0700); err != nil {
+	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return fmt.Errorf("create log directory: %w", err)
 	}
 	path := filepath.Join(directory, filename)
@@ -129,11 +129,11 @@ func writeRotatingLog(directory, filename, line, rotation, retention string, now
 			return err
 		}
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}
-	if err := file.Chmod(0600); err != nil {
+	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("secure log file: %w", err)
 	}
@@ -194,7 +194,7 @@ func parseLogSize(value string) (int64, bool) {
 		return 0, false
 	}
 	number, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
-	if err != nil || number == 0 || number > uint64((int64(^uint64(0)>>1))/unit) {
+	if err != nil || number == 0 || number > uint64(int64(^uint64(0)>>1)/unit) {
 		return 0, false
 	}
 	return int64(number) * unit, true
@@ -217,7 +217,7 @@ func rotateLogFile(directory, filename, path, retention string, now time.Time) e
 	if err := os.Rename(path, archive); err != nil {
 		return fmt.Errorf("rotate log file: %w", err)
 	}
-	if err := os.Chmod(archive, 0600); err != nil {
+	if err := os.Chmod(archive, 0o600); err != nil {
 		return fmt.Errorf("secure rotated log file: %w", err)
 	}
 	return pruneRotatedLogs(directory, filename, retention, now)
@@ -337,7 +337,11 @@ func formatAccessLog(format, custom string, r *http.Request, started time.Time, 
 	if len(geoValues) > 1 {
 		asn = geoValues[1]
 	}
-	switch strings.ToLower(strings.TrimSpace(format)) {
+	format = strings.ToLower(strings.TrimSpace(format))
+	if format == "custom" && strings.TrimSpace(custom) == "" {
+		format = "apache"
+	}
+	switch format {
 	case "nginx":
 		return fmt.Sprintf("%s - - [%s] %q %d %d", cleanLogValue(remoteIP), started.Format("02/Jan/2006:15:04:05 -0700"), cleanLogValue(r.Method+" "+sanitizedRequestURI(r.URL)+" "+protocol), status, size)
 	case "json":
@@ -350,9 +354,7 @@ func formatAccessLog(format, custom string, r *http.Request, started time.Time, 
 		}
 		return string(line)
 	case "custom":
-		if strings.TrimSpace(custom) == "" {
-			format = "apache"
-		} else {
+		{
 			values := map[string]string{
 				"{time}": started.Format("15:04:05"), "{date}": started.Format("2006-01-02"),
 				"{datetime}": started.Format(time.RFC3339Nano), "{remote_ip}": remoteIP,

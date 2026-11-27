@@ -139,7 +139,7 @@ func TestSecretRotationAtomicFilesAndSecretsYAML(t *testing.T) {
 		t.Fatalf("writePrivateAtomic(): %v", err)
 	}
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0600 {
+	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("private file mode = %v, %v; want 0600", info, err)
 	}
 	if err := os.Remove(path); err != nil {
@@ -177,10 +177,10 @@ func TestSecretRotationAtomicFilesAndSecretsYAML(t *testing.T) {
 	if err := updateSecretsFile(filepath.Join(root, "bad"), "", false, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "broken", "secrets.yml"), []byte("not created"), 0600); err == nil {
+	if err := os.WriteFile(filepath.Join(root, "broken", "secrets.yml"), []byte("not created"), 0o600); err == nil {
 		t.Fatal("unexpected successful write into missing parent")
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "secrets.yml"), []byte("server: ["), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "secrets.yml"), []byte("server: ["), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := updateSecretsFile(configDir, "", false, nil); err == nil {

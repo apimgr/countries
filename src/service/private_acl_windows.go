@@ -51,7 +51,7 @@ func enforcePrivateACL(configDir, dataDir string) error {
 
 func ensureProtectedDirectory(path string, descriptor *windows.SECURITY_DESCRIPTOR, dacl *windows.ACL) error {
 	path = filepath.Clean(path)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create parent for private path %s: %w", path, err)
 	}
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {

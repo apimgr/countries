@@ -34,7 +34,7 @@ func TestWriteAppendsPrivateStructuredEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("audit log permissions = %04o, want 0600", info.Mode().Perm())
 	}
 	contents, err := os.ReadFile(path)
@@ -78,16 +78,16 @@ func TestAuditPermissionsFollowRuntimeModeAndRepairExistingPaths(t *testing.T) {
 		wantDirectory os.FileMode
 		wantFile      os.FileMode
 	}{
-		{name: "user", wantDirectory: 0700, wantFile: 0600},
-		{name: "system", systemMode: true, wantDirectory: 0750, wantFile: 0640},
+		{name: "user", wantDirectory: 0o700, wantFile: 0o600},
+		{name: "system", systemMode: true, wantDirectory: 0o750, wantFile: 0o640},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := filepath.Join(testutil.TempDir(t), "logs")
-			if err := os.MkdirAll(dir, 0755); err != nil {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
 				t.Fatal(err)
 			}
 			path := filepath.Join(dir, "audit.log")
-			if err := os.WriteFile(path, []byte(""), 0644); err != nil {
+			if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			opts := DefaultOptions()
@@ -165,11 +165,11 @@ func TestWriteAndMirrorAppendsBeforeBestEffortDatabaseMirror(t *testing.T) {
 func TestWriteRejectsSymlinkAuditPathBeforeReadingTarget(t *testing.T) {
 	root := testutil.TempDir(t)
 	logDir := filepath.Join(root, "logs")
-	if err := os.MkdirAll(logDir, 0750); err != nil {
+	if err := os.MkdirAll(logDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	target := filepath.Join(root, "target.log")
-	if err := os.WriteFile(target, []byte("private target"), 0600); err != nil {
+	if err := os.WriteFile(target, []byte("private target"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, filepath.Join(logDir, "audit.log")); err != nil {
@@ -196,7 +196,7 @@ func TestVerifyRejectsTamperedLog(t *testing.T) {
 	if err := Write(filepath.Dir(path), Event{Event: "server.started", Category: "server", Severity: "info", Actor: Actor{Type: "system"}, Result: "success"}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("{}\n"), 0640); err != nil {
+	if err := os.WriteFile(path, []byte("{}\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
 	if err := Verify(path); err == nil {
@@ -249,20 +249,59 @@ func TestRotationKeepsAnchorAndContinuesPreviousLineChain(t *testing.T) {
 	if len(archives) != 1 {
 		t.Fatalf("compressed archives = %v", archives)
 	}
+	if filepath.Base(archives[0]) != "audit.log.2030-02-02.gz" {
+		t.Fatalf("compressed archive name = %q, want audit.log.2030-02-02.gz", filepath.Base(archives[0]))
+	}
 	archive, err := os.Open(archives[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer archive.Close()
+	defer func() { _ = archive.Close() }()
 	reader, err := gzip.NewReader(archive)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	if _, err := io.ReadAll(reader); err != nil {
 		t.Fatal(err)
 	}
 	_ = first
+}
+
+func TestRotationUsesNumericSuffixForRepeatedUTCDate(t *testing.T) {
+	dir := filepath.Join(testutil.TempDir(t), "logs")
+	opts := DefaultOptions()
+	opts.Rotate = "daily"
+	opts.Keep = "forever"
+	if err := Configure(dir, opts); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "audit.log")
+	firstTime := time.Date(2030, 2, 1, 12, 0, 0, 0, time.UTC)
+	appendEvent := func(now time.Time) {
+		t.Helper()
+		if err := Write(dir, Event{Event: "server.started", Category: "server", Severity: "info", Actor: Actor{Type: "system"}, Result: "success"}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendEvent(firstTime)
+	stale := firstTime.Add(-48 * time.Hour)
+	if err := os.Chtimes(path, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	appendEvent(firstTime.Add(time.Hour))
+	if err := os.Chtimes(path, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	appendEvent(firstTime.Add(2 * time.Hour))
+	for _, name := range []string{"audit.log.2030-02-01", "audit.log.2030-02-01.1"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("expected archive %s: %v", name, err)
+		}
+	}
+	if err := Verify(path); err != nil {
+		t.Fatalf("Verify after repeated rotations: %v", err)
+	}
 }
 
 func TestAuditOptionsFilterCategoriesAndUserAgent(t *testing.T) {
@@ -317,7 +356,7 @@ func TestAppendReportsBrokenChainOnceAndContinues(t *testing.T) {
 		t.Fatal(err)
 	}
 	data = append(bytes.Join(lines, []byte{'\n'}), '\n')
-	if err := os.WriteFile(path, data, 0640); err != nil {
+	if err := os.WriteFile(path, data, 0o640); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"third", "fourth"} {
@@ -352,20 +391,20 @@ func TestAppendReportsBrokenChainOnceAndContinues(t *testing.T) {
 func TestReadAnchorRequiresPrivateRegularFile(t *testing.T) {
 	directory := testutil.TempDir(t)
 	anchor := filepath.Join(directory, "audit.anchor")
-	if err := os.WriteFile(anchor, []byte(strings.Repeat("0", 64)+"\n"), 0644); err != nil {
+	if err := os.WriteFile(anchor, []byte(strings.Repeat("0", 64)+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := readAnchor(anchor); err == nil {
 		t.Fatal("readAnchor accepted permissions broader than 0600")
 	}
-	if err := os.Chmod(anchor, 0600); err != nil {
+	if err := os.Chmod(anchor, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if value, err := readAnchor(anchor); err != nil || value != strings.Repeat("0", 64) {
 		t.Fatalf("readAnchor() = %q, %v", value, err)
 	}
 	target := filepath.Join(directory, "target")
-	if err := os.WriteFile(target, []byte(strings.Repeat("0", 64)+"\n"), 0600); err != nil {
+	if err := os.WriteFile(target, []byte(strings.Repeat("0", 64)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(anchor); err != nil {
@@ -376,5 +415,26 @@ func TestReadAnchorRequiresPrivateRegularFile(t *testing.T) {
 	}
 	if _, err := readAnchor(anchor); err == nil {
 		t.Fatal("readAnchor accepted a symlink")
+	}
+}
+
+func TestPruneAuditKeepsChainAnchor(t *testing.T) {
+	directory := testutil.TempDir(t)
+	path := filepath.Join(directory, "audit.log")
+	anchor := path + ".anchor"
+	archive := path + ".2026-11-26"
+	for name, value := range map[string]string{anchor: strings.Repeat("0", 64) + "\n", archive: "archived event\n"} {
+		if err := os.WriteFile(name, []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pruneAudit(path, "none"); err != nil {
+		t.Fatalf("pruneAudit(): %v", err)
+	}
+	if _, err := os.Stat(anchor); err != nil {
+		t.Fatalf("audit anchor removed during retention: %v", err)
+	}
+	if _, err := os.Stat(archive); !os.IsNotExist(err) {
+		t.Fatalf("rotated archive still exists or stat failed: %v", err)
 	}
 }

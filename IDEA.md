@@ -37,7 +37,7 @@ owner_token: countries_owner_token_gId2fHet
 
 ### Roles & permissions
 
-There are no user accounts or login roles. Public country reads and server information do not require authentication. Anonymous owners may obtain a primary token to bind resources to an owner identity; the primary manages linked tokens, linked tokens access the same owner's resources without token-management rights, and the operator token authorizes global management actions. MCP requires a bearer token.
+There are no user accounts or login roles. Public country reads and server information do not require authentication. Anonymous owners may obtain a primary token to bind resources to an owner identity; the primary manages linked tokens, linked tokens access the same owner's resources without token-management rights, and each linked token has `read` or `read-write` scope and may have an expiry. The operator token authorizes global management actions. MCP requires a bearer token.
 
 | Actor | Access |
 |-------|--------|

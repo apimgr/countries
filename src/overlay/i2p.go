@@ -258,7 +258,7 @@ func loadOrCreateI2PKey(conn net.Conn, reader *bufio.Reader, path string, signat
 	if _, err := i2pDestination(priv); err != nil {
 		return "", fmt.Errorf("SAM returned invalid destination key")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".site-keys-*")
@@ -271,7 +271,7 @@ func loadOrCreateI2PKey(conn net.Conn, reader *bufio.Reader, path string, signat
 			resultErr = errors.Join(resultErr, fmt.Errorf("remove temporary I2P key: %w", removeErr))
 		}
 	}()
-	if err = tmp.Chmod(0600); err == nil {
+	if err = tmp.Chmod(0o600); err == nil {
 		_, err = tmp.WriteString(priv + "\n")
 	}
 	if err == nil {
@@ -323,16 +323,16 @@ func (m *Manager) startI2PD(ctx context.Context, binaryPath, configRoot, dataRoo
 	tunnelDir := filepath.Join(configRoot, "tunnels.d")
 	pidPath := filepath.Join(dataRoot, "i2pd.pid")
 	settings := renderI2PDConfig(samPort, filepath.Join(m.opts.LogsDir, "i2pd.log"))
-	if err = os.WriteFile(confPath, []byte(settings), 0600); err != nil {
+	if err = os.WriteFile(confPath, []byte(settings), 0o600); err != nil {
 		return "", err
 	}
-	if err = os.WriteFile(tunnelPath, nil, 0600); err != nil {
+	if err = os.WriteFile(tunnelPath, nil, 0o600); err != nil {
 		return "", err
 	}
-	if err = os.MkdirAll(tunnelDir, 0700); err != nil {
+	if err = os.MkdirAll(tunnelDir, 0o700); err != nil {
 		return "", err
 	}
-	logFile, err := os.OpenFile(filepath.Join(m.opts.LogsDir, "i2pd.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	logFile, err := os.OpenFile(filepath.Join(m.opts.LogsDir, "i2pd.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", err
 	}
@@ -348,7 +348,7 @@ func (m *Manager) startI2PD(ctx context.Context, binaryPath, configRoot, dataRoo
 		_ = logFile.Close()
 		return "", err
 	}
-	if err = os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0600); err != nil {
+	if err = os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o600); err != nil {
 		_ = cmd.Process.Kill()
 		_ = logFile.Close()
 		return "", err

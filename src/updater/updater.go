@@ -20,8 +20,10 @@ import (
 	"github.com/apimgr/countries/src/paths"
 )
 
-const maxReleaseResponse = 8 << 20
-const maxUpdateBinary = 256 << 20
+const (
+	maxReleaseResponse = 8 << 20
+	maxUpdateBinary    = 256 << 20
+)
 
 type Asset struct {
 	Name string `json:"name"`
@@ -300,10 +302,10 @@ func Stage(ctx context.Context, client *http.Client, release *Release, binaryNam
 		return err
 	}
 	updateDir := filepath.Join(dataDir, "update")
-	if err := os.MkdirAll(updateDir, 0700); err != nil {
+	if err := os.MkdirAll(updateDir, 0o700); err != nil {
 		return fmt.Errorf("create staged update directory: %w", err)
 	}
-	if err := os.Chmod(updateDir, 0700); err != nil {
+	if err := os.Chmod(updateDir, 0o700); err != nil {
 		return fmt.Errorf("secure staged update directory: %w", err)
 	}
 	stagedBinary := filepath.Join(updateDir, stagedBinaryName)
@@ -315,7 +317,7 @@ func Stage(ctx context.Context, client *http.Client, release *Release, binaryNam
 	}
 	binaryTempPath := binaryTemp.Name()
 	defer func() { _ = os.Remove(binaryTempPath) }()
-	if err := binaryTemp.Chmod(0700); err != nil {
+	if err := binaryTemp.Chmod(0o700); err != nil {
 		_ = binaryTemp.Close()
 		return fmt.Errorf("set staged binary permissions: %w", err)
 	}
@@ -461,7 +463,7 @@ func writePrivateAtomic(path string, contents []byte) error {
 	}
 	temporaryPath := temporary.Name()
 	defer func() { _ = os.Remove(temporaryPath) }()
-	if err := temporary.Chmod(0600); err != nil {
+	if err := temporary.Chmod(0o600); err != nil {
 		_ = temporary.Close()
 		return err
 	}
@@ -520,7 +522,7 @@ func downloadVerifiedBinary(ctx context.Context, client *http.Client, release *R
 		return "", "", fmt.Errorf("binary download returned HTTP %d", response.StatusCode)
 	}
 	newBinary := filepath.Join(tempDir, "update.tmp")
-	file, err := os.OpenFile(newBinary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0700)
+	file, err := os.OpenFile(newBinary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
 	if err != nil {
 		return "", "", fmt.Errorf("create update file: %w", err)
 	}

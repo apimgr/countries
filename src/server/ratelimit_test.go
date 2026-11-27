@@ -55,6 +55,7 @@ func TestRateLimiterAppliesSlidingClassAndGlobalLimits(t *testing.T) {
 		t.Fatalf("expired sliding window result = (%v, %q), want (true, empty)", allowed, retry)
 	}
 }
+
 func TestRateLimitMiddlewareReturnsCanonical429(t *testing.T) {
 	limiter := newRateLimiter(config.RateLimitConfig{
 		Read:        config.RateLimitRuleConfig{Requests: 1, Window: 60},

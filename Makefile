@@ -145,63 +145,22 @@ release: release-check build
 	@git push origin :refs/tags/v$(VERSION) 2>/dev/null || true
 	@gh release create v$(VERSION) $(RELDIR)/* --title "v$(VERSION)" --notes "Release v$(VERSION)" --latest
 
-# Build and publish multi-platform Docker images.
+# Build the host-platform Docker image locally; CI builds and publishes multi-platform images.
 docker:
+	@echo "Building Docker image $(VERSION)..."
+	@docker buildx version >/dev/null 2>&1 || { echo "docker buildx required" >&2; exit 1; }
 	@docker buildx create --name multiarch-builder --use 2>/dev/null || docker buildx use multiarch-builder
-	@set -eu; \
-	image=local/$(PROJECT_NAME):verify-$(COMMIT_ID)-$(BUILD_EPOCH); \
-	trap 'docker image rm "$$image" >/dev/null 2>&1 || true' EXIT; \
-	docker buildx build \
-		--platform linux/amd64 \
+	@docker buildx build \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg COMMIT_ID=$(COMMIT_ID) \
 		--build-arg BUILD_EPOCH=$(BUILD_EPOCH) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
 		--build-arg OFFICIAL_SITE='$(OFFICIAL_SITE)' \
 		-f docker/Dockerfile \
-		-t "$$image" \
-		--load .; \
-	bash .github/scripts/verify-container-image.sh "$$image"
-	@docker buildx build \
-		--platform linux/amd64,linux/arm64 \
-		--build-arg VERSION=$(VERSION) \
-		--build-arg COMMIT_ID=$(COMMIT_ID) \
-		--build-arg BUILD_EPOCH=$(BUILD_EPOCH) \
-		--build-arg BUILD_DATE=$(BUILD_DATE) \
-		--build-arg OFFICIAL_SITE='$(OFFICIAL_SITE)' \
-		--label maintainer=apimgr \
-		--label org.opencontainers.image.vendor=$(PROJECTORG) \
-		--label org.opencontainers.image.authors=$(PROJECTORG) \
-		--label org.opencontainers.image.title=$(PROJECTNAME) \
-		--label org.opencontainers.image.base.name=$(PROJECTNAME) \
-		--label 'org.opencontainers.image.description=$(PROJECTNAME) - Countries API' \
-		--label org.opencontainers.image.licenses=MIT \
-		--label org.opencontainers.image.created=$(BUILD_DATE) \
-		--label org.opencontainers.image.version=$(VERSION) \
-		--label org.opencontainers.image.schema-version=$(VERSION) \
-		--label org.opencontainers.image.revision=$(COMMIT_ID) \
-		--label org.opencontainers.image.url=https://github.com/$(PROJECTORG)/$(PROJECTNAME) \
-		--label org.opencontainers.image.source=https://github.com/$(PROJECTORG)/$(PROJECTNAME) \
-		--label org.opencontainers.image.documentation=https://github.com/$(PROJECTORG)/$(PROJECTNAME) \
-		--label org.opencontainers.image.vcs-type=Git \
-		--label com.github.containers.toolbox=false \
-		--annotation maintainer=apimgr \
-		--annotation org.opencontainers.image.vendor=$(PROJECTORG) \
-		--annotation org.opencontainers.image.authors=$(PROJECTORG) \
-		--annotation org.opencontainers.image.title=$(PROJECTNAME) \
-		--annotation org.opencontainers.image.base.name=$(PROJECTNAME) \
-		--annotation 'org.opencontainers.image.description=$(PROJECTNAME) - Countries API' \
-		--annotation org.opencontainers.image.licenses=MIT \
-		--annotation org.opencontainers.image.created=$(BUILD_DATE) \
-		--annotation org.opencontainers.image.version=$(VERSION) \
-		--annotation org.opencontainers.image.schema-version=$(VERSION) \
-		--annotation org.opencontainers.image.revision=$(COMMIT_ID) \
-		--annotation org.opencontainers.image.url=https://github.com/$(PROJECTORG)/$(PROJECTNAME) \
-		--annotation org.opencontainers.image.source=https://github.com/$(PROJECTORG)/$(PROJECTNAME) \
-		--annotation org.opencontainers.image.documentation=https://github.com/$(PROJECTORG)/$(PROJECTNAME) \
-		--annotation org.opencontainers.image.vcs-type=Git \
-		--annotation com.github.containers.toolbox=false \
-		-f docker/Dockerfile -t $(REGISTRY):$(VERSION) -t $(REGISTRY):latest --push .
+		-t $(REGISTRY):$(VERSION) \
+		-t $(REGISTRY):latest \
+		--load .
+	@bash .github/scripts/verify-container-image.sh $(REGISTRY):$(VERSION)
 
 # Remove build and release artifacts.
 clean:

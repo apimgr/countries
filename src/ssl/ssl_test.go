@@ -160,7 +160,7 @@ func TestFindManualCerts_FullchainPrivkeyPair(t *testing.T) {
 	dir := testutil.TempDir(t)
 	domain := "example.org"
 	domainDir := filepath.Join(dir, domain)
-	if err := os.MkdirAll(domainDir, 0755); err != nil {
+	if err := os.MkdirAll(domainDir, 0o755); err != nil {
 		t.Fatalf("failed to create fixture dir: %v", err)
 	}
 
@@ -198,7 +198,7 @@ func TestFindManualCerts_EmptyCertPath(t *testing.T) {
 
 func writeFixture(t *testing.T, path string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte("fixture"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("fixture"), 0o644); err != nil {
 		t.Fatalf("failed to write fixture %q: %v", path, err)
 	}
 }
@@ -220,14 +220,14 @@ func TestGetTLSConfigManualCertificateAndHTTPHandler(t *testing.T) {
 	}
 	certPath := filepath.Join(dir, "localhost.crt")
 	keyPath := filepath.Join(dir, "localhost.key")
-	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate}), 0600); err != nil {
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	key, err := x509.MarshalPKCS8PrivateKey(privateKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0600); err != nil {
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -457,7 +457,7 @@ func TestLoadOrCreateAccountAndPrivateFilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat staging account directory: %v", err)
 	}
-	if info.Mode().Perm() != 0700 {
+	if info.Mode().Perm() != 0o700 {
 		t.Fatalf("staging account directory mode = %v, want 0700", info.Mode().Perm())
 	}
 	account, err := loadOrCreateAccount(directory, "ops@example.test")
@@ -472,7 +472,7 @@ func TestLoadOrCreateAccountAndPrivateFilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat account key: %v", err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("account key mode = %v, want 0600", info.Mode().Perm())
 	}
 	if err := saveAccount(directory, account); err != nil {
@@ -490,10 +490,10 @@ func TestLoadOrCreateAccountAndPrivateFilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat account metadata: %v", err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("account metadata mode = %v, want 0600", info.Mode().Perm())
 	}
-	if err := os.WriteFile(filepath.Join(directory, "account.json"), []byte("invalid"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "account.json"), []byte("invalid"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := loadOrCreateAccount(directory, "ops@example.test"); err == nil {
@@ -524,7 +524,7 @@ func TestSaveManagedCertificateAndRenewalSelection(t *testing.T) {
 			t.Errorf("stat managed %s: %v", name, err)
 			continue
 		}
-		if info.Mode().Perm() != 0600 {
+		if info.Mode().Perm() != 0o600 {
 			t.Errorf("managed %s mode = %v, want 0600", name, info.Mode().Perm())
 		}
 	}
@@ -532,7 +532,7 @@ func TestSaveManagedCertificateAndRenewalSelection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat managed certificate directory: %v", err)
 	}
-	if info.Mode().Perm() != 0700 {
+	if info.Mode().Perm() != 0o700 {
 		t.Fatalf("managed certificate directory mode = %v, want 0700", info.Mode().Perm())
 	}
 	manager := NewManager(Config{Enabled: true, CertPath: root, LetsEncrypt: LetsEncryptConfig{Enabled: true, Email: "ops@example.test"}})
@@ -559,14 +559,14 @@ func writeTLSCertificate(t *testing.T, certPath, keyPath string, dnsNames []stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER}), 0600); err != nil {
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	keyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0600); err != nil {
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

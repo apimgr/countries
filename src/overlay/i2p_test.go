@@ -86,7 +86,7 @@ func TestI2PKeyGenerationPersistenceAndValidation(t *testing.T) {
 		t.Fatalf("loadOrCreateI2PKey(generated) = %q, %v", created, err)
 	}
 	info, err := os.Stat(keyPath)
-	if err != nil || info.Mode().Perm() != 0600 {
+	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("persisted key mode = %v, err = %v", info.Mode().Perm(), err)
 	}
 	persisted, err := loadOrCreateI2PKey(nil, nil, keyPath, 7)
@@ -95,13 +95,13 @@ func TestI2PKeyGenerationPersistenceAndValidation(t *testing.T) {
 	}
 
 	invalidPath := filepath.Join(t.TempDir(), "invalid-key")
-	if err := os.WriteFile(invalidPath, []byte("invalid"), 0600); err != nil {
+	if err := os.WriteFile(invalidPath, []byte("invalid"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := loadOrCreateI2PKey(nil, nil, invalidPath, 7); err == nil {
 		t.Fatal("loadOrCreateI2PKey accepted an invalid persisted destination")
 	}
-	if err := os.WriteFile(invalidPath, []byte("not a key"), 0600); err != nil {
+	if err := os.WriteFile(invalidPath, []byte("not a key"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	client, peer = net.Pipe()

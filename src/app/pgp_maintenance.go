@@ -48,7 +48,7 @@ func handlePGPMaintenance(args []string, configDir, dataDir, logsDir, configPath
 	if len(args) == 0 {
 		return errors.New("usage: countries --maintenance pgp <generate|rotate|publish|export|import|delete>")
 	}
-	cfg, err := config.Load(configPath)
+	cfg, err := config.LoadConfigFromFile(configPath)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
@@ -66,7 +66,7 @@ func handlePGPMaintenance(args []string, configDir, dataDir, logsDir, configPath
 		return err
 	}
 	keyDir := filepath.Join(configDir, "security")
-	if err := os.MkdirAll(keyDir, 0700); err != nil {
+	if err := os.MkdirAll(keyDir, 0o700); err != nil {
 		return fmt.Errorf("create security key directory: %w", err)
 	}
 	if err := RecoverPGPRotation(ctx, db, keyDir); err != nil {
@@ -251,7 +251,7 @@ func writePGPFile(path string, data []byte) error {
 	}
 	tmp := f.Name()
 	defer func() { _ = os.Remove(tmp) }()
-	if err := f.Chmod(0600); err != nil {
+	if err := f.Chmod(0o600); err != nil {
 		return errors.Join(err, f.Close())
 	}
 	if _, err := f.Write(data); err != nil {
@@ -722,7 +722,7 @@ func exportPGP(args []string, db *sql.DB, keyDir, logsDir string) error {
 		if err := writePGPFile(args[1], pub); err != nil {
 			return err
 		}
-		return os.Chmod(args[1], 0644)
+		return os.Chmod(args[1], 0o644)
 	}
 	if len(args) != 2 {
 		return errors.New("private key export requires an output path")

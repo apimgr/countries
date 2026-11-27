@@ -37,7 +37,7 @@ func handleSecretMaintenance(args []string, configDir, dataDir, logsDir, configP
 	if name != "installation_secret" && name != "encryption_key" {
 		return fmt.Errorf("secret %q cannot be manually rotated", name)
 	}
-	cfg, err := config.Load(configPath)
+	cfg, err := config.LoadConfigFromFile(configPath)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
@@ -774,7 +774,7 @@ func encryptDNSValue(key []byte, plaintext string) (string, error) {
 }
 
 func writePrivateAtomic(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create private directory: %w", err)
 	}
 	if info, err := os.Lstat(path); err == nil && (!info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
@@ -788,7 +788,7 @@ func writePrivateAtomic(path string, data []byte) error {
 	}
 	temporaryPath := temporary.Name()
 	defer func() { _ = os.Remove(temporaryPath) }()
-	if err := temporary.Chmod(0600); err != nil {
+	if err := temporary.Chmod(0o600); err != nil {
 		_ = temporary.Close()
 		return err
 	}

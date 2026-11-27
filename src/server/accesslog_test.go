@@ -110,7 +110,7 @@ func TestWriteRotatingLogUsesPrivateFileAndRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("access log mode = %04o, want 0600", info.Mode().Perm())
 	}
 	entries, err := os.ReadDir(directory)
@@ -166,7 +166,7 @@ func TestAccessLogRotationRecognizesSizePolicies(t *testing.T) {
 	}
 	directory := testutil.TempDir(t)
 	path := filepath.Join(directory, "access.log")
-	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), 1<<20), 0600); err != nil {
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), 1<<20), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
@@ -236,7 +236,7 @@ func TestFailedHealthRequestWritesAccessAndErrorLogs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm() != 0600 {
+		if info.Mode().Perm() != 0o600 {
 			t.Errorf("%s mode = %04o, want 0600", name, info.Mode().Perm())
 		}
 	}

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/apimgr/countries/src/testutil"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/apimgr/countries/src/testutil"
 )
 
 type fakeDatabaseReader struct {
@@ -133,7 +134,7 @@ func TestLastUpdatedFreshnessMarker(t *testing.T) {
 		t.Fatal("20-day-old database marker should be stale against a 19-day limit")
 	}
 	info, err := os.Stat(filepath.Join(manager.directory, lastUpdatedFile))
-	if err != nil || info.Mode().Perm() != 0600 {
+	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("last-updated marker mode = %v, err = %v", info.Mode().Perm(), err)
 	}
 }
@@ -171,7 +172,7 @@ func TestUpdateChecksumsBeforeReplacingFiles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat %s: %v", asset.File, err)
 		}
-		if info.Mode().Perm() != 0600 {
+		if info.Mode().Perm() != 0o600 {
 			t.Errorf("%s permissions = %04o, want 0600", asset.File, info.Mode().Perm())
 		}
 	}
@@ -180,7 +181,7 @@ func TestUpdateChecksumsBeforeReplacingFiles(t *testing.T) {
 func TestUpdateChecksumMismatchPreservesExistingDatabase(t *testing.T) {
 	directory := testutil.TempDir(t)
 	path := filepath.Join(directory, databaseAssets[0].File)
-	if err := os.WriteFile(path, []byte("existing"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("existing"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -267,7 +268,7 @@ func TestManagerLifecycleAndPublicLookups(t *testing.T) {
 	if manager.Directory() != directory || manager.client.Timeout != 30*time.Second {
 		t.Fatalf("manager directory/timeout = %q/%s", manager.Directory(), manager.client.Timeout)
 	}
-	if info, err := os.Stat(directory); err != nil || info.Mode().Perm() != 0700 {
+	if info, err := os.Stat(directory); err != nil || info.Mode().Perm() != 0o700 {
 		t.Fatalf("GeoIP directory mode = %v, err = %v", info.Mode().Perm(), err)
 	}
 

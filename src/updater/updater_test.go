@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/apimgr/countries/src/testutil"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/apimgr/countries/src/testutil"
 )
 
 func TestCheckSelectsChannelAndIgnoresCurrentRelease(t *testing.T) {
@@ -136,7 +137,7 @@ func TestInstallVerifiesChecksumBeforeReplacing(t *testing.T) {
 		{Name: binaryName, URL: server.URL + "/binary"},
 	}}
 	currentPath := filepath.Join(testutil.TempDir(t), binaryName)
-	if err := os.WriteFile(currentPath, []byte("old binary"), 0755); err != nil {
+	if err := os.WriteFile(currentPath, []byte("old binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := Install(context.Background(), server.Client(), release, binaryName, "countries", currentPath); err != nil {
@@ -196,7 +197,7 @@ func TestStageAndApplyVerifiesChecksumAndVersion(t *testing.T) {
 		return
 	}
 	currentPath := filepath.Join(testutil.TempDir(t), binaryName)
-	if err := os.WriteFile(currentPath, []byte("old binary"), 0755); err != nil {
+	if err := os.WriteFile(currentPath, []byte("old binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if applied, err := ApplyStaged(dataDir, currentPath, "v1.0.0", 0); err != nil || !applied {
@@ -226,20 +227,20 @@ func TestApplyStagedDiscardsInvalidChecksumAndOldVersion(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			dataDir := filepath.Join(testutil.TempDir(t), "data")
 			updateDir := filepath.Join(dataDir, "update")
-			if err := os.MkdirAll(updateDir, 0700); err != nil {
+			if err := os.MkdirAll(updateDir, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(updateDir, stagedBinaryName), []byte("staged"), 0700); err != nil {
+			if err := os.WriteFile(filepath.Join(updateDir, stagedBinaryName), []byte("staged"), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(updateDir, stagedHashName), []byte(test.hash), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(updateDir, stagedHashName), []byte(test.hash), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(updateDir, stagedVersion), []byte(test.version), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(updateDir, stagedVersion), []byte(test.version), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			currentPath := filepath.Join(testutil.TempDir(t), "countries")
-			if err := os.WriteFile(currentPath, []byte("old binary"), 0755); err != nil {
+			if err := os.WriteFile(currentPath, []byte("old binary"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			if applied, err := ApplyStaged(dataDir, currentPath, "v1.0.0", 0); err == nil || applied {
@@ -269,27 +270,27 @@ func TestApplyStagedUsesBuildEpochForRollingRelease(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			dataDir := filepath.Join(testutil.TempDir(t), "data")
 			updateDir := filepath.Join(dataDir, "update")
-			if err := os.MkdirAll(updateDir, 0700); err != nil {
+			if err := os.MkdirAll(updateDir, 0o700); err != nil {
 				t.Fatal(err)
 			}
 			binary := []byte("devel binary")
 			checksum := sha256.Sum256(binary)
-			if err := os.WriteFile(filepath.Join(updateDir, stagedBinaryName), binary, 0700); err != nil {
+			if err := os.WriteFile(filepath.Join(updateDir, stagedBinaryName), binary, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(updateDir, stagedHashName), []byte(hex.EncodeToString(checksum[:])), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(updateDir, stagedHashName), []byte(hex.EncodeToString(checksum[:])), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(updateDir, stagedVersion), []byte("devel"), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(updateDir, stagedVersion), []byte("devel"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if !test.publishedAt.IsZero() {
-				if err := os.WriteFile(filepath.Join(updateDir, stagedPublished), []byte(test.publishedAt.Format(time.RFC3339Nano)), 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(updateDir, stagedPublished), []byte(test.publishedAt.Format(time.RFC3339Nano)), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
 			currentPath := filepath.Join(testutil.TempDir(t), "countries")
-			if err := os.WriteFile(currentPath, []byte("old binary"), 0755); err != nil {
+			if err := os.WriteFile(currentPath, []byte("old binary"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			applied, err := ApplyStaged(dataDir, currentPath, "devel", test.buildEpoch)

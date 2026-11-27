@@ -22,7 +22,7 @@ func TestInstallFullBackupWithoutOverwrite(t *testing.T) {
 	directory := t.TempDir()
 	candidate := filepath.Join(directory, "candidate.tar.gz")
 	destination := filepath.Join(directory, "backup.tar.gz")
-	if err := os.WriteFile(candidate, []byte("verified backup"), 0600); err != nil {
+	if err := os.WriteFile(candidate, []byte("verified backup"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := installFullWithoutOverwrite(candidate, destination); err != nil {
@@ -35,7 +35,7 @@ func TestInstallFullBackupWithoutOverwrite(t *testing.T) {
 	if err != nil || string(content) != "verified backup" {
 		t.Fatalf("installed backup = %q, error = %v", content, err)
 	}
-	if err := os.WriteFile(candidate, []byte("replacement"), 0600); err != nil {
+	if err := os.WriteFile(candidate, []byte("replacement"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := installFullWithoutOverwrite(candidate, destination); err == nil {
@@ -53,7 +53,7 @@ func TestNewestFullArchiveUsesFilenameDateAndMtimeTieBreak(t *testing.T) {
 	first := filepath.Join(dir, "countries_backup_2026-11-25.tar.gz.enc")
 	newer := filepath.Join(dir, "countries_backup_2026-11-25_020000.tar.gz")
 	for _, path := range []string{older, first, newer, filepath.Join(dir, "countries-daily.tar.gz")} {
-		if err := os.WriteFile(path, []byte("fixture"), 0600); err != nil {
+		if err := os.WriteFile(path, []byte("fixture"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -77,7 +77,7 @@ func TestNewestFullArchiveIgnoresSymlinks(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target")
 	link := filepath.Join(dir, "countries_backup_2026-11-25.tar.gz")
-	if err := os.WriteFile(target, []byte("fixture"), 0600); err != nil {
+	if err := os.WriteFile(target, []byte("fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, link); err != nil {
@@ -101,7 +101,7 @@ func TestNewestFullArchiveHandlesMissingDirectoryAndCancellation(t *testing.T) {
 		t.Fatalf("NewestFullArchive(missing directory) = %q, %v; want empty result", got, err)
 	}
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "countries_backup_2026-11-25.tar.gz"), []byte("fixture"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "countries_backup_2026-11-25.tar.gz"), []byte("fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -190,7 +190,7 @@ func TestCreateVerifyAndRestoreEncryptedFullBackup(t *testing.T) {
 	root := createBackupTestRoot(t)
 	source := makeBackupFixture(t, root, "original config\n")
 	securityDir := filepath.Join(source.options.ConfigDir, "security")
-	if err := os.MkdirAll(securityDir, 0700); err != nil {
+	if err := os.MkdirAll(securityDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	for name, content := range map[string]string{
@@ -199,7 +199,7 @@ func TestCreateVerifyAndRestoreEncryptedFullBackup(t *testing.T) {
 		"keyservers.state":     "published-state\n",
 		"pgp.priv.old.asc.enc": "retired-encrypted-private-key\n",
 	} {
-		if err := os.WriteFile(filepath.Join(securityDir, name), []byte(content), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(securityDir, name), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -251,10 +251,10 @@ func TestCreateIncrementalAndRestoreMergedSnapshot(t *testing.T) {
 	root := createBackupTestRoot(t)
 	source := makeBackupFixture(t, root, "first config\n")
 	removedFile := filepath.Join(source.options.ConfigDir, "assets", "old.png")
-	if err := os.MkdirAll(filepath.Dir(removedFile), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(removedFile), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(removedFile, []byte("old asset"), 0600); err != nil {
+	if err := os.WriteFile(removedFile, []byte("old asset"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	basePath := filepath.Join(root, "backups", "countries_backup_2026-11-21.tar.gz")
@@ -262,7 +262,7 @@ func TestCreateIncrementalAndRestoreMergedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create(full) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(source.options.ConfigDir, "server.yml"), []byte("second config\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(source.options.ConfigDir, "server.yml"), []byte("second config\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(removedFile); err != nil {
@@ -329,7 +329,7 @@ func TestReadArchiveRejectsUnsafePathsAndLinks(t *testing.T) {
 func TestVerifyRejectsOversizedArchiveBeforeReading(t *testing.T) {
 	root := createBackupTestRoot(t)
 	path := filepath.Join(root, "too-large.tar.gz")
-	if err := os.WriteFile(path, []byte("123456789"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("123456789"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Verify(context.Background(), path, "", Limits{MaxArchiveSize: 4})
@@ -356,7 +356,7 @@ func TestSchedulerDailyThenHourlyUsesCumulativeBases(t *testing.T) {
 			result, err := Create(ctx, path, options)
 			createCalls++
 			if createCalls == 2 {
-				if writeErr := os.WriteFile(filepath.Join(source.options.ConfigDir, "server.yml"), []byte("changed after snapshot\n"), 0600); writeErr != nil {
+				if writeErr := os.WriteFile(filepath.Join(source.options.ConfigDir, "server.yml"), []byte("changed after snapshot\n"), 0o600); writeErr != nil {
 					return Result{}, writeErr
 				}
 			}
@@ -376,7 +376,7 @@ func TestSchedulerDailyThenHourlyUsesCumulativeBases(t *testing.T) {
 	}
 
 	now = now.Add(24 * time.Hour)
-	if err := os.WriteFile(filepath.Join(source.options.ConfigDir, "server.yml"), []byte("second config\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(source.options.ConfigDir, "server.yml"), []byte("second config\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	second, err := scheduler.RunDaily(context.Background())
@@ -481,7 +481,7 @@ func TestSchedulerSkipsWhenFreeSpaceIsBelowTwiceLatestBackup(t *testing.T) {
 func TestRetentionDatePriorityAndSizeCap(t *testing.T) {
 	root := createBackupTestRoot(t)
 	backupDir := filepath.Join(root, "backups")
-	if err := os.MkdirAll(backupDir, 0700); err != nil {
+	if err := os.MkdirAll(backupDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	scheduler, err := NewScheduler(ScheduledOptions{
@@ -499,7 +499,7 @@ func TestRetentionDatePriorityAndSizeCap(t *testing.T) {
 	}
 	for _, date := range []string{"2024-01-01", "2024-01-07", "2024-01-15", "2024-01-16"} {
 		path := filepath.Join(backupDir, "countries_backup_"+date+".tar.gz")
-		if err := os.WriteFile(path, []byte(date), 0600); err != nil {
+		if err := os.WriteFile(path, []byte(date), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -513,7 +513,7 @@ func TestRetentionDatePriorityAndSizeCap(t *testing.T) {
 
 	for index, date := range []string{"2025-02-01", "2025-02-02", "2025-02-03"} {
 		path := filepath.Join(backupDir, "countries_backup_"+date+".tar.gz")
-		if err := os.WriteFile(path, bytes.Repeat([]byte{byte('a' + index)}, 8), 0600); err != nil {
+		if err := os.WriteFile(path, bytes.Repeat([]byte{byte('a' + index)}, 8), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -544,7 +544,7 @@ func makeTarArchive(t *testing.T, fixtures []tarFixture) ([]byte, error) {
 	gz := gzip.NewWriter(&raw)
 	tarWriter := tar.NewWriter(gz)
 	for _, fixture := range fixtures {
-		header := &tar.Header{Name: fixture.name, Mode: 0600, Typeflag: tar.TypeReg, Size: int64(len(fixture.content))}
+		header := &tar.Header{Name: fixture.name, Mode: 0o600, Typeflag: tar.TypeReg, Size: int64(len(fixture.content))}
 		if fixture.typeFlag != 0 {
 			header.Typeflag = fixture.typeFlag
 			header.Linkname = fixture.linkName
@@ -577,13 +577,13 @@ func makeBackupFixture(t *testing.T, root, serverConfig string) backupFixture {
 	configDir := filepath.Join(root, "config")
 	dataDir := filepath.Join(root, "data")
 	databasePath := filepath.Join(dataDir, "db", "server.db")
-	if err := os.MkdirAll(configDir, 0700); err != nil {
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Dir(databasePath), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(databasePath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "server.yml"), []byte(serverConfig), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "server.yml"), []byte(serverConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	db, err := sql.Open("sqlite", databasePath)
@@ -621,7 +621,7 @@ func createBackupTestRoot(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(root, 0700); err != nil {
+	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -648,11 +648,11 @@ func TestPlatformDiskUsage(t *testing.T) {
 func TestCollectFilesEnforcesLimitsDuringCollection(t *testing.T) {
 	root := createBackupTestRoot(t)
 	filesDir := filepath.Join(root, "files")
-	if err := os.MkdirAll(filesDir, 0700); err != nil {
+	if err := os.MkdirAll(filesDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	for name, content := range map[string]string{"one.txt": "abc", "two.txt": "def"} {
-		if err := os.WriteFile(filepath.Join(filesDir, name), []byte(content), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(filesDir, name), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

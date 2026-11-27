@@ -84,7 +84,7 @@ func appendYAMLConfigSource(sources *[]yamlConfigSource, sourcePath, filePath st
 		*sources = append(*sources, yamlConfigSource{Path: sourcePath, Err: fmt.Errorf("configuration source is not a regular file")})
 		return
 	}
-	if err := os.Chmod(filePath, 0600); err != nil {
+	if err := os.Chmod(filePath, 0o600); err != nil {
 		*sources = append(*sources, yamlConfigSource{Path: sourcePath, Err: fmt.Errorf("secure configuration source: %w", err)})
 		return
 	}
@@ -114,7 +114,7 @@ func ensurePrivateYAMLDirectory(directory string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.MkdirAll(directory, 0700); err != nil {
+	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
 	}
 	info, err = os.Lstat(directory)
@@ -124,7 +124,7 @@ func ensurePrivateYAMLDirectory(directory string) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("yaml.d must be a directory")
 	}
-	if err := os.Chmod(directory, 0700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil {
 		return fmt.Errorf("secure yaml.d directory: %w", err)
 	}
 	return nil

@@ -359,7 +359,12 @@ func (s *Server) rateLimitClientKey(r *http.Request) string {
 	}
 	valid := s.validOperatorToken(raw)
 	if !valid && s.db != nil {
-		_, err := database.LookupOwnerToken(r.Context(), s.db, raw, time.Now())
+		var err error
+		if r.URL.Path == api.APIBasePath()+"/server/auth/check" {
+			_, err = database.CheckOwnerToken(r.Context(), s.db, raw, time.Now())
+		} else {
+			_, err = database.LookupOwnerToken(r.Context(), s.db, raw, time.Now())
+		}
 		valid = err == nil
 	}
 	if !valid {
@@ -371,6 +376,9 @@ func (s *Server) rateLimitClientKey(r *http.Request) string {
 
 func (s *Server) rateLimitAuthRequired(r *http.Request) bool {
 	path := r.URL.Path
+	if path == api.APIBasePath()+"/server/auth/check" {
+		return true
+	}
 	if path == "/mcp" || path == "/api/mcp" || path == api.APIBasePath()+"/server/mcp" {
 		return true
 	}
@@ -387,6 +395,17 @@ func (s *Server) rateLimitAuthRequired(r *http.Request) bool {
 
 func (s *Server) rateLimitAuthValid(r *http.Request) bool {
 	path := r.URL.Path
+	if path == api.APIBasePath()+"/server/auth/check" {
+		token := bearerValue(r)
+		if s.validOperatorToken(token) {
+			return true
+		}
+		if token == "" || s.db == nil {
+			return false
+		}
+		_, err := database.CheckOwnerToken(r.Context(), s.db, token, time.Now())
+		return err == nil
+	}
 	if path == "/mcp" || path == "/api/mcp" || path == api.APIBasePath()+"/server/mcp" {
 		token := bearerValue(r)
 		if s.validOperatorToken(token) {

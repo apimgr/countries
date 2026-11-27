@@ -105,6 +105,12 @@ func TestPrintVersionUsesExecutableNameAndBuildMetadata(t *testing.T) {
 	}
 }
 
+func TestRunRequiresLoadedRuntimeConfig(t *testing.T) {
+	if err := Run(context.Background(), *config.DefaultConfig()); err == nil || !strings.Contains(err.Error(), "config.Load") {
+		t.Fatalf("Run() error = %v, want a config.Load requirement", err)
+	}
+}
+
 func TestRunServerAndGracefulShutdown(t *testing.T) {
 	t.Setenv("SMTP_HOST", "127.0.0.1")
 	t.Setenv("SMTP_PORT", "1")
@@ -130,7 +136,7 @@ func TestRunServerAndGracefulShutdown(t *testing.T) {
 		cfg.Server.Scheduler.Tasks[name] = task
 	}
 	configPath := filepath.Join(configDir, "server.yml")
-	if err := os.MkdirAll(configDir, 0700); err != nil {
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := config.Save(configPath, cfg); err != nil {
@@ -153,7 +159,10 @@ func TestRunServerAndGracefulShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	result := make(chan error, 1)
-	appConfig := *config.DefaultConfig()
+	appConfig, err := config.Load(os.Args[1:])
+	if err != nil {
+		t.Fatalf("config.Load(): %v", err)
+	}
 	appConfig.Version, appConfig.CommitID, appConfig.BuildEpoch = Version, CommitID, BuildEpoch
 	appConfig.Listener = listener
 	go func() { result <- Run(ctx, appConfig) }()
@@ -254,7 +263,7 @@ func TestUpdateCommandBranches(t *testing.T) {
 			output := captureOutput(t, func() { _ = handleUpdateCommand(tc.cmd, cfg, configPath) })
 			tc.check(t, cfg, output)
 			if tc.name == "set branch" {
-				loaded, err := config.Load(configPath)
+				loaded, err := config.LoadConfigFromFile(configPath)
 				if err != nil || loaded.Server.Update.Branch != "beta" {
 					t.Fatalf("saved branch = %q, err = %v", loaded.Server.Update.Branch, err)
 				}

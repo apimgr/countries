@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"math/big"
@@ -30,21 +31,143 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type Config struct {
-	ConfigDir        string          `yaml:"-"`
-	Listener         net.Listener    `yaml:"-"`
-	Version          string          `yaml:"-"`
-	CommitID         string          `yaml:"-"`
-	BuildEpoch       string          `yaml:"-"`
-	OfficialSite     string          `yaml:"-"`
-	Lang             string          `yaml:"lang"`
-	GeneratedSecrets []string        `yaml:"-"`
-	Data             DataConfig      `yaml:"data"`
-	Server           ServerConfig    `yaml:"server"`
-	CLI              CLIConfig       `yaml:"cli"`
-	Web              WebConfig       `yaml:"web"`
-	WebUI            WebUIConfig     `yaml:"web-ui"`
-	WebRobots        WebRobotsConfig `yaml:"web-robots"`
+type ServerConfig struct {
+	ConfigDir        string               `yaml:"-"`
+	Listener         net.Listener         `yaml:"-"`
+	Version          string               `yaml:"-"`
+	CommitID         string               `yaml:"-"`
+	BuildEpoch       string               `yaml:"-"`
+	OfficialSite     string               `yaml:"-"`
+	Lang             string               `yaml:"lang"`
+	GeneratedSecrets []string             `yaml:"-"`
+	Data             DataConfig           `yaml:"data"`
+	Server           ServerSettingsConfig `yaml:"server"`
+	CLI              CLIConfig            `yaml:"cli"`
+	Web              WebConfig            `yaml:"web"`
+	WebUI            WebUIConfig          `yaml:"web-ui"`
+	WebRobots        WebRobotsConfig      `yaml:"web-robots"`
+	Command          CommandOptions       `yaml:"-"`
+}
+
+// Config is the compatibility name for the complete runtime configuration.
+type Config = ServerConfig
+
+// CommandOptions carries parsed process arguments into the application runtime.
+type CommandOptions struct {
+	Port, Address, BaseURL, Lang                              string
+	ConfigDir, DataDir, CacheDir, LogsDir, BackupDir, PIDFile string
+	Color, Shell, Service, Maintenance, Mode, Update          string
+	Status, Version, Debug, Daemon, I2P, Help                 bool
+	DebugSet, I2PSet, UpdateSet                               bool
+	Parsed                                                    bool
+	Args                                                      []string
+}
+
+type CLIFlagParseError struct {
+	Err error
+}
+
+func (parseError *CLIFlagParseError) Error() string { return parseError.Err.Error() }
+func (parseError *CLIFlagParseError) Unwrap() error { return parseError.Err }
+
+type optionalCommandValue struct {
+	value string
+	set   bool
+}
+
+func (value *optionalCommandValue) String() string { return value.value }
+func (value *optionalCommandValue) Set(text string) error {
+	value.value, value.set = text, true
+	return nil
+}
+func (value *optionalCommandValue) IsBoolFlag() bool { return true }
+
+// ParseCLIFlags parses process options and makes the resulting FlagSet available
+// to the runtime for positional command arguments.
+func ParseCLIFlags(args []string) (CommandOptions, error) {
+	set := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	set.SetOutput(os.Stderr)
+	var options CommandOptions
+	set.StringVar(&options.Port, "port", "", "Server port (overrides config)")
+	set.StringVar(&options.Address, "address", "", "Server address (overrides config)")
+	set.StringVar(&options.BaseURL, "baseurl", "", "URL path prefix (overrides config)")
+	set.StringVar(&options.Lang, "lang", "", "Language for command output")
+	set.StringVar(&options.ConfigDir, "config", "", "Configuration directory")
+	set.StringVar(&options.DataDir, "data", "", "Data directory")
+	set.StringVar(&options.CacheDir, "cache", "", "Cache directory")
+	set.StringVar(&options.LogsDir, "log", "", "Logs directory")
+	set.StringVar(&options.BackupDir, "backup", "", "Backup directory")
+	set.StringVar(&options.PIDFile, "pid", "", "Server PID file path")
+	set.BoolVar(&options.Version, "version", false, "Print version information")
+	set.BoolVar(&options.Debug, "debug", false, "Enable debug logging")
+	set.StringVar(&options.Color, "color", "auto", "Color output: auto, yes, no")
+	set.BoolVar(&options.Status, "status", false, "Check service status (for healthcheck)")
+	set.StringVar(&options.Shell, "shell", "", "Shell integration: completions, init, or help")
+	set.BoolVar(&options.Daemon, "daemon", false, "Run as background daemon")
+	set.BoolVar(&options.I2P, "i2p", false, "Enable the I2P eepsite")
+	set.BoolVar(&options.Help, "help", false, "Show help")
+	set.BoolVar(&options.Help, "h", false, "Show help")
+	set.BoolVar(&options.Version, "v", false, "Print version information")
+	set.StringVar(&options.Service, "service", "", "Service commands")
+	set.StringVar(&options.Maintenance, "maintenance", "", "Maintenance commands")
+	set.StringVar(&options.Mode, "mode", "", "Application mode: production, development, debug")
+	var update optionalCommandValue
+	set.Var(&update, "update", "Update commands: check, yes, branch {stable|beta|devel}")
+	if err := set.Parse(args); err != nil {
+		return options, &CLIFlagParseError{Err: err}
+	}
+	set.Visit(func(parsed *flag.Flag) {
+		switch parsed.Name {
+		case "debug":
+			options.DebugSet = true
+		case "i2p":
+			options.I2PSet = true
+		}
+	})
+	options.Update, options.UpdateSet = update.value, update.set
+	options.Parsed = true
+	options.Args = append([]string(nil), set.Args()...)
+	flag.CommandLine = set
+	return options, nil
+}
+
+// Load parses CLI arguments and builds the complete runtime configuration.
+func Load(args []string) (ServerConfig, error) {
+	options, err := ParseCLIFlags(args)
+	if err != nil {
+		return ServerConfig{}, err
+	}
+	configDir := options.ConfigDir
+	if configDir == "" {
+		configDir = paths.GetConfigDir("countries")
+	}
+	if options.Help || options.Version || options.Shell != "" || options.Service != "" || options.Maintenance != "" || options.Status {
+		cfg := DefaultConfig()
+		cfg.ConfigDir = configDir
+		cfg.Command = options
+		return *cfg, nil
+	}
+	cfg, err := LoadConfigFromFile(filepath.Join(configDir, "server.yml"))
+	if err != nil {
+		return ServerConfig{}, err
+	}
+	cfg.Command = options
+	if options.Port != "" {
+		cfg.Server.Port = options.Port
+	}
+	if options.Address != "" {
+		cfg.Server.Address = options.Address
+	}
+	if options.BaseURL != "" {
+		cfg.Server.BaseURL = options.BaseURL
+	}
+	if options.Lang != "" {
+		cfg.Lang = options.Lang
+	}
+	if options.I2PSet {
+		cfg.Server.I2P.Enabled = options.I2P
+	}
+	return *cfg, nil
 }
 
 type DataConfig struct {
@@ -191,7 +314,7 @@ func (c *ClearSiteDataConfig) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-type ServerConfig struct {
+type ServerSettingsConfig struct {
 	Port           string                    `yaml:"port"`
 	BaseURL        string                    `yaml:"baseurl"`
 	PIDFile        bool                      `yaml:"pidfile"`
@@ -959,6 +1082,7 @@ type AuditLogConfig struct {
 	Rotate           string           `yaml:"rotate"`
 	Keep             string           `yaml:"keep"`
 	Compress         bool             `yaml:"compress"`
+	Group            string           `yaml:"group"`
 	TokenUsage       bool             `yaml:"token_usage"`
 	Events           AuditEventConfig `yaml:"events"`
 	IncludeUserAgent bool             `yaml:"include_user_agent"`
@@ -1066,7 +1190,7 @@ func DefaultConfig() *Config {
 			LLMS:          WebLLMSConfig{IncludeEndpoints: true, CustomSections: []string{}},
 			Security:      WebDisclosureConfig{Keyservers: []string{}},
 		},
-		Server: ServerConfig{
+		Server: ServerSettingsConfig{
 			Port:        "8080",
 			BaseURL:     "/",
 			CORS:        CORSConfig{AllowedOrigins: []string{"*"}, AllowCredentials: true, MaxAge: 86400},
@@ -1134,6 +1258,7 @@ func DefaultConfig() *Config {
 				Error:    LogKindConfig{Filename: "error.log", Format: "text"},
 				Audit: AuditLogConfig{
 					Enabled: true, Filename: "audit.log", Format: "json", Rotate: "daily",
+					Group:            "",
 					Events:           AuditEventConfig{Configuration: true, Security: true, Backup: true, Server: true},
 					IncludeUserAgent: true,
 				},
@@ -1281,7 +1406,7 @@ func migrateYamlToYml(ymlPath string) {
 	}
 }
 
-func Load(path string) (*Config, error) {
+func LoadConfigFromFile(path string) (*Config, error) {
 	loadPath := path
 	if _, statErr := os.Stat(loadPath); os.IsNotExist(statErr) && strings.HasSuffix(loadPath, ".yml") {
 		legacyPath := strings.TrimSuffix(loadPath, ".yml") + ".yaml"
@@ -1852,9 +1977,16 @@ func validConfigSize(value string) bool {
 		name string
 		base int
 	}{
-		{"KIB", 1024}, {"MIB", 1024 * 1024}, {"GIB", 1024 * 1024 * 1024},
-		{"KB", 1000}, {"MB", 1000 * 1000}, {"GB", 1000 * 1000 * 1000},
-		{"K", 1024}, {"M", 1024 * 1024}, {"G", 1024 * 1024 * 1024}, {"B", 1},
+		{"KIB", 1024},
+		{"MIB", 1024 * 1024},
+		{"GIB", 1024 * 1024 * 1024},
+		{"KB", 1000},
+		{"MB", 1000 * 1000},
+		{"GB", 1000 * 1000 * 1000},
+		{"K", 1024},
+		{"M", 1024 * 1024},
+		{"G", 1024 * 1024 * 1024},
+		{"B", 1},
 	} {
 		if strings.HasSuffix(value, suffix.name) {
 			unit = suffix.base
@@ -2430,10 +2562,10 @@ func loadSecretSettings(configPath string, cfg *Config) error {
 			destination.WebhookSecrets[transport] = secret
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	if err := os.Chmod(filepath.Dir(path), 0700); err != nil {
+	if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	encoded, err := yaml.Marshal(values)
@@ -2612,10 +2744,10 @@ func validBearerToken(token, prefix string) bool {
 
 func writeAtomicPrivateFile(path string, data []byte) error {
 	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0700); err != nil {
+	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
 	}
-	if err := os.Chmod(directory, 0700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil {
 		return err
 	}
 	file, err := os.CreateTemp(directory, ".config-*.tmp")
@@ -2623,7 +2755,7 @@ func writeAtomicPrivateFile(path string, data []byte) error {
 		return err
 	}
 	temporary := file.Name()
-	if err := file.Chmod(0600); err != nil {
+	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
 		_ = os.Remove(temporary)
 		return err
@@ -2646,7 +2778,7 @@ func writeAtomicPrivateFile(path string, data []byte) error {
 		_ = os.Remove(temporary)
 		return err
 	}
-	if err := os.Chmod(path, 0600); err != nil {
+	if err := os.Chmod(path, 0o600); err != nil {
 		return err
 	}
 	dir, err := os.Open(directory)
@@ -3333,7 +3465,7 @@ func parseTokenCookieMaxAge(value string) (int, error) {
 	default:
 		return 0, fmt.Errorf("unsupported duration unit")
 	}
-	if int64(amount) > (int64(^uint64(0)>>1))/unitSeconds {
+	if int64(amount) > int64(^uint64(0)>>1)/unitSeconds {
 		return 0, fmt.Errorf("duration is too large")
 	}
 	seconds := int64(amount) * unitSeconds
@@ -3365,7 +3497,7 @@ func Save(path string, cfg *Config) error {
 		_ = os.Remove(temporaryPath)
 		_ = os.Remove(temporaryPath + ".bak")
 	}()
-	if err := temporaryFile.Chmod(0600); err != nil {
+	if err := temporaryFile.Chmod(0o600); err != nil {
 		_ = temporaryFile.Close()
 		return err
 	}

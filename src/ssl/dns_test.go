@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"github.com/apimgr/countries/src/testutil"
 	"net"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/apimgr/countries/src/testutil"
 
 	"github.com/miekg/dns"
 )
@@ -83,7 +84,8 @@ func startRFC2136TestServer(t *testing.T, key, secret string) (string, *dnsUpdat
 func rfc2136TestProvider(t *testing.T, providerName, prefix, nameserver, secret string) (*Manager, interface {
 	Present(context.Context, string, string, string) error
 	CleanUp(context.Context, string, string, string) error
-}) {
+},
+) {
 	t.Helper()
 	credentials := map[string]string{
 		prefix + "NAMESERVER": nameserver,

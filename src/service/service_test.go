@@ -42,14 +42,14 @@ func TestConfirmUninstall(t *testing.T) {
 
 func TestReadCreatedIdentity(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "account")
-	if err := os.WriteFile(marker, []byte("countries 234 234 true true\n"), 0600); err != nil {
+	if err := os.WriteFile(marker, []byte("countries 234 234 true true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	identity, err := readCreatedIdentity(marker)
 	if err != nil || identity == nil || !identity.Created || !identity.GroupCreated || identity.UID != 234 {
 		t.Fatalf("readCreatedIdentity() = %#v, %v", identity, err)
 	}
-	if err := os.WriteFile(marker, []byte("countries 1000 1001 true true\n"), 0600); err != nil {
+	if err := os.WriteFile(marker, []byte("countries 1000 1001 true true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := readCreatedIdentity(marker); err == nil {
@@ -62,7 +62,7 @@ func TestRemoveServiceDataUsesResolvedDirectories(t *testing.T) {
 	var dirs UninstallPaths
 	for _, name := range []string{"config", "data", "cache", "logs", "backup", "pid"} {
 		path := filepath.Join(root, "countries", name)
-		if err := os.MkdirAll(path, 0700); err != nil {
+		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
 		if name == "config" {
@@ -182,10 +182,10 @@ func TestS6ScanHelpersUseInjectedProcDirectory(t *testing.T) {
 	writeCmdline := func(pid, cmdline string) {
 		t.Helper()
 		pidDir := filepath.Join(procDir, pid)
-		if err := os.MkdirAll(pidDir, 0755); err != nil {
+		if err := os.MkdirAll(pidDir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(pidDir, "cmdline"), []byte(cmdline), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(pidDir, "cmdline"), []byte(cmdline), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -323,7 +323,7 @@ func TestServiceControlDispatchesToAvailableManagers(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			if err := os.WriteFile(logPath, nil, 0600); err != nil {
+			if err := os.WriteFile(logPath, nil, 0o600); err != nil {
 				t.Fatal(err)
 			}
 			oldDetect := detectServiceManager
@@ -362,7 +362,7 @@ func TestCopyBinaryCreatesDestinationAndPreservesExecutableMode(t *testing.T) {
 	root := testutil.TempDir(t)
 	source := filepath.Join(root, "source")
 	destination := filepath.Join(root, "nested", "bin", "countries")
-	if err := os.WriteFile(source, []byte("binary fixture"), 0600); err != nil {
+	if err := os.WriteFile(source, []byte("binary fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := copyBinary(source, destination); err != nil {
@@ -379,7 +379,7 @@ func TestCopyBinaryCreatesDestinationAndPreservesExecutableMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0755 {
+	if info.Mode().Perm() != 0o755 {
 		t.Errorf("copied mode = %04o, want 0755", info.Mode().Perm())
 	}
 }
@@ -390,11 +390,11 @@ func TestCopyBinaryReportsSourceAndDestinationErrors(t *testing.T) {
 		t.Fatal("copyBinary() accepted a missing source")
 	}
 	source := filepath.Join(root, "source")
-	if err := os.WriteFile(source, []byte("binary fixture"), 0600); err != nil {
+	if err := os.WriteFile(source, []byte("binary fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	parentFile := filepath.Join(root, "not-a-directory")
-	if err := os.WriteFile(parentFile, []byte("file"), 0600); err != nil {
+	if err := os.WriteFile(parentFile, []byte("file"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := copyBinary(source, filepath.Join(parentFile, "binary")); err == nil {
@@ -419,7 +419,7 @@ func TestCopyExecutableToInstallPathUsesCurrentBinaryAndReportsErrors(t *testing
 	}
 	root := testutil.TempDir(t)
 	parentFile := filepath.Join(root, "not-a-directory")
-	if err := os.WriteFile(parentFile, []byte("file"), 0600); err != nil {
+	if err := os.WriteFile(parentFile, []byte("file"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := copyExecutableToInstallPath(filepath.Join(parentFile, "binary")); err == nil {
@@ -430,7 +430,7 @@ func TestCopyExecutableToInstallPathUsesCurrentBinaryAndReportsErrors(t *testing
 func setupServiceCommandStubs(t *testing.T, names ...string) string {
 	t.Helper()
 	binDir := filepath.Join(testutil.TempDir(t), "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	logPath := filepath.Join(testutil.TempDir(t), "service-commands.log")
@@ -444,7 +444,7 @@ if [ "${0##*/}" = "sc.exe" ] && [ "$1" = "query" ]; then
 fi
 `
 	for _, name := range names {
-		if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0755); err != nil {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}

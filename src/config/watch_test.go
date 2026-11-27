@@ -16,7 +16,7 @@ func TestConfigWatcherAppliesDropInAndReportsRestartSettings(t *testing.T) {
 		t.Fatalf("Save() error = %v", err)
 	}
 	dropInDir := filepath.Join(configDir, "yaml.d")
-	if err := os.MkdirAll(dropInDir, 0700); err != nil {
+	if err := os.MkdirAll(dropInDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
 	var applied *Config
@@ -26,7 +26,7 @@ func TestConfigWatcherAppliesDropInAndReportsRestartSettings(t *testing.T) {
 		restartSettings = restart
 	})
 	dropInPath := filepath.Join(dropInDir, "branding.yml")
-	if err := os.WriteFile(dropInPath, []byte("server:\n  branding:\n    title: Reloaded title\n  port: \"64002\"\n"), 0600); err != nil {
+	if err := os.WriteFile(dropInPath, []byte("server:\n  branding:\n    title: Reloaded title\n  port: \"64002\"\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	watcher.Check()

@@ -21,7 +21,7 @@ func TestOpenWritesConfiguredKindsAndSanitizesEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer manager.Close()
+	defer func() { _ = manager.Close() }()
 	if err := manager.Log(Event{Time: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Level: "error", Kind: "security", Message: "bad\n\x1b[31mcredential 😀", Fields: map[string]any{"request_id": "abc", "api_token": "never-write"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestOpenWritesConfiguredKindsAndSanitizesEvents(t *testing.T) {
 		}
 		if info, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Fatal(err)
-		} else if info.Mode().Perm() != 0600 {
+		} else if info.Mode().Perm() != 0o600 {
 			t.Errorf("%s permissions = %o, want 600", name, info.Mode().Perm())
 		}
 	}

@@ -24,7 +24,7 @@ func TestOpenCreatesSecureSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat database: %v", err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("database permissions = %04o, want 0600", info.Mode().Perm())
 	}
 
@@ -88,6 +88,9 @@ func TestEnsureTokenPublicIDMigratesLegacyIntegerKeys(t *testing.T) {
 	if err := ensureTokenPublicID(ctx, db); err != nil {
 		t.Fatalf("ensureTokenPublicID(): %v", err)
 	}
+	if err := ensureTokenScope(ctx, db); err != nil {
+		t.Fatalf("ensureTokenScope(): %v", err)
+	}
 	ids := make(map[int64]string)
 	rows, err := db.QueryContext(ctx, `SELECT id, public_id FROM api_tokens ORDER BY id`)
 	if err != nil {
@@ -122,6 +125,10 @@ func TestEnsureTokenPublicIDMigratesLegacyIntegerKeys(t *testing.T) {
 	if internalIDType != "INTEGER" {
 		t.Fatalf("legacy api_tokens.id type = %q, want unchanged INTEGER", internalIDType)
 	}
+	var migratedPrimaryScope string
+	if err := db.QueryRowContext(ctx, `SELECT scope FROM api_tokens WHERE id = 4`).Scan(&migratedPrimaryScope); err != nil || migratedPrimaryScope != "global" {
+		t.Fatalf("legacy primary scope = %q, err=%v; want global", migratedPrimaryScope, err)
+	}
 	if err := ensureTokenPublicID(ctx, db); err != nil {
 		t.Fatalf("repeat ensureTokenPublicID(): %v", err)
 	}
@@ -133,7 +140,7 @@ func TestEnsureTokenPublicIDMigratesLegacyIntegerKeys(t *testing.T) {
 		t.Fatalf("repeat migration changed a public ID from %q to %q", ids[4], afterRepeat)
 	}
 	if err := Write(ctx, db, func(tx *sql.Tx) error {
-		return insertTokenRow(ctx, tx, "019b3e57-4f80-7000-8000-000000000001", "legacy-owner", "linked", "new", "hash-c", "prefix-c", "last4", "cipher-c", nil)
+		return insertTokenRow(ctx, tx, "019b3e57-4f80-7000-8000-000000000001", "legacy-owner", "linked", "new", "read-write", "hash-c", "prefix-c", "last4", "cipher-c", nil)
 	}); err != nil {
 		t.Fatalf("insert into legacy schema: %v", err)
 	}
@@ -203,6 +210,7 @@ func TestEnsureTokenOwnerMigratesExistingRowsWithoutRebuildingTable(t *testing.T
 		t.Fatalf("migrated owner_id notnull = %d, want nullable compatibility column", nullable)
 	}
 }
+
 func TestOpenCreatesContactAndSecurityReportTables(t *testing.T) {
 	db, err := Open(filepath.Join(testutil.TempDir(t), "server.db"))
 	if err != nil {

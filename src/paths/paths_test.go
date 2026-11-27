@@ -259,15 +259,15 @@ func TestEnsurePrivateTreeSecuresNestedDirectoriesAndFiles(t *testing.T) {
 	base := testTempDir(t)
 	root := filepath.Join(base, "private")
 	nested := filepath.Join(root, "tor", "site")
-	if err := os.MkdirAll(nested, 0755); err != nil {
+	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	config := filepath.Join(root, "server.yml")
-	if err := os.WriteFile(config, []byte("server: {}\n"), 0644); err != nil {
+	if err := os.WriteFile(config, []byte("server: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	key := filepath.Join(nested, "private.key")
-	if err := os.WriteFile(key, []byte("private"), 0644); err != nil {
+	if err := os.WriteFile(key, []byte("private"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := EnsurePrivateTree(root); err != nil {
@@ -278,7 +278,7 @@ func TestEnsurePrivateTreeSecuresNestedDirectoriesAndFiles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat private directory %s: %v", path, err)
 		}
-		if got := info.Mode().Perm(); got != 0700 {
+		if got := info.Mode().Perm(); got != 0o700 {
 			t.Errorf("directory %s permissions = %04o, want 0700", path, got)
 		}
 	}
@@ -287,7 +287,7 @@ func TestEnsurePrivateTreeSecuresNestedDirectoriesAndFiles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat private file %s: %v", path, err)
 		}
-		if got := info.Mode().Perm(); got != 0600 {
+		if got := info.Mode().Perm(); got != 0o600 {
 			t.Errorf("file %s permissions = %04o, want 0600", path, got)
 		}
 	}
@@ -296,11 +296,11 @@ func TestEnsurePrivateTreeSecuresNestedDirectoriesAndFiles(t *testing.T) {
 func TestEnsurePrivateTreeRejectsSymlinks(t *testing.T) {
 	base := testTempDir(t)
 	root := filepath.Join(base, "private")
-	if err := os.MkdirAll(root, 0700); err != nil {
+	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	outside := filepath.Join(base, "outside")
-	if err := os.WriteFile(outside, []byte("keep"), 0600); err != nil {
+	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
@@ -325,7 +325,7 @@ func TestGetBackupDir_ContainsAppName(t *testing.T) {
 
 func TestCreateTempDirUsesProjectNamespaceAndPrivatePermissions(t *testing.T) {
 	tempRoot := filepath.Join(os.TempDir(), orgName)
-	if err := os.MkdirAll(tempRoot, 0755); err != nil {
+	if err := os.MkdirAll(tempRoot, 0o755); err != nil {
 		t.Fatalf("create temp namespace: %v", err)
 	}
 	tempBase, err := os.MkdirTemp(tempRoot, "countries-test-")
@@ -352,7 +352,7 @@ func TestCreateTempDirUsesProjectNamespaceAndPrivatePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat temp directory: %v", err)
 	}
-	if info.Mode().Perm() != 0700 {
+	if info.Mode().Perm() != 0o700 {
 		t.Errorf("temp directory permissions = %04o, want 0700", info.Mode().Perm())
 	}
 }

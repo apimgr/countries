@@ -35,15 +35,21 @@ var (
 	OfficialSite = ""
 )
 
-const projectName = "countries"
-const internalOrg = "apimgr"
-const internalName = "countries"
+const (
+	projectName  = "countries"
+	internalOrg  = "apimgr"
+	internalName = "countries"
+)
 
-const maxResponseBytes = 16 << 20
-const maxRequestBodyBytes = 1 << 20
+const (
+	maxResponseBytes    = 16 << 20
+	maxRequestBodyBytes = 1 << 20
+)
 
-var clientUICommand bool
-var clientProcessLanguage = "en"
+var (
+	clientUICommand       bool
+	clientProcessLanguage = "en"
+)
 
 type clientExitError struct {
 	code int
@@ -240,9 +246,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if strings.TrimSpace(opts.server) != "" {
 		flagServer, flagServerValid = validServer(opts.server)
 		if !flagServerValid {
-			if _, err := fmt.Fprintln(stderr, "Warning: invalid --server value; keeping the configured server."); err != nil {
-				return err
-			}
+			return withClientExitCode(64, errors.New(clientText(lang, "error.url_invalid")))
 		}
 	}
 	if flagServerValid && !configuredServerValid {
@@ -269,23 +273,24 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if baseURL == "" && configuredServerValid {
 		baseURL = configuredServer
 	}
-	if baseURL == "" {
-		if normalized, ok := validServer(OfficialSite); ok {
-			baseURL = normalized
-		}
-	}
 	pos := fs.Args()
 	mode, modeErr := clientDisplayMode(cfg.Display.Mode, len(pos) == 0 && opts.update == "", stdout, lang)
 	if modeErr != nil {
+		if baseURL == "" && len(pos) == 0 && opts.update == "" {
+			return withClientExitCode(2, errors.New(clientSetupConfigGuidance(lang)))
+		}
 		return withClientExitCode(2, modeErr)
 	}
 	interactive := mode == "gui" || mode == "tui"
-	interactiveUpdate := interactiveTerminal(stdout) || mode == "tui"
+	interactiveUpdate := interactiveTerminal(stdout) || interactive
 	if baseURL == "" && interactive {
 		return withClientExitCode(2, runInteractive(baseURL, &cfg, configPath, os.Stdin, stdout, stderr))
 	}
 	if baseURL == "" {
-		return withClientExitCode(2, errors.New(clientText(lang, "error.server_required")))
+		if len(pos) > 0 {
+			return withClientExitCode(2, errors.New(clientText(lang, "error.server_required")))
+		}
+		return withClientExitCode(2, errors.New(clientSetupConfigGuidance(lang)))
 	}
 	baseURL, err = normalizeBaseURL(baseURL, lang)
 	if err != nil {
@@ -363,7 +368,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return withClientExitCode(64, errors.New(clientText(lang, "error.update_invalid")))
 	}
 	if !clientUICommand {
-		if err := checkAndApplyClientUpdate(baseURL, token, opts.update, cfg.Update.Auto, interactiveUpdate, os.Stdin, stdout, stderr, lang); err != nil {
+		var guiUpdatePrompt func(string, string) (bool, error)
+		if mode == "gui" {
+			guiUpdatePrompt = promptClientUpdateGUI
+		}
+		if err := checkAndApplyClientUpdateWithPrompt(baseURL, token, opts.update, cfg.Update.Auto, interactiveUpdate, os.Stdin, stdout, stderr, []string{lang}, guiUpdatePrompt); err != nil {
 			if opts.update != "" || strings.Contains(err.Error(), "this CLI is too old") {
 				return err
 			}
@@ -675,7 +684,7 @@ func loadConfigAt(path string) (cliConfig, error) {
 		cfg.Auth.Token = cfg.Server.Token
 	}
 	cfg.Server.Token = cfg.Auth.Token
-	if err := os.Chmod(path, 0600); err != nil {
+	if err := os.Chmod(path, 0o600); err != nil {
 		return cfg, clientWrap("error.config_secure", err)
 	}
 	return cfg, nil
@@ -694,17 +703,17 @@ func saveConfigAt(cfg cliConfig, path string) error {
 		cfg.Auth.Token = cfg.Server.Token
 	}
 	cfg.Server.Token = cfg.Auth.Token
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return clientWrap("error.config_directory_create", err)
 	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return clientWrap("error.config_encode", err)
 	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return clientWrap("error.config_write", err)
 	}
-	if err := os.Chmod(path, 0600); err != nil {
+	if err := os.Chmod(path, 0o600); err != nil {
 		return clientWrap("error.config_secure", err)
 	}
 	return nil
@@ -742,17 +751,17 @@ func persistClientSettings(path string, server, token *string) error {
 		section["token"] = *token
 		values["auth"] = section
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return clientWrap("error.config_directory_create", err)
 	}
 	encoded, err := yaml.Marshal(values)
 	if err != nil {
 		return clientWrap("error.config_encode", err)
 	}
-	if err := os.WriteFile(path, encoded, 0600); err != nil {
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
 		return clientWrap("error.config_write", err)
 	}
-	if err := os.Chmod(path, 0600); err != nil {
+	if err := os.Chmod(path, 0o600); err != nil {
 		return clientWrap("error.config_secure", err)
 	}
 	return nil
@@ -800,13 +809,19 @@ func interactiveTerminal(output io.Writer) bool {
 }
 
 func runInteractive(serverURL string, cfg *cliConfig, configPath string, input io.Reader, output, stderr io.Writer) error {
-	_ = input
 	mode, err := clientDisplayMode(cfg.Display.Mode, true, output)
 	if err != nil {
 		return err
 	}
 	if mode == "gui" {
 		return launchClientGUI(serverURL, cfg, configPath)
+	}
+	if !clientInteractiveIO(input, output) {
+		return errors.New(clientSetupConfigGuidance(cfg.Lang))
+	}
+	env := display.DetectDisplayEnv()
+	if env.IsDumbTerminal() || (env.Cols > 0 && env.Cols < 40) {
+		return runInlineSetup(serverURL, cfg, configPath, input, output)
 	}
 	return runClientTUI(serverURL, cfg, configPath, output, stderr)
 }
@@ -829,13 +844,13 @@ func clientDisplayModeForEnv(configured string, noCommand bool, output io.Writer
 	}
 	switch mode {
 	case "auto":
-		if env.IsAutoDetectDisplayModeHeadless() {
-			return "", errors.New(clientTextFormat(lang, "error.command_required", map[string]string{"binary": filepath.Base(os.Args[0])}))
+		if env.IsAutoDetectDisplayModeHeadless() && !env.IsTerminal {
+			return "cli", nil
 		}
 		if env.IsAutoDetectDisplayModeGUI() && clientGUIAvailable() {
 			return "gui", nil
 		}
-		if env.IsTerminal && !env.IsDumbTerminal() {
+		if env.IsTerminal {
 			return "tui", nil
 		}
 		if env.IsAutoDetectDisplayModeGUI() && !clientGUIAvailable() && (runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd" || runtime.GOOS == "openbsd") {
@@ -851,7 +866,7 @@ func clientDisplayModeForEnv(configured string, noCommand bool, output io.Writer
 		}
 		return "gui", nil
 	case "tui":
-		if !env.IsTerminal || env.IsDumbTerminal() {
+		if !env.IsTerminal {
 			return "", errors.New(clientText(lang, "display.tui_unavailable"))
 		}
 		return "tui", nil
@@ -860,17 +875,12 @@ func clientDisplayModeForEnv(configured string, noCommand bool, output io.Writer
 	}
 }
 
-func checkServer(serverURL, token string, selectedLanguage ...string) (retErr error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	lang := "en"
-	if len(selectedLanguage) > 0 && i18n.IsSupported(selectedLanguage[0]) {
-		lang = selectedLanguage[0]
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL+api.APIPath("server/healthz"), nil)
+func checkClientEndpoint(ctx context.Context, endpoint, token, lang string) (retErr error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("%s: %w", clientText(lang, "error.health_request_create"), err)
 	}
+	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Language", lang)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -884,6 +894,9 @@ func checkServer(serverURL, token string, selectedLanguage ...string) (retErr er
 			retErr = fmt.Errorf("%s: %w", clientText(lang, "error.health_response_close"), err)
 		}
 	}()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return errors.New(clientText(lang, "tokens.error_invalid"))
+	}
 	if resp.StatusCode != http.StatusOK {
 		return errors.New(clientTextFormat(lang, "error.health_http", map[string]string{"status": strconv.Itoa(resp.StatusCode)}))
 	}

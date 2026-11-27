@@ -207,7 +207,7 @@ func GetDatabaseDir(dataDir string) string {
 }
 
 func EnsureDir(path string) error {
-	return os.MkdirAll(path, 0755)
+	return os.MkdirAll(path, 0o755)
 }
 
 // GetDefaultDirs returns the default config, data, and logs directories
@@ -218,7 +218,7 @@ func GetDefaultDirs(appName string) (configDir, dataDir, logsDir string) {
 // EnsureDirs creates all specified directories
 func EnsureDirs(dirs ...string) error {
 	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
 	}
@@ -228,7 +228,7 @@ func EnsureDirs(dirs ...string) error {
 // EnsurePrivateTree creates a private directory tree and enforces owner-only
 // permissions on every directory and regular file below it.
 func EnsurePrivateTree(path string) error {
-	if err := os.MkdirAll(path, 0700); err != nil {
+	if err := os.MkdirAll(path, 0o700); err != nil {
 		return fmt.Errorf("create private directory %s: %w", path, err)
 	}
 	return filepath.WalkDir(path, func(current string, entry os.DirEntry, walkErr error) error {
@@ -243,9 +243,9 @@ func EnsurePrivateTree(path string) error {
 		if mode&os.ModeSymlink != 0 || !mode.IsDir() && !mode.IsRegular() {
 			return fmt.Errorf("private path %s has unsupported mode %04o", current, mode.Perm())
 		}
-		permissions := os.FileMode(0600)
+		permissions := os.FileMode(0o600)
 		if mode.IsDir() {
-			permissions = 0700
+			permissions = 0o700
 		}
 		if mode.Perm() != permissions {
 			if err := os.Chmod(current, permissions); err != nil {
@@ -312,7 +312,7 @@ func systemBackupDir(appName string) string {
 
 func writableOrCreatable(path string) bool {
 	parent := filepath.Dir(path)
-	if err := os.MkdirAll(parent, 0755); err != nil {
+	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return false
 	}
 	test, err := os.CreateTemp(parent, ".countries-backup-write-test-")
@@ -333,7 +333,7 @@ func CreateTempDir(appName string) (string, error) {
 		return "", fmt.Errorf("invalid application name %q", appName)
 	}
 	orgDir := filepath.Join(os.TempDir(), orgName)
-	if err := os.MkdirAll(orgDir, 0755); err != nil {
+	if err := os.MkdirAll(orgDir, 0o755); err != nil {
 		return "", fmt.Errorf("create project temp namespace: %w", err)
 	}
 	dir, err := os.MkdirTemp(orgDir, appName+"-")

@@ -24,10 +24,13 @@ import (
 	"time"
 )
 
-var writeMu sync.Mutex
-var optionsMu sync.RWMutex
-var configuredOptions = map[string]Options{}
-var reportedBroken = map[string]bool{}
+var (
+	writeMu           sync.Mutex
+	optionsMu         sync.RWMutex
+	configuredOptions = map[string]Options{}
+	reportedBroken    = map[string]bool{}
+	warnedGroups      = map[string]bool{}
+)
 
 // Options controls audit categories, user-agent collection, and file lifecycle.
 type Options struct {
@@ -38,8 +41,11 @@ type Options struct {
 	Rotate           string
 	Keep             string
 	Compress         bool
+	Group            string
 	IncludeUserAgent bool
 	Events           EventCategories
+	groupID          int
+	groupResolved    bool
 }
 
 type EventCategories struct {
@@ -77,8 +83,10 @@ type Event struct {
 
 // DefaultOptions enables all required audit categories with the AI.md defaults.
 func DefaultOptions() Options {
-	return Options{Enabled: true, Filename: "audit.log", Format: "json", Rotate: "daily", Keep: "none", IncludeUserAgent: true,
-		Events: EventCategories{Configuration: true, Security: true, Backup: true, Server: true}}
+	return Options{
+		Enabled: true, Filename: "audit.log", Format: "json", Rotate: "daily", Keep: "none", IncludeUserAgent: true,
+		Events: EventCategories{Configuration: true, Security: true, Backup: true, Server: true},
+	}
 }
 
 // Configure registers audit settings for a log directory and verifies its
@@ -105,6 +113,20 @@ func Configure(logDir string, opts Options) error {
 	if opts.Keep == "" {
 		opts.Keep = "none"
 	}
+	opts.Group = strings.TrimSpace(opts.Group)
+	if !opts.SystemMode {
+		opts.Group = ""
+	}
+	if opts.Group != "" {
+		gid, err := lookupAuditGroup(opts.Group)
+		if err != nil {
+			warnUnknownAuditGroup(opts.Group)
+			opts.Group = ""
+		} else {
+			opts.groupID = gid
+			opts.groupResolved = true
+		}
+	}
 	if !opts.Enabled {
 		opts.Events = EventCategories{}
 	}
@@ -114,12 +136,8 @@ func Configure(logDir string, opts Options) error {
 	if _, err := parseRotation(opts.Rotate); err != nil {
 		return err
 	}
-	directoryMode := auditDirectoryMode(opts)
-	if err := os.MkdirAll(logDir, directoryMode); err != nil {
-		return fmt.Errorf("create audit directory: %w", err)
-	}
-	if err := os.Chmod(logDir, directoryMode); err != nil {
-		return fmt.Errorf("secure audit directory: %w", err)
+	if err := secureAuditDirectory(logDir, opts); err != nil {
+		return err
 	}
 	abs, err := filepath.Abs(logDir)
 	if err != nil {
@@ -138,8 +156,8 @@ func Configure(logDir string, opts Options) error {
 		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			return errors.New("audit log path is not a regular file")
 		}
-		if err := os.Chmod(path, auditFileMode(opts)); err != nil {
-			return fmt.Errorf("secure audit log: %w", err)
+		if err := secureAuditFile(path, opts); err != nil {
+			return err
 		}
 		if verifyErr := verifyWithAnchor(path, filepath.Join(abs, "audit.anchor")); verifyErr != nil {
 			reason := "anchor_mismatch"
@@ -225,12 +243,8 @@ func Append(logDir string, event Event, now time.Time) (Event, error) {
 	if err != nil {
 		return Event{}, err
 	}
-	directoryMode := auditDirectoryMode(opts)
-	if err := os.MkdirAll(abs, directoryMode); err != nil {
-		return Event{}, fmt.Errorf("create audit log directory: %w", err)
-	}
-	if err := os.Chmod(abs, directoryMode); err != nil {
-		return Event{}, fmt.Errorf("secure audit log directory: %w", err)
+	if err := secureAuditDirectory(abs, opts); err != nil {
+		return Event{}, err
 	}
 	path := filepath.Join(abs, opts.Filename)
 	anchorPath := filepath.Join(abs, "audit.anchor")
@@ -270,9 +284,9 @@ func Append(logDir string, event Event, now time.Time) (Event, error) {
 	if err != nil {
 		return Event{}, fmt.Errorf("open audit log: %w", err)
 	}
-	if err := file.Chmod(fileMode); err != nil {
+	if err := secureAuditFile(path, opts); err != nil {
 		_ = file.Close()
-		return Event{}, fmt.Errorf("secure audit log: %w", err)
+		return Event{}, err
 	}
 	if _, err := file.Write(append(line, '\n')); err != nil {
 		_ = file.Close()
@@ -538,7 +552,7 @@ func readAnchor(path string) (string, error) {
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return "", errors.New("audit anchor is not a regular file")
 	}
-	if info.Mode().Perm() != 0600 {
+	if info.Mode().Perm() != 0o600 {
 		return "", errors.New("audit anchor permissions must be 0600")
 	}
 	data, err := os.ReadFile(path)
@@ -562,8 +576,8 @@ func writeAnchor(path, value string) error {
 		return err
 	}
 	name := tmp.Name()
-	defer os.Remove(name)
-	if err := tmp.Chmod(0600); err != nil {
+	defer func() { _ = os.Remove(name) }()
+	if err := tmp.Chmod(0o600); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -628,7 +642,7 @@ func appendRawLocked(logDir string, opts Options, event Event, now time.Time) er
 	if err != nil {
 		return err
 	}
-	if err := f.Chmod(fileMode); err != nil {
+	if err := secureAuditFile(path, opts); err != nil {
 		_ = f.Close()
 		return err
 	}
@@ -755,15 +769,28 @@ func rotateIfDueLocked(path, anchorPath string, opts Options, now time.Time) err
 	if err := writeAnchor(anchorPath, last); err != nil {
 		return fmt.Errorf("write audit anchor before rotation: %w", err)
 	}
-	rotated := fmt.Sprintf("%s.%s", path, now.UTC().Format("20060102T150405Z"))
-	for index := 1; ; index++ {
-		candidate := rotated
-		if index > 1 {
-			candidate = fmt.Sprintf("%s.%03d", rotated, index)
+	base := fmt.Sprintf("%s.%s", path, now.UTC().Format("2006-01-02"))
+	rotated := base
+	for index := 0; ; index++ {
+		candidate := base
+		if index > 0 {
+			candidate = fmt.Sprintf("%s.%d", base, index)
 		}
-		if _, statErr := os.Stat(candidate); os.IsNotExist(statErr) {
+		archive := candidate
+		if opts.Compress {
+			archive += ".gz"
+		}
+		_, candidateErr := os.Lstat(candidate)
+		_, archiveErr := os.Lstat(archive)
+		if os.IsNotExist(candidateErr) && os.IsNotExist(archiveErr) {
 			rotated = candidate
 			break
+		}
+		if candidateErr != nil && !os.IsNotExist(candidateErr) {
+			return fmt.Errorf("inspect audit archive: %w", candidateErr)
+		}
+		if archiveErr != nil && !os.IsNotExist(archiveErr) {
+			return fmt.Errorf("inspect compressed audit archive: %w", archiveErr)
 		}
 	}
 	if err := os.Rename(path, rotated); err != nil {
@@ -775,7 +802,7 @@ func rotateIfDueLocked(path, anchorPath string, opts Options, now time.Time) err
 		return fmt.Errorf("rotate audit log: %w", err)
 	}
 	if opts.Compress {
-		if err := compressFile(rotated, auditFileMode(opts)); err != nil {
+		if err := compressFile(rotated, opts); err != nil {
 			return err
 		}
 	}
@@ -804,14 +831,19 @@ func periodElapsed(period string, then, now time.Time) bool {
 	}
 }
 
-func compressFile(path string, fileMode os.FileMode) error {
+func compressFile(path string, opts Options) error {
 	in, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-	out, err := os.OpenFile(path+".gz", os.O_CREATE|os.O_EXCL|os.O_WRONLY, fileMode)
+	defer func() { _ = in.Close() }()
+	out, err := os.OpenFile(path+".gz", os.O_CREATE|os.O_EXCL|os.O_WRONLY, auditFileMode(opts))
 	if err != nil {
+		return err
+	}
+	if err := secureAuditFile(path+".gz", opts); err != nil {
+		_ = out.Close()
+		_ = os.Remove(path + ".gz")
 		return err
 	}
 	gz := gzip.NewWriter(out)
@@ -835,16 +867,67 @@ func compressFile(path string, fileMode os.FileMode) error {
 
 func auditDirectoryMode(opts Options) os.FileMode {
 	if opts.SystemMode {
-		return 0750
+		return 0o750
 	}
-	return 0700
+	return 0o700
 }
 
 func auditFileMode(opts Options) os.FileMode {
 	if opts.SystemMode {
-		return 0640
+		return 0o640
 	}
-	return 0600
+	return 0o600
+}
+
+func secureAuditDirectory(path string, opts Options) error {
+	directoryMode := auditDirectoryMode(opts)
+	if err := os.MkdirAll(path, directoryMode); err != nil {
+		return fmt.Errorf("create audit directory: %w", err)
+	}
+	if opts.SystemMode {
+		gid := defaultAuditGroupID()
+		if opts.groupResolved {
+			gid = opts.groupID
+		}
+		if gid >= 0 {
+			if err := setAuditGroup(path, gid); err != nil {
+				return fmt.Errorf("set audit directory group: %w", err)
+			}
+		}
+	}
+	if err := os.Chmod(path, directoryMode); err != nil {
+		return fmt.Errorf("secure audit directory: %w", err)
+	}
+	return nil
+}
+
+func secureAuditFile(path string, opts Options) error {
+	if opts.SystemMode {
+		gid := defaultAuditGroupID()
+		if opts.groupResolved {
+			gid = opts.groupID
+		}
+		if gid >= 0 {
+			if err := setAuditGroup(path, gid); err != nil {
+				return fmt.Errorf("set audit file group: %w", err)
+			}
+		}
+	}
+	if err := os.Chmod(path, auditFileMode(opts)); err != nil {
+		return fmt.Errorf("secure audit log: %w", err)
+	}
+	return nil
+}
+
+func warnUnknownAuditGroup(name string) {
+	optionsMu.Lock()
+	if warnedGroups[name] {
+		optionsMu.Unlock()
+		return
+	}
+	warnedGroups[name] = true
+	optionsMu.Unlock()
+	log.Printf("WARN: configured audit group %q does not exist or is unavailable; using the default group", name)
 }
 
 func validateRetention(value string) error {
@@ -877,7 +960,22 @@ func pruneAudit(path, keep string) error {
 	if err != nil {
 		return err
 	}
-	sort.Strings(files)
+	anchorPath := path + ".anchor"
+	archives := files[:0]
+	for _, name := range files {
+		if name != anchorPath {
+			archives = append(archives, name)
+		}
+	}
+	files = archives
+	sort.Slice(files, func(i, j int) bool {
+		leftTime, leftSequence := auditArchiveOrder(path, files[i])
+		rightTime, rightSequence := auditArchiveOrder(path, files[j])
+		if !leftTime.Equal(rightTime) {
+			return leftTime.Before(rightTime)
+		}
+		return leftSequence < rightSequence
+	})
 	policy := strings.ToLower(strings.TrimSpace(keep))
 	if policy == "forever" {
 		return nil
@@ -922,6 +1020,36 @@ func pruneAudit(path, keep string) error {
 		}
 	}
 	return nil
+}
+
+func auditArchiveOrder(path, archive string) (time.Time, int) {
+	name := filepath.Base(archive)
+	name = strings.TrimSuffix(name, ".gz")
+	prefix := filepath.Base(path) + "."
+	if !strings.HasPrefix(name, prefix) {
+		if info, err := os.Stat(archive); err == nil {
+			return info.ModTime(), 0
+		}
+		return time.Time{}, 0
+	}
+	value := strings.TrimPrefix(name, prefix)
+	if timestamp, err := time.Parse("20060102T150405Z", value); err == nil {
+		return timestamp, 0
+	}
+	sequence := 0
+	if dot := strings.LastIndexByte(value, '.'); dot >= 0 {
+		if parsed, err := strconv.Atoi(value[dot+1:]); err == nil {
+			sequence = parsed
+			value = value[:dot]
+		}
+	}
+	if date, err := time.Parse("2006-01-02", value); err == nil {
+		return date, sequence
+	}
+	if info, err := os.Stat(archive); err == nil {
+		return info.ModTime(), 0
+	}
+	return time.Time{}, 0
 }
 
 func newULID(now time.Time) (string, error) {

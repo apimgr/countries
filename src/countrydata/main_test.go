@@ -86,7 +86,7 @@ func TestZoneTableFromCompressedAndPlainTar(t *testing.T) {
 	var archive bytes.Buffer
 	writer := tar.NewWriter(&archive)
 	content := []byte("AA\t+0000+00000\tEtc/UTC\n")
-	if err := writer.WriteHeader(&tar.Header{Name: "zone1970.tab", Mode: 0600, Size: int64(len(content))}); err != nil {
+	if err := writer.WriteHeader(&tar.Header{Name: "zone1970.tab", Mode: 0o600, Size: int64(len(content))}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := writer.Write(content); err != nil {
@@ -116,7 +116,7 @@ func TestZoneTableFromCompressedAndPlainTar(t *testing.T) {
 
 func TestReadSourceLocalFiles(t *testing.T) {
 	path := filepath.Join(testutil.TempDir(t), "source.json")
-	if err := os.WriteFile(path, []byte(`{"ok":true}`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"ok":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	data, err := readSource(nil, path, "unused")
@@ -156,7 +156,7 @@ func TestGenerateCountryDatasetFromLocalFixtures(t *testing.T) {
 	zonePath := filepath.Join(directory, "zone1970.tab")
 	outputPath := filepath.Join(directory, "generated.json")
 	for path, data := range map[string][]byte{countriesPath: countryData, populationPath: populationData, zonePath: zoneData} {
-		if err := os.WriteFile(path, data, 0600); err != nil {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -187,10 +187,10 @@ func TestGenerateRejectsDuplicateAndUnexpectedCountryCounts(t *testing.T) {
 	countriesPath := filepath.Join(directory, "countries.json")
 	populationPath := filepath.Join(directory, "population.json")
 	zonePath := filepath.Join(directory, "zone1970.tab")
-	if err := os.WriteFile(populationPath, []byte(`[{"page":1},[]]`), 0600); err != nil {
+	if err := os.WriteFile(populationPath, []byte(`[{"page":1},[]]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(zonePath, []byte("AA\t+0000+00000\tEtc/UTC\n"), 0600); err != nil {
+	if err := os.WriteFile(zonePath, []byte("AA\t+0000+00000\tEtc/UTC\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	duplicate := []upstreamCountry{{CCA2: "AA", CCA3: "AAA"}, {CCA2: "AA", CCA3: "AAB"}}
@@ -198,13 +198,13 @@ func TestGenerateRejectsDuplicateAndUnexpectedCountryCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(countriesPath, data, 0600); err != nil {
+	if err := os.WriteFile(countriesPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := generate(countriesPath, populationPath, zonePath, filepath.Join(directory, "duplicate.json")); err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("generate(duplicate) error = %v", err)
 	}
-	if err := os.WriteFile(countriesPath, []byte(`[]`), 0600); err != nil {
+	if err := os.WriteFile(countriesPath, []byte(`[]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := generate(countriesPath, populationPath, zonePath, filepath.Join(directory, "short.json")); err == nil || !strings.Contains(err.Error(), "expected 249") {

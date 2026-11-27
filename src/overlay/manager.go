@@ -29,6 +29,7 @@ type TorStatus struct {
 	Enabled  bool
 	Running  bool
 	Status   string
+	State    string
 	Hostname string
 }
 
@@ -316,6 +317,20 @@ func (m *Manager) stopI2PRuntime() {
 }
 
 func (m *Manager) setTor(s TorStatus) {
+	if s.State == "" {
+		switch {
+		case !s.Enabled:
+			s.State = "disabled"
+		case s.Running:
+			s.State = "running"
+		case s.Status == "starting":
+			s.State = "starting"
+		case s.Status == "unavailable":
+			s.State = "error"
+		default:
+			s.State = s.Status
+		}
+	}
 	m.mu.Lock()
 	m.tor = s
 	t, i := m.tor, m.i2p
@@ -324,6 +339,7 @@ func (m *Manager) setTor(s TorStatus) {
 		m.opts.OnStatus(t, i)
 	}
 }
+
 func (m *Manager) setI2P(s I2PStatus) {
 	m.mu.Lock()
 	m.i2p = s
@@ -413,17 +429,17 @@ func (m *Manager) startTor(ctx context.Context) {
 		torrc = strings.Replace(torrc, "HiddenServiceDir "+hsDir, "AccountingStart month 1 00:00\nAccountingMax "+valueOrString(cfg.MaxMonthlyBandwidth, "100 GB")+"\nHiddenServiceDir "+hsDir, 1)
 	}
 	torrcPath := filepath.Join(m.opts.ConfigDir, "tor", "torrc")
-	if err := os.WriteFile(torrcPath, []byte(torrc), 0600); err != nil {
+	if err := os.WriteFile(torrcPath, []byte(torrc), 0o600); err != nil {
 		log.Printf("Tor unavailable: write torrc: %v", err)
 		m.setTor(TorStatus{Enabled: true, Status: "unavailable"})
 		return
 	}
-	if err := os.MkdirAll(m.opts.LogsDir, 0700); err != nil {
+	if err := os.MkdirAll(m.opts.LogsDir, 0o700); err != nil {
 		log.Printf("Tor unavailable: log directory: %v", err)
 		m.setTor(TorStatus{Enabled: true, Status: "unavailable"})
 		return
 	}
-	logFile, err := os.OpenFile(filepath.Join(m.opts.LogsDir, "tor.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	logFile, err := os.OpenFile(filepath.Join(m.opts.LogsDir, "tor.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		log.Printf("Tor unavailable: log file: %v", err)
 		m.setTor(TorStatus{Enabled: true, Status: "unavailable"})
@@ -874,6 +890,7 @@ func valueOr(value, fallback int) int {
 	}
 	return fallback
 }
+
 func valueOrString(value, fallback string) string {
 	if strings.TrimSpace(value) != "" {
 		return value

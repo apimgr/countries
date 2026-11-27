@@ -30,7 +30,7 @@ func OpenSQLiteStoreWithPool(path string, pool PoolOptions) (*SQLiteStore, error
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("database path is required")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
 	absPath, err := filepath.Abs(path)
@@ -77,7 +77,7 @@ func OpenSQLiteStoreWithPool(path string, pool PoolOptions) (*SQLiteStore, error
 		_ = writer.Close()
 		return nil, err
 	}
-	if err := os.Chmod(absPath, 0600); err != nil {
+	if err := os.Chmod(absPath, 0o600); err != nil {
 		_ = reader.Close()
 		_ = writer.Close()
 		return nil, fmt.Errorf("secure database file: %w", err)

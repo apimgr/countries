@@ -9,7 +9,7 @@ import (
 
 func TestAcquireAndRemove(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "server.pid")
-	if err := Acquire(path, 0600); err != nil {
+	if err := Acquire(path, 0o600); err != nil {
 		t.Fatalf("Acquire() error = %v", err)
 	}
 	data, err := os.ReadFile(path)
@@ -20,10 +20,10 @@ func TestAcquireAndRemove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat PID file: %v", err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("PID file mode = %v, want 0600", info.Mode().Perm())
 	}
-	if err := Acquire(path, 0600); err == nil || !strings.Contains(err.Error(), "already running") {
+	if err := Acquire(path, 0o600); err == nil || !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("second Acquire() error = %v, want already running", err)
 	}
 	if err := Remove(path); err != nil {
@@ -38,10 +38,10 @@ func TestAcquireRemovesCorruptAndStalePIDs(t *testing.T) {
 	for _, content := range []string{"not-a-pid", "999999999"} {
 		t.Run(content, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "server.pid")
-			if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := Acquire(path, 0600); err != nil {
+			if err := Acquire(path, 0o600); err != nil {
 				t.Fatalf("Acquire() error = %v", err)
 			}
 			if err := Remove(path); err != nil {

@@ -93,7 +93,7 @@ func TestMainHelpers(t *testing.T) {
 
 	t.Run("persist detected SMTP", func(t *testing.T) {
 		path := filepath.Join(testutil.TempDir(t), "server.yml")
-		if err := os.WriteFile(path, []byte("server:\n  mode: production\n"), 0600); err != nil {
+		if err := os.WriteFile(path, []byte("server:\n  mode: production\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if err := persistDetectedSMTP(path, "smtp.example", 587); err != nil {
@@ -113,7 +113,7 @@ func TestMainHelpers(t *testing.T) {
 			t.Fatalf("persisted SMTP/config values = %#v", values)
 		}
 		info, err := os.Stat(path)
-		if err != nil || info.Mode().Perm() != 0600 {
+		if err != nil || info.Mode().Perm() != 0o600 {
 			t.Fatalf("server.yml permissions = %v, err = %v", info.Mode().Perm(), err)
 		}
 		if err := persistDetectedSMTP(filepath.Join(filepath.Dir(path), "missing.yml"), "smtp.example", 25); err == nil {

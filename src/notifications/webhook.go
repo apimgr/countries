@@ -44,8 +44,10 @@ type webhookDelivery struct {
 	message   webhookMessage
 }
 
-var webhookFailureMu sync.Mutex
-var webhookFailureLogged = map[string]time.Time{}
+var (
+	webhookFailureMu     sync.Mutex
+	webhookFailureLogged = map[string]time.Time{}
+)
 
 var webhookRetryDelays = []time.Duration{
 	time.Minute,

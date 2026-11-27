@@ -66,7 +66,7 @@ func runMaintenanceOps(command string, args []string, configDir, dataDir, logsDi
 	if command != "token" && command != "data" && command != "security" && command != "compliance" {
 		return false, nil
 	}
-	cfg, err := config.Load(configPath)
+	cfg, err := config.LoadConfigFromFile(configPath)
 	if err != nil {
 		return true, fmt.Errorf("load configuration: %w", err)
 	}
@@ -945,7 +945,7 @@ func writePrivateExport(path string, data []byte) error {
 	}
 	temporary := file.Name()
 	defer func() { _ = os.Remove(temporary) }()
-	if err := file.Chmod(0600); err != nil {
+	if err := file.Chmod(0o600); err != nil {
 		_ = file.Close()
 		return err
 	}
@@ -988,18 +988,18 @@ func writeMaintenanceAudit(logsDir, event, category, severity string, details ma
 
 func appendSecurityLog(logsDir string, event map[string]any) error {
 	path := filepath.Join(logsDir, "security.log")
-	if err := os.MkdirAll(logsDir, 0750); err != nil {
+	if err := os.MkdirAll(logsDir, 0o750); err != nil {
 		return err
 	}
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0640)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
 	if err != nil {
 		return err
 	}
-	if err := file.Chmod(0640); err != nil {
+	if err := file.Chmod(0o640); err != nil {
 		_ = file.Close()
 		return err
 	}

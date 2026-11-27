@@ -340,6 +340,7 @@ func (statement sqliteGatewayStmt) Exec(values []driver.Value) (driver.Result, e
 	}
 	return statement.connection.ExecContext(context.Background(), statement.query, named)
 }
+
 func (statement sqliteGatewayStmt) Query(values []driver.Value) (driver.Rows, error) {
 	named := make([]driver.NamedValue, len(values))
 	for index, value := range values {
@@ -347,9 +348,11 @@ func (statement sqliteGatewayStmt) Query(values []driver.Value) (driver.Rows, er
 	}
 	return statement.connection.QueryContext(context.Background(), statement.query, named)
 }
+
 func (statement sqliteGatewayStmt) ExecContext(ctx context.Context, values []driver.NamedValue) (driver.Result, error) {
 	return statement.connection.ExecContext(ctx, statement.query, values)
 }
+
 func (statement sqliteGatewayStmt) QueryContext(ctx context.Context, values []driver.NamedValue) (driver.Rows, error) {
 	return statement.connection.QueryContext(ctx, statement.query, values)
 }
@@ -371,6 +374,7 @@ func (transaction sqliteGatewayTx) Commit() error {
 	}
 	return err
 }
+
 func (transaction sqliteGatewayTx) Rollback() error {
 	err := transaction.tx.Rollback()
 	transaction.connection.mu.Lock()
@@ -398,6 +402,7 @@ func (rows *sqliteGatewayRows) Close() error {
 	}
 	return rows.rows.Close()
 }
+
 func (rows *sqliteGatewayRows) Next(destination []driver.Value) error {
 	if rows.rows == nil {
 		if rows.index >= len(rows.values) {

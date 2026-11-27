@@ -15,7 +15,7 @@ func Acquire(path string, mode os.FileMode) error {
 	if path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create PID directory: %w", err)
 	}
 	if err := removeStale(path); err != nil {

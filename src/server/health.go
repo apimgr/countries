@@ -70,6 +70,7 @@ type HealthFeatures struct {
 type HealthOverlayInfo struct {
 	Enabled  bool   `json:"enabled"`
 	Running  bool   `json:"running"`
+	State    string `json:"state"`
 	Status   string `json:"status"`
 	Hostname string `json:"hostname"`
 }
@@ -512,7 +513,20 @@ func (s *Server) buildHealthResponse() HealthResponse {
 	torInfo, i2pInfo := s.torHealth, s.i2pHealth
 	s.overlayMu.RUnlock()
 	if torInfo.Status == "" {
-		torInfo = HealthOverlayInfo{Status: "disabled"}
+		torInfo = HealthOverlayInfo{State: "disabled", Status: "disabled"}
+	}
+	if torInfo.State == "" {
+		if !torInfo.Enabled {
+			torInfo.State = "disabled"
+		} else if torInfo.Running {
+			torInfo.State = "running"
+		} else if torInfo.Status == "starting" {
+			torInfo.State = "starting"
+		} else if torInfo.Status == "unavailable" {
+			torInfo.State = "error"
+		} else {
+			torInfo.State = torInfo.Status
+		}
 	}
 	if i2pInfo.Status == "" {
 		i2pInfo = HealthI2PInfo{Status: "disabled", State: "disabled", Provider: "none"}
@@ -801,7 +815,7 @@ func (h HealthResponse) apiText() string {
 	}
 	fmt.Fprintf(&output, "version: %s\ngo_version: %s\nbuild.commit: %s\nbuild.date: %s\n", h.Version, h.GoVersion, h.Build.Commit, h.Build.Date)
 	fmt.Fprintf(&output, "uptime: %s\nmode: %s\ntimestamp: %s\n", h.Uptime, h.Mode, h.Timestamp.UTC().Format(time.RFC3339))
-	fmt.Fprintf(&output, "features.tor: %s\nfeatures.i2p: %s\nfeatures.geoip: %s\n", overlayText(h.Features.Tor.Status, h.Features.Tor.Hostname), i2pText(h.Features.I2P), enabledText(h.Features.GeoIP))
+	fmt.Fprintf(&output, "features.tor: %s\nfeatures.i2p: %s\nfeatures.geoip: %s\n", torText(h.Features.Tor), i2pText(h.Features.I2P), enabledText(h.Features.GeoIP))
 	fmt.Fprintf(&output, "checks.database: %s\nchecks.cache: %s\nchecks.disk: %s\nchecks.scheduler: %s\n", h.Checks.Database, h.Checks.Cache, h.Checks.Disk, h.Checks.Scheduler)
 	if h.Checks.Tor != "" {
 		fmt.Fprintf(&output, "checks.tor: %s\n", h.Checks.Tor)
@@ -865,11 +879,15 @@ func (c HealthChecks) ordered() []HealthCheck {
 	return checks
 }
 
-func overlayText(status, hostname string) string {
-	if hostname != "" {
-		return status + " - " + hostname
+func torText(info HealthOverlayInfo) string {
+	line := info.Status
+	if info.Hostname != "" {
+		line += " - " + info.Hostname
 	}
-	return status
+	if info.State != "" && info.State != "disabled" {
+		line += " state=" + info.State
+	}
+	return line
 }
 
 func i2pText(info HealthI2PInfo) string {

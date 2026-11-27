@@ -13,8 +13,10 @@ import (
 
 var healthKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$`)
 
-type HealthCheckFunc func(context.Context) string
-type HealthStatFunc func() int64
+type (
+	HealthCheckFunc func(context.Context) string
+	HealthStatFunc  func() int64
+)
 
 type HealthCheck struct {
 	Key      string

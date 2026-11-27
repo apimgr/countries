@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"flag"
 	"log"
 	"net"
 	"os"
@@ -18,6 +19,41 @@ import (
 	"github.com/apimgr/countries/src/testutil"
 	"gopkg.in/yaml.v3"
 )
+
+func TestParseCLIFlagsBuildsRuntimeOptions(t *testing.T) {
+	previous := flag.CommandLine
+	t.Cleanup(func() { flag.CommandLine = previous })
+	options, err := ParseCLIFlags([]string{"--port", "8090", "--address", "127.0.0.1", "--debug", "--i2p=false", "--update", "yes", "email", "send"})
+	if err != nil {
+		t.Fatalf("ParseCLIFlags(): %v", err)
+	}
+	if !options.Parsed || options.Port != "8090" || options.Address != "127.0.0.1" || !options.Debug || !options.DebugSet || options.I2P || !options.I2PSet || !options.UpdateSet {
+		t.Fatalf("parsed command options = %+v", options)
+	}
+	if !reflect.DeepEqual(options.Args, []string{"yes", "email", "send"}) {
+		t.Fatalf("positional arguments = %#v, want [yes email send]", options.Args)
+	}
+}
+
+func TestLoadBuildsAggregateRuntimeConfigAndClassifiesFlagErrors(t *testing.T) {
+	previous := flag.CommandLine
+	t.Cleanup(func() { flag.CommandLine = previous })
+	cfg, err := Load([]string{"--config", testutil.TempDir(t), "--port", "8090"})
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if cfg.Server.Port != "8090" || !cfg.Command.Parsed || cfg.ConfigDir == "" {
+		t.Fatalf("loaded aggregate config = port %q, config dir %q, command %+v", cfg.Server.Port, cfg.ConfigDir, cfg.Command)
+	}
+	if _, err := ParseCLIFlags([]string{"--unknown-option"}); err == nil {
+		t.Fatal("ParseCLIFlags() accepted an unknown option")
+	} else {
+		var parseError *CLIFlagParseError
+		if !errors.As(err, &parseError) {
+			t.Fatalf("flag parse error = %T %v, want CLIFlagParseError", err, err)
+		}
+	}
+}
 
 // DefaultConfig must return the documented, safe-by-default values so a
 // fresh install works with zero configuration.
@@ -160,7 +196,7 @@ func TestConfiguredConnectionHelpers(t *testing.T) {
 func TestPersistConnectionSeeds(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "server.yml")
-	if err := os.WriteFile(configPath, []byte("server:\n  cache: {}\n"), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte("server:\n  cache: {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := persistConnectionSeed(configPath, "server.cache.url", "redis://cache.example", false); err != nil {
@@ -179,13 +215,13 @@ func TestPersistConnectionSeeds(t *testing.T) {
 		t.Fatalf("secrets.yml does not contain the saved token: %s (%v)", secretData, err)
 	}
 	info, err := os.Stat(secretPath)
-	if err != nil || info.Mode().Perm() != 0600 {
+	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("secrets.yml permissions = %v, %v; want 0600", info, err)
 	}
 	if err := persistConnectionSeed(filepath.Join(dir, "missing.yml"), "server.cache.url", "redis://cache.example", false); err == nil {
 		t.Fatal("persistConnectionSeed() accepted a missing config file")
 	}
-	if err := os.WriteFile(configPath, []byte("server: ["), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte("server: ["), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := persistConnectionSeed(configPath, "server.cache.url", "redis://cache.example", false); err == nil {
@@ -246,12 +282,12 @@ func TestLoadGeneratesWebhookSecretInPrivateSecretsFile(t *testing.T) {
 	directory := testutil.TempDir(t)
 	path := filepath.Join(directory, "server.yml")
 	contents := "server:\n  contact:\n    admin:\n      webhooks:\n        generic: https://hooks.example.test/notify\n"
-	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	secret := cfg.Server.Contact.Admin.WebhookSecrets["generic"]
 	if len(secret) < 40 {
@@ -261,7 +297,7 @@ func TestLoadGeneratesWebhookSecretInPrivateSecretsFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat secrets.yml: %v", err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if info.Mode().Perm() != 0o600 {
 		t.Errorf("secrets.yml mode = %04o, want 0600", info.Mode().Perm())
 	}
 	encoded, err := os.ReadFile(filepath.Join(directory, "secrets.yml"))
@@ -288,12 +324,12 @@ func TestLoadDNSCredentialsEncryptsAndMigratesToSecretsFile(t *testing.T) {
 	configPath := filepath.Join(dir, "server.yml")
 	secretsPath := filepath.Join(dir, "secrets.yml")
 	config := "server:\n  ssl:\n    enabled: true\n    letsencrypt:\n      enabled: true\n      challenge: dns-01\n      dns_provider: cloudflare\n      dns_credentials:\n        CF_DNS_API_TOKEN: operator-secret-value\n"
-	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(configPath)
+	cfg, err := LoadConfigFromFile(configPath)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	if !cfg.Server.SSL.Enabled || !cfg.Server.SSL.LetsEncrypt.Enabled || cfg.Server.SSL.LetsEncrypt.Challenge != "dns-01" || cfg.Server.SSL.LetsEncrypt.DNSProvider != "cloudflare" {
 		t.Fatalf("server.ssl settings = %+v", cfg.Server.SSL)
@@ -332,23 +368,23 @@ func TestLoadDNSCredentialsEncryptsAndMigratesToSecretsFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat secrets.yml: %v", err)
 	}
-	if secretInfo.Mode().Perm() != 0600 {
+	if secretInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("secrets.yml mode = %o, want 0600", secretInfo.Mode().Perm())
 	}
-	cfg, err = Load(configPath)
+	cfg, err = LoadConfigFromFile(configPath)
 	if err != nil {
-		t.Fatalf("Load() after migration error = %v", err)
+		t.Fatalf("LoadConfigFromFile() after migration error = %v", err)
 	}
 	if cfg.Server.SSL.LetsEncrypt.DNSCredentials["CF_DNS_API_TOKEN"] != "operator-secret-value" {
 		t.Fatal("encrypted DNS credential did not decrypt on reload")
 	}
 	updatedConfig := "server:\n  ssl:\n    letsencrypt:\n      dns_credentials:\n        CF_DNS_API_TOKEN: replacement-secret-value\n"
-	if err := os.WriteFile(configPath, []byte(updatedConfig), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte(updatedConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err = Load(configPath)
+	cfg, err = LoadConfigFromFile(configPath)
 	if err != nil {
-		t.Fatalf("Load() after credential update error = %v", err)
+		t.Fatalf("LoadConfigFromFile() after credential update error = %v", err)
 	}
 	if cfg.Server.SSL.LetsEncrypt.DNSCredentials["CF_DNS_API_TOKEN"] != "replacement-secret-value" {
 		t.Fatal("updated plaintext DNS credential did not replace the stored value")
@@ -357,12 +393,12 @@ func TestLoadDNSCredentialsEncryptsAndMigratesToSecretsFile(t *testing.T) {
 
 func TestLoadHealthzRootAliasConfiguration(t *testing.T) {
 	path := filepath.Join(testutil.TempDir(t), "server.yml")
-	if err := os.WriteFile(path, []byte("server:\n  healthz:\n    root:\n      enabled: true\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("server:\n  healthz:\n    root:\n      enabled: true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	if !cfg.Server.Healthz.Root.Enabled {
 		t.Error("server.healthz.root.enabled = false, want true")
@@ -379,12 +415,12 @@ func TestLoadNotificationConfiguration(t *testing.T) {
 	t.Setenv("SMTP_FROM_EMAIL", "mail@example.test")
 	path := filepath.Join(testutil.TempDir(t), "server.yml")
 	contents := "server:\n  notifications:\n    webui:\n      position: bottom-left\n      duration: 4\n      warning_duration: 8\n    email:\n      smtp:\n        host: relay.example.test\n        port: 2525\n        tls: starttls\n      from:\n        name: Countries\n        email: mail@example.test\n      reply_to: support@example.test\n      events:\n        startup: true\n    database_error:\n      enabled: false\n      failures: 5\n      check_interval: 2m\n      repeat: 12h\n    disk_low:\n      enabled: false\n      threshold_percent: 90\n      check_interval: 10m\n      repeat: 12h\n"
-	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	got := cfg.Server.Notifications
 	if got.WebUI != (NotificationWebUIConfig{Position: "bottom-left", Duration: 4, WarningDuration: 8}) {
@@ -407,24 +443,24 @@ func TestLoadNotificationConfiguration(t *testing.T) {
 func TestLoadI18NConfigurationAndInvalidFallback(t *testing.T) {
 	path := filepath.Join(testutil.TempDir(t), "server.yml")
 	contents := "server:\n  i18n:\n    default_language: de\n    available_languages: [en, es, fr, de, it, ar]\n"
-	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	if cfg.Server.I18N.DefaultLanguage != "de" || strings.Join(cfg.Server.I18N.AvailableLanguages, ",") != "en,es,fr,de,it,ar" {
 		t.Fatalf("server.i18n = %+v", cfg.Server.I18N)
 	}
 
 	contents = "server:\n  i18n:\n    default_language: xx\n    available_languages: [en, es, fr, de, it, xx]\n"
-	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err = Load(path)
+	cfg, err = LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() with invalid i18n settings error = %v", err)
+		t.Fatalf("LoadConfigFromFile() with invalid i18n settings error = %v", err)
 	}
 	if cfg.Server.I18N.DefaultLanguage != "en" || strings.Join(cfg.Server.I18N.AvailableLanguages, ",") != strings.Join(i18n.Languages(), ",") {
 		t.Fatalf("invalid server.i18n settings were not replaced by defaults: %+v", cfg.Server.I18N)
@@ -434,24 +470,24 @@ func TestLoadI18NConfigurationAndInvalidFallback(t *testing.T) {
 func TestLoadClearSiteDataBooleanConfiguration(t *testing.T) {
 	path := filepath.Join(testutil.TempDir(t), "server.yml")
 	contents := "web:\n  headers:\n    clear_site_data:\n      on_token_revocation: yes\n      on_consent_withdrawal: no\n      execution_contexts: enabled\n"
-	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	got := cfg.Web.Headers.ClearSiteData
 	if !got.OnTokenRevocation || got.OnConsentWithdrawal || !got.ExecutionContexts {
 		t.Fatalf("Clear-Site-Data settings = %+v", got)
 	}
 
-	if err := os.WriteFile(path, []byte("web:\n  headers:\n    clear_site_data:\n      on_token_revocation: no\n      on_consent_withdrawal: sometimes\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("web:\n  headers:\n    clear_site_data:\n      on_token_revocation: no\n      on_consent_withdrawal: sometimes\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err = Load(path)
+	cfg, err = LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() with invalid Clear-Site-Data boolean error = %v, want last good config", err)
+		t.Fatalf("LoadConfigFromFile() with invalid Clear-Site-Data boolean error = %v, want last good config", err)
 	}
 	if !cfg.Web.Headers.ClearSiteData.OnConsentWithdrawal {
 		t.Fatal("invalid boolean did not reset to its built-in default")
@@ -464,12 +500,12 @@ func TestLoadClearSiteDataBooleanConfiguration(t *testing.T) {
 func TestLoadTokenConfigurationAndValidation(t *testing.T) {
 	path := filepath.Join(testutil.TempDir(t), "server.yml")
 	contents := "server:\n  tokens:\n    max_linked: 7\n    cookie_max_age: 30d\n    idle_purge_days: 90\n  rate_limit:\n    strict:\n      requests: 12\n      window: 1200\n    auth_failures:\n      requests: 8\n      window: 600\n"
-	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	if cfg.Server.Tokens.MaxLinked != 7 || cfg.Server.Tokens.CookieMaxAgeSeconds() != 30*24*60*60 || cfg.Server.Tokens.IdlePurgeDays != 90 {
 		t.Errorf("token settings = %+v", cfg.Server.Tokens)
@@ -478,12 +514,12 @@ func TestLoadTokenConfigurationAndValidation(t *testing.T) {
 		t.Errorf("strict/auth-failure settings = %+v", cfg.Server.RateLimit)
 	}
 
-	if err := os.WriteFile(path, []byte("server:\n  tokens:\n    max_linked: 0\n    cookie_max_age: never\n    idle_purge_days: -1\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("server:\n  tokens:\n    max_linked: 0\n    cookie_max_age: never\n    idle_purge_days: -1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err = Load(path)
+	cfg, err = LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() invalid settings error = %v", err)
+		t.Fatalf("LoadConfigFromFile() invalid settings error = %v", err)
 	}
 	defaults := DefaultConfig().Server.Tokens
 	if cfg.Server.Tokens != defaults {
@@ -495,12 +531,12 @@ func TestLoadGeoIPConfigurationNormalizesCountryCodes(t *testing.T) {
 	dir := testutil.TempDir(t)
 	path := filepath.Join(dir, "server.yml")
 	contents := "server:\n  geoip:\n    enabled: false\n    deny_countries: [ cn, RU, invalid ]\n    allow_countries: [us, CA]\n    presets:\n      europe: [de, fr]\n"
-	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error: %v", err)
+		t.Fatalf("LoadConfigFromFile() error: %v", err)
 	}
 	if cfg.Server.GeoIP.Enabled {
 		t.Error("GeoIP.Enabled = true, want false")
@@ -519,22 +555,22 @@ func TestLoadGeoIPConfigurationNormalizesCountryCodes(t *testing.T) {
 func TestLoadSecurityAllowlistNormalizesAddressesAndRejectsInvalidEntries(t *testing.T) {
 	dir := testutil.TempDir(t)
 	path := filepath.Join(dir, "server.yml")
-	if err := os.WriteFile(path, []byte("server:\n  security:\n    allowlist:\n      - cidr: 192.0.2.10\n        description: monitoring\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("server:\n  security:\n    allowlist:\n      - cidr: 192.0.2.10\n        description: monitoring\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error: %v", err)
+		t.Fatalf("LoadConfigFromFile() error: %v", err)
 	}
 	if got := cfg.Server.Security.Allowlist[0].CIDR; got != "192.0.2.10/32" {
 		t.Errorf("normalized CIDR = %q, want 192.0.2.10/32", got)
 	}
-	if err := os.WriteFile(path, []byte("server:\n  security:\n    allowlist:\n      - cidr: invalid\n        description: invalid entry\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("server:\n  security:\n    allowlist:\n      - cidr: invalid\n        description: invalid entry\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err = Load(path)
+	cfg, err = LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() invalid allowlist error = %v, want safe defaults", err)
+		t.Fatalf("LoadConfigFromFile() invalid allowlist error = %v, want safe defaults", err)
 	}
 	if len(cfg.Server.Security.Allowlist) != 0 {
 		t.Fatalf("invalid allowlist = %+v, want the default empty allowlist", cfg.Server.Security.Allowlist)
@@ -545,12 +581,12 @@ func TestSchedulerConfigValidatesSchedulesAndCriticalTaskSwitches(t *testing.T) 
 	dir := testutil.TempDir(t)
 	path := filepath.Join(dir, "server.yml")
 	contents := "server:\n  scheduler:\n    timezone: America/New_York\n    catch_up_window: 30m\n    tasks:\n      geoip_update:\n        enabled: false\n        schedule: invalid\n      healthcheck_self:\n        enabled: false\n"
-	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error: %v", err)
+		t.Fatalf("LoadConfigFromFile() error: %v", err)
 	}
 	if cfg.Server.Scheduler.Tasks["geoip_update"].Enabled || cfg.Server.Scheduler.Tasks["geoip_update"].Schedule != "0 3 * * 0" {
 		t.Errorf("GeoIP scheduler task = %+v, want disabled with default valid schedule", cfg.Server.Scheduler.Tasks["geoip_update"])
@@ -564,12 +600,12 @@ func TestLoadMetricsConfigurationAndSecretTokens(t *testing.T) {
 	dir := testutil.TempDir(t)
 	path := filepath.Join(dir, "server.yml")
 	contents := "server:\n  metrics:\n    enabled: true\n    root:\n      enabled: false\n    auth:\n      allow_unauthenticated: false\n      tokens:\n        prometheus: operator-prometheus-token\n    include_system: false\n    include_runtime: true\n    loki:\n      max_entries: 25\n      max_age: 30m\n    duration_buckets: [0.1, 1]\n    size_buckets: [512, 1024]\n"
-	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error: %v", err)
+		t.Fatalf("LoadConfigFromFile() error: %v", err)
 	}
 	if !cfg.Server.Metrics.Enabled || cfg.Server.Metrics.Root.Enabled || cfg.Server.Metrics.Auth.AllowUnauthenticated {
 		t.Fatalf("metrics switches = %+v, want root and unauthenticated access disabled", cfg.Server.Metrics)
@@ -610,7 +646,7 @@ func TestLoadMetricsConfigurationAndSecretTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if secretInfo.Mode().Perm() != 0600 {
+	if secretInfo.Mode().Perm() != 0o600 {
 		t.Errorf("secrets.yml permissions = %04o, want 0600", secretInfo.Mode().Perm())
 	}
 }
@@ -618,16 +654,16 @@ func TestLoadMetricsConfigurationAndSecretTokens(t *testing.T) {
 func TestLoadMetricsSecretsWinAndAreNotRewrittenToServerYML(t *testing.T) {
 	dir := testutil.TempDir(t)
 	path := filepath.Join(dir, "server.yml")
-	if err := os.WriteFile(path, []byte("server:\n  metrics:\n    auth:\n      tokens:\n        prometheus: stale-config-token\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("server:\n  metrics:\n    auth:\n      tokens:\n        prometheus: stale-config-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	secrets := filepath.Join(dir, "secrets.yml")
-	if err := os.WriteFile(secrets, []byte("server:\n  security:\n    encryption_key: "+base64.StdEncoding.EncodeToString(make([]byte, 32))+"\n  metrics:\n    auth:\n      tokens:\n        prometheus: persisted-prometheus-token\n"), 0600); err != nil {
+	if err := os.WriteFile(secrets, []byte("server:\n  security:\n    encryption_key: "+base64.StdEncoding.EncodeToString(make([]byte, 32))+"\n  metrics:\n    auth:\n      tokens:\n        prometheus: persisted-prometheus-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error: %v", err)
+		t.Fatalf("LoadConfigFromFile() error: %v", err)
 	}
 	if cfg.Server.Metrics.Auth.Tokens.Prometheus != "persisted-prometheus-token" {
 		t.Errorf("prometheus token = %q, want secret-file value", cfg.Server.Metrics.Auth.Tokens.Prometheus)
@@ -644,12 +680,12 @@ func TestLoadMetricsSecretsWinAndAreNotRewrittenToServerYML(t *testing.T) {
 func TestLoadReplacesInvalidRateLimitValues(t *testing.T) {
 	path := filepath.Join(testutil.TempDir(t), "server.yml")
 	contents := "server:\n  rate_limit:\n    read:\n      requests: 0\n      window: -1\n    global_burst: 0\n"
-	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	defaults := DefaultConfig().Server.RateLimit
 	if cfg.Server.RateLimit.Read != defaults.Read || cfg.Server.RateLimit.GlobalBurst != defaults.GlobalBurst {
@@ -659,12 +695,12 @@ func TestLoadReplacesInvalidRateLimitValues(t *testing.T) {
 
 func TestLoadNormalizesUpdateChannelAndDeferral(t *testing.T) {
 	path := filepath.Join(testutil.TempDir(t), "server.yml")
-	if err := os.WriteFile(path, []byte("server:\n  update:\n    branch: daily\n    defer_days: 400\n    cli_min_version: ' 1.2.3 '\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("server:\n  update:\n    branch: daily\n    defer_days: 400\n    cli_min_version: ' 1.2.3 '\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	if cfg.Server.Update.Branch != "devel" || cfg.Server.Update.DeferDays != 0 || cfg.Server.Update.CLIMinVersion != "1.2.3" {
 		t.Fatalf("update config = %+v, want normalized channel, deferral, and minimum version", cfg.Server.Update)
@@ -711,12 +747,12 @@ func TestParseBoolOrDefaultUsesFallbackForInvalidConfiguration(t *testing.T) {
 func TestLoadParsesFlexibleBooleanValues(t *testing.T) {
 	path := filepath.Join(testutil.TempDir(t), "server.yml")
 	contents := "server:\n  metrics:\n    enabled: enable\nweb-ui:\n  notifications:\n    enabled: off\n"
-	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	if !cfg.Server.Metrics.Enabled || cfg.WebUI.Notifications.Enabled {
 		t.Fatalf("flexible booleans were not parsed: metrics=%t notifications=%t", cfg.Server.Metrics.Enabled, cfg.WebUI.Notifications.Enabled)
@@ -725,12 +761,12 @@ func TestLoadParsesFlexibleBooleanValues(t *testing.T) {
 
 func TestRateLimitsCannotBeDisabledByConfiguration(t *testing.T) {
 	path := filepath.Join(testutil.TempDir(t), "server.yml")
-	if err := os.WriteFile(path, []byte("server:\n  rate_limit:\n    enabled: false\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("server:\n  rate_limit:\n    enabled: false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	if cfg.Server.RateLimit.Read.Requests < 1 || cfg.Server.RateLimit.Strict.Requests < 1 || cfg.Server.RateLimit.GlobalBurst < 1 {
 		t.Fatalf("obsolete enabled setting disabled mandatory request limits: %+v", cfg.Server.RateLimit)
@@ -744,51 +780,51 @@ func TestLoad_CreatesDefaultWhenMissing(t *testing.T) {
 	path := filepath.Join(dir, "config.yml")
 	t.Setenv("PORT", "")
 
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() unexpected error: %v", err)
+		t.Fatalf("LoadConfigFromFile() unexpected error: %v", err)
 	}
 	if runningInContainer() {
 		if cfg.Server.Port != "80" {
-			t.Errorf("Load() returned Port = %q, want container default 80", cfg.Server.Port)
+			t.Errorf("LoadConfigFromFile() returned Port = %q, want container default 80", cfg.Server.Port)
 		}
 	} else if port, parseErr := strconv.Atoi(cfg.Server.Port); parseErr != nil || port < 64000 || port > 64999 {
-		t.Errorf("Load() returned Port = %q, want an available port from 64000-64999", cfg.Server.Port)
+		t.Errorf("LoadConfigFromFile() returned Port = %q, want an available port from 64000-64999", cfg.Server.Port)
 	}
 
 	if _, err := os.Stat(path); err != nil {
-		t.Errorf("expected Load() to create %q: %v", path, err)
+		t.Errorf("expected LoadConfigFromFile() to create %q: %v", path, err)
 	}
 }
 
 func TestLoad_FirstRunUsesPortEnvironment(t *testing.T) {
 	t.Setenv("PORT", "64567")
 	path := filepath.Join(testutil.TempDir(t), "server.yml")
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	if cfg.Server.Port != "64567" {
-		t.Fatalf("Load() port = %q, want PORT value 64567", cfg.Server.Port)
+		t.Fatalf("LoadConfigFromFile() port = %q, want PORT value 64567", cfg.Server.Port)
 	}
 }
 
 func TestLoad_ConfigWithoutPortSelectsAndPersistsDefault(t *testing.T) {
 	t.Setenv("PORT", "")
 	path := filepath.Join(testutil.TempDir(t), "server.yml")
-	if err := os.WriteFile(path, []byte("server:\n  address: 127.0.0.1\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("server:\n  address: 127.0.0.1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	if runningInContainer() {
 		if cfg.Server.Port != "80" {
-			t.Fatalf("Load() port = %q, want container default 80", cfg.Server.Port)
+			t.Fatalf("LoadConfigFromFile() port = %q, want container default 80", cfg.Server.Port)
 		}
 	} else if port, parseErr := strconv.Atoi(cfg.Server.Port); parseErr != nil || port < 64000 || port > 64999 {
-		t.Fatalf("Load() port = %q, want an available port from 64000-64999", cfg.Server.Port)
+		t.Fatalf("LoadConfigFromFile() port = %q, want an available port from 64000-64999", cfg.Server.Port)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -851,9 +887,9 @@ func TestLoad_RoundTrip(t *testing.T) {
 		t.Fatalf("Save() error: %v", err)
 	}
 
-	loaded, err := Load(path)
+	loaded, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error: %v", err)
+		t.Fatalf("LoadConfigFromFile() error: %v", err)
 	}
 	if loaded.Server.Port != "9999" {
 		t.Errorf("loaded Server.Port = %q, want 9999", loaded.Server.Port)
@@ -924,12 +960,12 @@ func TestLoadPrivacyConfiguration(t *testing.T) {
       analytics:
         description: Custom analytics description
 `
-	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	privacy := cfg.Server.Privacy
 	if !privacy.Data.Sold || !privacy.Data.StoredOnServer || len(privacy.Data.Sharing) != 1 {
@@ -954,7 +990,7 @@ func TestLoadPrivacyConfiguration(t *testing.T) {
 func TestLoadBrandingDropIn(t *testing.T) {
 	directory := testutil.TempDir(t)
 	dropIn := filepath.Join(directory, "yaml.d")
-	if err := os.Mkdir(dropIn, 0755); err != nil {
+	if err := os.Mkdir(dropIn, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	brandingPath := filepath.Join(dropIn, "branding.yml")
@@ -980,12 +1016,12 @@ web:
     theme: light
     accent: '#336699'
 `
-	if err := os.WriteFile(brandingPath, []byte(contents), 0644); err != nil {
+	if err := os.WriteFile(brandingPath, []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(filepath.Join(directory, "server.yml"))
+	cfg, err := LoadConfigFromFile(filepath.Join(directory, "server.yml"))
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	if cfg.Server.Branding.Title != "Countries Service" || cfg.Server.Branding.Content["about"].Format != "md" {
 		t.Fatalf("branding config = %+v", cfg.Server.Branding)
@@ -1004,14 +1040,14 @@ web:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fileInfo.Mode().Perm() != 0600 {
+	if fileInfo.Mode().Perm() != 0o600 {
 		t.Errorf("branding file mode = %04o, want 0600", fileInfo.Mode().Perm())
 	}
 	directoryInfo, err := os.Stat(dropIn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if directoryInfo.Mode().Perm() != 0700 {
+	if directoryInfo.Mode().Perm() != 0o700 {
 		t.Errorf("yaml.d mode = %04o, want 0700", directoryInfo.Mode().Perm())
 	}
 	serverYML, err := os.ReadFile(filepath.Join(directory, "server.yml"))
@@ -1029,32 +1065,32 @@ func TestLoad_MalformedYAMLUsesDefaults(t *testing.T) {
 	dir := testutil.TempDir(t)
 	path := filepath.Join(dir, "config.yml")
 
-	if err := os.WriteFile(path, []byte("server: [this is not: valid: yaml"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("server: [this is not: valid: yaml"), 0o644); err != nil {
 		t.Fatalf("failed to write fixture: %v", err)
 	}
 
-	cfg, err := Load(path)
+	cfg, err := LoadConfigFromFile(path)
 	if err != nil {
-		t.Fatalf("Load() with malformed YAML error = %v, want safe defaults", err)
+		t.Fatalf("LoadConfigFromFile() with malformed YAML error = %v, want safe defaults", err)
 	}
 	if cfg.Server.Mode != "production" || cfg.Server.Port == "" {
-		t.Errorf("Load() malformed YAML config = %+v, want usable defaults", cfg.Server)
+		t.Errorf("LoadConfigFromFile() malformed YAML config = %+v, want usable defaults", cfg.Server)
 	}
 }
 
 func TestLoadSecretsKeepsCredentialsOutOfServerConfig(t *testing.T) {
 	dir := testutil.TempDir(t)
 	configPath := filepath.Join(dir, "server.yml")
-	if err := os.WriteFile(filepath.Join(dir, "secrets.yml"), []byte("server:\n  notifications:\n    email:\n      smtp:\n        password: private-value\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "secrets.yml"), []byte("server:\n  notifications:\n    email:\n      smtp:\n        password: private-value\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var logs bytes.Buffer
 	previousOutput := log.Writer()
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(previousOutput) })
-	cfg, err := Load(configPath)
+	cfg, err := LoadConfigFromFile(configPath)
 	if err != nil {
-		t.Fatalf("Load(): %v", err)
+		t.Fatalf("LoadConfigFromFile(): %v", err)
 	}
 	if cfg.Server.Notifications.Email.SMTP.Password != "private-value" {
 		t.Fatalf("SMTP password was not loaded from secrets.yml")
@@ -1076,7 +1112,7 @@ func TestLoadSecretsKeepsCredentialsOutOfServerConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if secretInfo.Mode().Perm() != 0600 {
+	if secretInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("secrets.yml mode=%04o, want 0600", secretInfo.Mode().Perm())
 	}
 	secretContents, err := os.ReadFile(filepath.Join(dir, "secrets.yml"))
@@ -1095,12 +1131,12 @@ func TestLoadMovesOperatorTokenFromServerConfigToSecrets(t *testing.T) {
 	directory := testutil.TempDir(t)
 	configPath := filepath.Join(directory, "server.yml")
 	operatorToken := "adm_" + strings.Repeat("A", 32)
-	if err := os.WriteFile(configPath, []byte("server:\n  token: "+operatorToken+"\n"), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte("server:\n  token: "+operatorToken+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(configPath)
+	cfg, err := LoadConfigFromFile(configPath)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadConfigFromFile() error = %v", err)
 	}
 	if cfg.Server.Token != operatorToken {
 		t.Fatal("operator token was not retained from server.yml")
@@ -1171,16 +1207,16 @@ func TestMigrateConfigLayoutSplitsAreasAndSecrets(t *testing.T) {
 	_ = ConsumeLegacyApplicationSecrets()
 	dir := testutil.TempDir(t)
 	path := filepath.Join(dir, "server.yml")
-	if err := os.Mkdir(filepath.Join(dir, "yaml.d"), 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(dir, "yaml.d"), 0o700); err != nil {
 		t.Fatalf("create yaml.d: %v", err)
 	}
-	if err := os.WriteFile(path, []byte("server:\n  port: \"64502\"\n  database:\n    driver: sqlite\n  token: from-server\n  security:\n    encryption_key: from-server-key\n    installation_secret: legacy-app-secret\n  branding:\n    title: Migrated title\n    description: Migrated description\n  notifications:\n    email:\n      smtp:\n        password: smtp-secret\n  pages:\n    help:\n      enabled: true\nweb-ui:\n  theme: light\nweb:\n  api_contact: api@example.test\ndata:\n  cve:\n    api_key: cve-secret\ncustom:\n  enabled: true\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("server:\n  port: \"64502\"\n  database:\n    driver: sqlite\n  token: from-server\n  security:\n    encryption_key: from-server-key\n    installation_secret: legacy-app-secret\n  branding:\n    title: Migrated title\n    description: Migrated description\n  notifications:\n    email:\n      smtp:\n        password: smtp-secret\n  pages:\n    help:\n      enabled: true\nweb-ui:\n  theme: light\nweb:\n  api_contact: api@example.test\ndata:\n  cve:\n    api_key: cve-secret\ncustom:\n  enabled: true\n"), 0o600); err != nil {
 		t.Fatalf("write server.yml: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "yaml.d", "branding.yml"), []byte("server:\n  branding:\n    title: Existing title\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "yaml.d", "branding.yml"), []byte("server:\n  branding:\n    title: Existing title\n"), 0o600); err != nil {
 		t.Fatalf("write existing branding drop-in: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "secrets.yml"), []byte("server:\n  token: existing-token\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "secrets.yml"), []byte("server:\n  token: existing-token\n"), 0o600); err != nil {
 		t.Fatalf("write existing secrets: %v", err)
 	}
 	if err := migrateConfigLayout(path); err != nil {
@@ -1228,7 +1264,7 @@ func TestMigrateConfigLayoutSplitsAreasAndSecrets(t *testing.T) {
 
 func TestSaveUsesRestrictivePermissions(t *testing.T) {
 	path := filepath.Join(testutil.TempDir(t), "server.yml")
-	if err := os.WriteFile(path, []byte("existing"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("existing"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := Save(path, DefaultConfig()); err != nil {
@@ -1238,7 +1274,7 @@ func TestSaveUsesRestrictivePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if info.Mode().Perm() != 0o600 {
 		t.Errorf("config permissions = %04o, want 0600", info.Mode().Perm())
 	}
 }
@@ -1251,7 +1287,7 @@ func TestMigrateYamlToYml_RenamesWhenYmlMissing(t *testing.T) {
 	ymlPath := filepath.Join(dir, "config.yml")
 	yamlPath := filepath.Join(dir, "config.yaml")
 
-	if err := os.WriteFile(yamlPath, []byte("server:\n  port: \"1234\"\n"), 0644); err != nil {
+	if err := os.WriteFile(yamlPath, []byte("server:\n  port: \"1234\"\n"), 0o644); err != nil {
 		t.Fatalf("failed to write fixture: %v", err)
 	}
 
@@ -1272,10 +1308,10 @@ func TestMigrateYamlToYml_DoesNotOverwriteExistingYml(t *testing.T) {
 	ymlPath := filepath.Join(dir, "config.yml")
 	yamlPath := filepath.Join(dir, "config.yaml")
 
-	if err := os.WriteFile(ymlPath, []byte("new"), 0644); err != nil {
+	if err := os.WriteFile(ymlPath, []byte("new"), 0o644); err != nil {
 		t.Fatalf("failed to write fixture: %v", err)
 	}
-	if err := os.WriteFile(yamlPath, []byte("old"), 0644); err != nil {
+	if err := os.WriteFile(yamlPath, []byte("old"), 0o644); err != nil {
 		t.Fatalf("failed to write fixture: %v", err)
 	}
 

@@ -82,6 +82,37 @@ func TestSpecDocumentsPrimaryTokenRevocation(t *testing.T) {
 	}
 }
 
+func TestSpecTokenManagementScopeAndRequestContract(t *testing.T) {
+	router := chi.NewRouter()
+	router.Post("/api/v1/server/preferences/tokens/primary", http.NotFound)
+	router.Delete("/api/v1/server/preferences/tokens/primary", http.NotFound)
+	router.Get("/api/v1/server/preferences/tokens", http.NotFound)
+	router.Post("/api/v1/server/preferences/tokens", http.NotFound)
+	spec, err := Spec("1.0.0", router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := spec["paths"].(map[string]interface{})
+	primary := paths["/api/v1/server/preferences/tokens/primary"].(map[string]interface{})
+	if _, exists := primary["post"].(map[string]interface{})["security"]; exists {
+		t.Fatal("primary token issuance must not require a bearer token")
+	}
+	if _, exists := primary["delete"].(map[string]interface{})["security"]; !exists {
+		t.Fatal("primary token revocation must require a bearer token")
+	}
+	linked := paths["/api/v1/server/preferences/tokens"].(map[string]interface{})
+	create := linked["post"].(map[string]interface{})
+	body := create["requestBody"].(map[string]interface{})["content"].(map[string]interface{})["application/json"].(map[string]interface{})["schema"].(map[string]interface{})
+	properties := body["properties"].(map[string]interface{})
+	scope := properties["scope"].(map[string]interface{})
+	if got := scope["enum"].([]string); len(got) != 2 || got[0] != "read" || got[1] != "read-write" {
+		t.Fatalf("linked token scope schema = %#v", scope)
+	}
+	if _, exists := linked["get"].(map[string]interface{})["security"]; !exists {
+		t.Fatal("token listing must require a bearer token")
+	}
+}
+
 func TestSpecPathsComeFromRegisteredRoutes(t *testing.T) {
 	router := chi.NewRouter()
 	router.Get("/api/v1/countries", http.NotFound)

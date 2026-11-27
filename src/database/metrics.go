@@ -21,8 +21,10 @@ type MetricsObserver interface {
 	ObserveDB(operation, table string, duration time.Duration, errorType string)
 }
 
-type databaseBusyMetrics interface{ RecordDatabaseBusyRetry() }
-type databaseWriteWaitMetrics interface{ ObserveDatabaseWriteWait(time.Duration) }
+type (
+	databaseBusyMetrics      interface{ RecordDatabaseBusyRetry() }
+	databaseWriteWaitMetrics interface{ ObserveDatabaseWriteWait(time.Duration) }
+)
 
 func recordBusyRetry() {
 	observerState.RLock()
@@ -211,6 +213,7 @@ func (tx instrumentedTx) Commit() error {
 	}
 	return err
 }
+
 func (tx instrumentedTx) Rollback() error {
 	err := tx.Tx.Rollback()
 	if tx.active != nil {

@@ -30,8 +30,10 @@ type DiskUsage struct {
 	TotalBytes uint64
 }
 
-type DiskUsageFunc func(path string) (DiskUsage, error)
-type CreateFunc func(context.Context, string, Options) (Result, error)
+type (
+	DiskUsageFunc func(path string) (DiskUsage, error)
+	CreateFunc    func(context.Context, string, Options) (Result, error)
+)
 
 type RetentionPolicy struct {
 	MaxBackups   int
@@ -213,9 +215,9 @@ func (s *Scheduler) RunDaily(ctx context.Context) (ScheduleResult, error) {
 
 // EnsureBackupDir creates and secures the configured backup directory and verifies it is writable.
 func EnsureBackupDir(path string) error {
-	mode := os.FileMode(0700)
+	mode := os.FileMode(0o700)
 	if privilege.IsElevated() {
-		mode = 0755
+		mode = 0o755
 	}
 	if err := paths.EnsureDir(path); err != nil {
 		return backupDirectoryError(path, mode, err)

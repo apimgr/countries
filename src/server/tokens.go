@@ -19,7 +19,10 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-const ownerTokenCookieName = "countries_owner_token_gId2fHet"
+const (
+	ownerTokenCookieName = "countries_owner_token_gId2fHet"
+	tokenViewCookieName  = "countries_token_view"
+)
 
 type tokenPageItem struct {
 	Record      database.TokenRecord
@@ -48,11 +51,12 @@ func (s *Server) handleTokensAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	identity, err := s.tokenIdentity(r, true, w)
 	if err != nil {
+		setBearerChallenge(w, bearerValue(r) != "")
 		s.tokenAPIError(w, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "A valid primary owner token is required")
 		return
 	}
-	if identity.Kind != "primary" {
-		s.tokenAPIError(w, http.StatusForbidden, "PRIMARY_TOKEN_REQUIRED", "Token management requires the primary owner token")
+	if identity.Kind != "primary" || identity.Scope != "global" {
+		s.tokenInsufficientScope(w, "Token management requires a primary owner token with global scope")
 		return
 	}
 	items, err := database.ListOwnerTokens(r.Context(), s.db, identity.OwnerID)
@@ -119,14 +123,8 @@ func (s *Server) handleIssueOwnerToken(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, map[string]interface{}{"ok": true, "data": map[string]interface{}{"owner_token": raw}})
 		return
 	}
-	data, _, ok := s.tokensPageDataForIdentity(w, r, database.TokenIdentity{OwnerID: item.OwnerID, Kind: "primary"})
-	if !ok {
-		return
-	}
-	data["RevealedTokenID"] = item.ID
-	data["RevealedToken"] = raw
-	data["NoticeKey"] = "tokens.create_success"
-	s.renderTokenPage(w, r, data, http.StatusCreated)
+	s.setTokenViewCookie(w, r, "primary")
+	s.tokenPageRedirect(w, r, "status=created#primary")
 }
 
 func (s *Server) validOperatorToken(raw string) bool {
@@ -148,6 +146,51 @@ func (s *Server) validOperatorToken(raw string) bool {
 		s.metrics.RecordAuth("bearer", status)
 	}
 	return valid
+}
+
+func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	token := bearerValue(r)
+	if token == "" {
+		s.authCheckUnauthorized(w, false)
+		return
+	}
+	if s.validOperatorToken(token) {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": map[string]string{"kind": "operator"}})
+		return
+	}
+	if s.db == nil {
+		s.tokenAPIError(w, http.StatusServiceUnavailable, "TOKEN_STORE_UNAVAILABLE", "Token data is temporarily unavailable")
+		return
+	}
+	_, err := database.CheckOwnerToken(r.Context(), s.db, token, time.Now())
+	if errors.Is(err, database.ErrTokenNotFound) {
+		s.authCheckUnauthorized(w, true)
+		return
+	}
+	if err != nil {
+		s.tokenAPIError(w, http.StatusServiceUnavailable, "TOKEN_STORE_UNAVAILABLE", "Token data is temporarily unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": map[string]string{"kind": "owner"}})
+}
+
+func (s *Server) authCheckUnauthorized(w http.ResponseWriter, invalid bool) {
+	setBearerChallenge(w, invalid)
+	s.tokenAPIError(w, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "A valid bearer token is required")
+}
+
+func setBearerChallenge(w http.ResponseWriter, invalid bool) {
+	if invalid {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="countries", error="invalid_token"`)
+		return
+	}
+	w.Header().Set("WWW-Authenticate", `Bearer realm="countries"`)
+}
+
+func (s *Server) tokenInsufficientScope(w http.ResponseWriter, message string) {
+	w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope"`)
+	s.tokenAPIError(w, http.StatusForbidden, "INSUFFICIENT_SCOPE", message)
 }
 
 func (s *Server) handleRestoreOwnerToken(w http.ResponseWriter, r *http.Request) {
@@ -217,16 +260,17 @@ func (s *Server) handleRevealToken(w http.ResponseWriter, r *http.Request, token
 	}
 	s.auditTokenEvent(r, "token.revealed", identity.OwnerID, item.Prefix, "reveal")
 	if isAPI {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": map[string]interface{}{"token": raw, "id": item.ID}})
+		data := tokenAPIObject(item, time.Now())
+		data[linkedTokenResponseField(primary)] = raw
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": data})
 		return
 	}
-	data, _, ok := s.tokensPageDataForIdentity(w, r, identity)
-	if !ok {
-		return
+	s.setTokenViewCookie(w, r, item.ID)
+	anchor := "#token-" + item.ID
+	if primary {
+		anchor = "#primary"
 	}
-	data["RevealedTokenID"] = item.ID
-	data["RevealedToken"] = raw
-	s.renderTokenPage(w, r, data, http.StatusOK)
+	s.tokenPageRedirect(w, r, anchor)
 }
 
 func (s *Server) handleRotatePrimaryToken(w http.ResponseWriter, r *http.Request) {
@@ -277,21 +321,17 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request, token
 		s.setOwnerTokenCookie(w, r, raw)
 	}
 	if isAPI {
-		field := "token"
-		if primary {
-			field = "owner_token"
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": map[string]interface{}{field: raw, "id": item.ID}})
+		data := tokenAPIObject(item, time.Now())
+		data[linkedTokenResponseField(primary)] = raw
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": data})
 		return
 	}
-	data, _, ok := s.tokensPageDataForIdentity(w, r, identity)
-	if !ok {
-		return
+	s.setTokenViewCookie(w, r, item.ID)
+	anchor := "#token-" + item.ID
+	if primary {
+		anchor = "#primary"
 	}
-	data["RevealedTokenID"] = item.ID
-	data["RevealedToken"] = raw
-	data["NoticeKey"] = "tokens.rotate_success"
-	s.renderTokenPage(w, r, data, http.StatusOK)
+	s.tokenPageRedirect(w, r, "status=rotated"+anchor)
 }
 
 func (s *Server) handleCreateLinkedToken(w http.ResponseWriter, r *http.Request) {
@@ -304,12 +344,12 @@ func (s *Server) handleCreateLinkedToken(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	name, expiry, err := s.readLinkedTokenInput(w, r, isAPI)
+	name, scope, expiry, _, err := s.readLinkedTokenInput(w, r, isAPI, true)
 	if err != nil {
 		s.tokenActionError(w, r, isAPI, http.StatusBadRequest, "VALIDATION_FAILED", "Invalid linked token name or expiry")
 		return
 	}
-	item, raw, err := database.CreateLinkedOwnerToken(r.Context(), s.db, identity.OwnerID, name, expiry, s.config.Server.Tokens.MaxLinked, s.config.Server.Security.EncryptionKey, time.Now().UTC())
+	item, raw, err := database.CreateLinkedOwnerToken(r.Context(), s.db, identity.OwnerID, name, scope, expiry, s.config.Server.Tokens.MaxLinked, s.config.Server.Security.EncryptionKey, time.Now().UTC())
 	if errors.Is(err, database.ErrTokenLimit) {
 		s.tokenActionError(w, r, isAPI, http.StatusConflict, "TOKEN_LIMIT_REACHED", "The linked token limit has been reached")
 		return
@@ -324,17 +364,13 @@ func (s *Server) handleCreateLinkedToken(w http.ResponseWriter, r *http.Request)
 	}
 	s.auditTokenEvent(r, "token.created", identity.OwnerID, item.Prefix, "linked")
 	if isAPI {
-		writeJSON(w, http.StatusCreated, map[string]interface{}{"ok": true, "data": map[string]interface{}{"token": raw, "id": item.ID}})
+		data := tokenAPIObject(item, time.Now())
+		data["linked_token"] = raw
+		writeJSON(w, http.StatusCreated, map[string]interface{}{"ok": true, "data": data})
 		return
 	}
-	data, _, ok := s.tokensPageData(w, r, false)
-	if !ok {
-		return
-	}
-	data["RevealedTokenID"] = item.ID
-	data["RevealedToken"] = raw
-	data["NoticeKey"] = "tokens.create_success"
-	s.renderTokenPage(w, r, data, http.StatusCreated)
+	s.setTokenViewCookie(w, r, item.ID)
+	s.tokenPageRedirect(w, r, "status=created#token-"+item.ID)
 }
 
 func (s *Server) handleUpdateLinkedTokenWeb(w http.ResponseWriter, r *http.Request) {
@@ -359,10 +395,32 @@ func (s *Server) updateLinkedToken(w http.ResponseWriter, r *http.Request, isAPI
 		s.tokenNotFound(w, r, isAPI)
 		return
 	}
-	name, expiry, err := s.readLinkedTokenInput(w, r, isAPI)
+	name, _, expiry, expirySet, err := s.readLinkedTokenInput(w, r, isAPI, false)
 	if err != nil {
 		s.tokenActionError(w, r, isAPI, http.StatusBadRequest, "VALIDATION_FAILED", "Invalid linked token name or expiry")
 		return
+	}
+	items, err := database.ListOwnerTokens(r.Context(), s.db, identity.OwnerID)
+	if err != nil {
+		s.tokenUnavailable(w, r, isAPI)
+		return
+	}
+	var current *database.TokenRecord
+	for index := range items {
+		if items[index].ID == id && items[index].Kind == "linked" {
+			current = &items[index]
+			break
+		}
+	}
+	if current == nil {
+		s.tokenNotFound(w, r, isAPI)
+		return
+	}
+	if name == "" {
+		name = current.Name
+	}
+	if !expirySet {
+		expiry = current.ExpiresAt
 	}
 	if err := database.UpdateLinkedOwnerToken(r.Context(), s.db, identity.OwnerID, id, name, expiry, time.Now()); err != nil {
 		if errors.Is(err, database.ErrTokenNotFound) {
@@ -378,7 +436,18 @@ func (s *Server) updateLinkedToken(w http.ResponseWriter, r *http.Request, isAPI
 	}
 	s.auditTokenEvent(r, "token.updated", identity.OwnerID, "", "linked")
 	if isAPI {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": map[string]interface{}{"id": id, "name": name, "expires_at": expiry}})
+		items, listErr := database.ListOwnerTokens(r.Context(), s.db, identity.OwnerID)
+		if listErr != nil {
+			s.tokenUnavailable(w, r, true)
+			return
+		}
+		for _, item := range items {
+			if item.ID == id {
+				writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": tokenAPIObject(item, time.Now())})
+				return
+			}
+		}
+		s.tokenNotFound(w, r, true)
 		return
 	}
 	s.tokenPageRedirect(w, r, "status=renamed#token-"+id)
@@ -630,7 +699,7 @@ func (s *Server) revokeLinkedToken(w http.ResponseWriter, r *http.Request, isAPI
 	s.setTokenRevocationClearSiteData(w)
 	s.auditTokenEvent(r, "token.revoked", identity.OwnerID, prefix, "owner_revoked")
 	if isAPI {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": map[string]interface{}{"id": id, "revoked": true}})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": map[string]interface{}{"id": id, "status": "revoked"}})
 		return
 	}
 	s.tokenPageRedirect(w, r, "status=revoked#token-"+id)
@@ -685,21 +754,6 @@ func (s *Server) tokensPageData(w http.ResponseWriter, r *http.Request, apiReque
 	return s.populateTokensPageData(w, r, data, identity)
 }
 
-func (s *Server) tokensPageDataForIdentity(w http.ResponseWriter, r *http.Request, identity database.TokenIdentity) (map[string]interface{}, database.TokenIdentity, bool) {
-	data := s.pageContext(w, r, "/server/preferences/tokens")
-	data["HasOwner"] = false
-	data["Primary"] = nil
-	data["Linked"] = []tokenPageItem{}
-	data["TokenStatus"] = ""
-	data["NoticeKey"] = ""
-	data["TokenError"] = ""
-	data["PrimaryLast4"] = ""
-	data["PrimaryLinkedCount"] = 0
-	data["PrimaryResourceCount"] = int64(0)
-	data["ResourceLabelPlural"] = "items"
-	return s.populateTokensPageData(w, r, data, identity)
-}
-
 func (s *Server) populateTokensPageData(w http.ResponseWriter, r *http.Request, data map[string]interface{}, identity database.TokenIdentity) (map[string]interface{}, database.TokenIdentity, bool) {
 	if identity.Kind != "primary" || identity.OwnerID == "" || s.db == nil {
 		return data, database.TokenIdentity{}, true
@@ -716,6 +770,10 @@ func (s *Server) populateTokensPageData(w http.ResponseWriter, r *http.Request, 
 	switch r.URL.Query().Get("status") {
 	case "restored":
 		data["NoticeKey"] = "tokens.restore_success"
+	case "created":
+		data["NoticeKey"] = "tokens.create_success"
+	case "rotated":
+		data["NoticeKey"] = "tokens.rotate_success"
 	case "renamed":
 		data["NoticeKey"] = "tokens.rename_success"
 	case "revoked":
@@ -732,6 +790,7 @@ func (s *Server) populateTokensPageData(w http.ResponseWriter, r *http.Request, 
 			data["Linked"] = append(linked, view)
 		}
 	}
+	s.consumeTokenViewCookie(w, r, identity, items, data)
 	counts, err := countOwnerData(r.Context(), s.db, identity.OwnerID)
 	if err != nil {
 		return data, identity, false
@@ -739,6 +798,33 @@ func (s *Server) populateTokensPageData(w http.ResponseWriter, r *http.Request, 
 	data["PrimaryLinkedCount"] = linkedCount
 	data["PrimaryResourceCount"] = counts.resources
 	return data, identity, true
+}
+
+func (s *Server) setTokenViewCookie(w http.ResponseWriter, r *http.Request, target string) {
+	secure := strings.HasPrefix(s.reportOrigin(r), "https://") && !strings.HasSuffix(strings.ToLower(r.Host), ".b32.i2p")
+	http.SetCookie(w, &http.Cookie{Name: tokenViewCookieName, Value: target, Path: "/server/preferences/tokens", MaxAge: 60, HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
+}
+
+func (s *Server) consumeTokenViewCookie(w http.ResponseWriter, r *http.Request, identity database.TokenIdentity, records []database.TokenRecord, data map[string]interface{}) {
+	cookie, err := r.Cookie(tokenViewCookieName)
+	if err != nil || cookie.Value == "" {
+		return
+	}
+	secure := strings.HasPrefix(s.reportOrigin(r), "https://") && !strings.HasSuffix(strings.ToLower(r.Host), ".b32.i2p")
+	http.SetCookie(w, &http.Cookie{Name: tokenViewCookieName, Value: "", Path: "/server/preferences/tokens", MaxAge: -1, HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
+	for _, record := range records {
+		matches := cookie.Value == record.ID || cookie.Value == "primary" && record.Kind == "primary"
+		if !matches || record.Kind != "primary" && record.Kind != "linked" {
+			continue
+		}
+		raw, item, err := database.RevealOwnerToken(r.Context(), s.db, identity.OwnerID, record.ID, s.config.Server.Security.EncryptionKey)
+		if err != nil || item.ID != record.ID {
+			return
+		}
+		data["RevealedTokenID"] = item.ID
+		data["RevealedToken"] = raw
+		return
+	}
 }
 
 func tokenView(item database.TokenRecord, now time.Time) tokenPageItem {
@@ -756,14 +842,9 @@ func tokenView(item database.TokenRecord, now time.Time) tokenPageItem {
 	}
 	expiresDate := ""
 	if item.ExpiresAt != nil {
-		expiresDate = item.ExpiresAt.UTC().Format("2006-01-02")
+		expiresDate = item.ExpiresAt.UTC().Add(-time.Second).Format("2006-01-02")
 	}
 	return tokenPageItem{Record: item, Masked: "own_••••••••••••••••••••••••" + item.Last4, Status: status, Created: item.CreatedAt.Format(time.RFC3339), LastUsed: formatTime(item.LastUsed), Expires: formatTime(item.ExpiresAt), ExpiresDate: expiresDate}
-}
-
-func (s *Server) renderTokenPage(w http.ResponseWriter, r *http.Request, data map[string]interface{}, status int) {
-	w.Header().Set("Cache-Control", "no-store")
-	s.renderTemplateResponse(w, r, "tokens-page.html", data, status)
 }
 
 func (s *Server) tokenIdentity(r *http.Request, apiRequest bool, w http.ResponseWriter) (database.TokenIdentity, error) {
@@ -809,11 +890,17 @@ func (s *Server) tokenIdentity(r *http.Request, apiRequest bool, w http.Response
 func (s *Server) requirePrimaryToken(w http.ResponseWriter, r *http.Request, isAPI bool) (database.TokenIdentity, bool) {
 	identity, err := s.tokenIdentity(r, isAPI, w)
 	if err != nil {
+		if isAPI {
+			setBearerChallenge(w, bearerValue(r) != "")
+		}
 		s.tokenActionError(w, r, isAPI, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "A valid primary owner token is required")
 		return database.TokenIdentity{}, false
 	}
-	if identity.Kind != "primary" {
-		s.tokenActionError(w, r, isAPI, http.StatusForbidden, "PRIMARY_TOKEN_REQUIRED", "Token management requires the primary owner token")
+	if identity.Kind != "primary" || identity.Scope != "global" {
+		if isAPI {
+			w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope"`)
+		}
+		s.tokenActionError(w, r, isAPI, http.StatusForbidden, "INSUFFICIENT_SCOPE", "Token management requires a primary owner token with global scope")
 		return database.TokenIdentity{}, false
 	}
 	return identity, true
@@ -875,50 +962,106 @@ func (s *Server) requireWebCSRF(w http.ResponseWriter, r *http.Request, isAPI bo
 	return true
 }
 
-func (s *Server) readLinkedTokenInput(w http.ResponseWriter, r *http.Request, isAPI bool) (string, *time.Time, error) {
+func (s *Server) readLinkedTokenInput(w http.ResponseWriter, r *http.Request, isAPI, creating bool) (string, string, *time.Time, bool, error) {
 	var values map[string]string
+	nameSet, expirySet := false, false
+	expiresSet, expiresOnSet := false, false
 	if isAPI {
 		values = map[string]string{}
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)
-		if err := json.NewDecoder(r.Body).Decode(&values); err != nil {
-			return "", nil, err
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&values); err != nil {
+			return "", "", nil, false, err
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); err != io.EOF {
+			return "", "", nil, false, fmt.Errorf("linked token request must contain one JSON object")
+		}
+		for key := range values {
+			if key != "name" && key != "scope" && key != "expires" && key != "expires_on" || key == "scope" && !creating {
+				return "", "", nil, false, fmt.Errorf("unsupported linked token field %q", key)
+			}
+		}
+		_, nameSet = values["name"]
+		_, expiresSet = values["expires"]
+		_, expiresOnSet = values["expires_on"]
+		expirySet = expiresSet || expiresOnSet
+		if expiresSet && expiresOnSet {
+			return "", "", nil, false, fmt.Errorf("send only one expiry value")
+		}
+		if !creating && !nameSet && !expirySet {
+			return "", "", nil, false, fmt.Errorf("at least one field is required")
 		}
 	} else {
-		values = map[string]string{"name": r.FormValue("name"), "expiry": r.FormValue("expiry"), "expires_on": r.FormValue("expires_on")}
+		values = map[string]string{"name": r.FormValue("name"), "expires": r.FormValue("expiry"), "expires_on": r.FormValue("expires_on")}
+		nameSet, expirySet = true, true
+		if creating {
+			values["scope"] = r.FormValue("scope")
+		}
 	}
 	name := strings.TrimSpace(values["name"])
-	if len([]rune(name)) < 1 || len([]rune(name)) > 64 {
-		return "", nil, fmt.Errorf("invalid token name")
+	if nameSet && (len([]rune(name)) < 1 || len([]rune(name)) > 64) || creating && (!nameSet || name == "") {
+		return "", "", nil, false, fmt.Errorf("invalid token name")
 	}
-	expiry := strings.TrimSpace(values["expiry"])
+	scope := strings.TrimSpace(values["scope"])
+	if creating {
+		if scope == "" {
+			scope = "read-write"
+		}
+		if scope != "read" && scope != "read-write" {
+			return "", "", nil, false, fmt.Errorf("invalid token scope")
+		}
+	}
+	expiry := strings.TrimSpace(values["expires"])
+	customExpirySelected := !isAPI && expiry == "custom"
+	if !isAPI {
+		if expiry == "custom" {
+			expiry = ""
+		} else {
+			values["expires_on"] = ""
+		}
+	}
+	if values["expires_on"] != "" && expiry != "" {
+		return "", "", nil, false, fmt.Errorf("send only one expiry value")
+	}
+	if values["expires_on"] != "" {
+		expiry = "custom"
+	}
+	if customExpirySelected && values["expires_on"] == "" {
+		return "", "", nil, false, fmt.Errorf("custom expiry requires a date")
+	}
 	now := time.Now().UTC()
 	switch expiry {
 	case "", "never":
-		return name, nil, nil
+		if values["expires_on"] != "" {
+			return "", "", nil, false, fmt.Errorf("send only one expiry value")
+		}
+		return name, scope, nil, expirySet, nil
 	case "7d":
 		value := now.AddDate(0, 0, 7)
-		return name, &value, nil
+		return name, scope, &value, expirySet, nil
 	case "30d":
 		value := now.AddDate(0, 0, 30)
-		return name, &value, nil
+		return name, scope, &value, expirySet, nil
 	case "90d":
 		value := now.AddDate(0, 0, 90)
-		return name, &value, nil
+		return name, scope, &value, expirySet, nil
 	case "1y":
 		value := now.AddDate(1, 0, 0)
-		return name, &value, nil
+		return name, scope, &value, expirySet, nil
 	case "custom":
+		if isAPI && values["expires_on"] == "" {
+			return "", "", nil, false, fmt.Errorf("custom expiry requires expires_on")
+		}
 		value, err := time.Parse("2006-01-02", values["expires_on"])
-		if err != nil || !value.After(now) {
-			return "", nil, fmt.Errorf("custom expiry must be a future date")
+		utcToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		if err != nil || value.Before(utcToday) {
+			return "", "", nil, false, fmt.Errorf("custom expiry must be today or a future date")
 		}
-		value = value.Add(24*time.Hour - time.Second).UTC()
-		return name, &value, nil
+		value = value.AddDate(0, 0, 1).UTC()
+		return name, scope, &value, expirySet, nil
 	default:
-		if value, err := time.Parse(time.RFC3339, expiry); err == nil && value.After(now) {
-			return name, &value, nil
-		}
-		return "", nil, fmt.Errorf("invalid expiry")
+		return "", "", nil, false, fmt.Errorf("invalid expiry")
 	}
 }
 
@@ -974,13 +1117,37 @@ func parseTokenID(value string) (string, bool) {
 	return value, true
 }
 
-func (s *Server) jsonTokenList(w http.ResponseWriter, items []database.TokenRecord, now time.Time) {
-	public := make([]map[string]interface{}, 0, len(items))
-	for _, item := range items {
-		view := tokenView(item, now)
-		public = append(public, map[string]interface{}{"id": item.ID, "kind": item.Kind, "name": item.Name, "prefix": item.Prefix, "last4": item.Last4, "masked": view.Masked, "created_at": item.CreatedAt, "rotated_at": item.RotatedAt, "expires_at": item.ExpiresAt, "last_used_at": item.LastUsed, "status": view.Status})
+func tokenAPIObject(item database.TokenRecord, now time.Time) map[string]interface{} {
+	view := tokenView(item, now)
+	var lastUsed, expires interface{}
+	if item.LastUsed != nil {
+		lastUsed = item.LastUsed.UTC().Format(time.RFC3339)
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": map[string]interface{}{"tokens": public}})
+	if item.ExpiresAt != nil {
+		expires = item.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	return map[string]interface{}{"id": item.ID, "name": item.Name, "kind": item.Kind, "scope": item.Scope, "token_masked": view.Masked, "created_at": item.CreatedAt.UTC().Format(time.RFC3339), "last_used_at": lastUsed, "expires_at": expires, "status": view.Status}
+}
+
+func linkedTokenResponseField(primary bool) string {
+	if primary {
+		return "owner_token"
+	}
+	return "linked_token"
+}
+
+func (s *Server) jsonTokenList(w http.ResponseWriter, items []database.TokenRecord, now time.Time) {
+	var primary interface{}
+	linked := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		view := tokenAPIObject(item, now)
+		if item.Kind == "primary" {
+			primary = view
+		} else {
+			linked = append(linked, view)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "data": map[string]interface{}{"primary": primary, "linked": linked, "max_linked": s.config.Server.Tokens.MaxLinked}})
 }
 
 func (s *Server) tokenActionError(w http.ResponseWriter, r *http.Request, isAPI bool, status int, code, message string) {

@@ -12,8 +12,10 @@ import (
 	"github.com/apimgr/countries/src/updater"
 )
 
-var ensureServiceAccount = privilege.EnsureSystemAccount
-var dropServicePrivileges = privilege.DropPrivileges
+var (
+	ensureServiceAccount  = privilege.EnsureSystemAccount
+	dropServicePrivileges = privilege.DropPrivileges
+)
 
 func bindPrivilegedListeners(addresses ...string) (map[string]net.Listener, error) {
 	listeners := make(map[string]net.Listener)

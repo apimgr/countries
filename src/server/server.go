@@ -102,6 +102,8 @@ type Server struct {
 	schedulerRunning       atomic.Bool
 	shuttingDown           atomic.Bool
 	maintenance            atomic.Bool
+	startupMaintenance     atomic.Bool
+	startupDelegate        atomic.Pointer[Server]
 	cacheClient            redis.UniversalClient
 	cacheDegraded          atomic.Bool
 	cacheWarningOnce       sync.Once
@@ -626,6 +628,7 @@ func renderFallbackError(w http.ResponseWriter, r *http.Request, status int, ser
 
 func (s *Server) setupRoutes() {
 	r := s.router
+	r.Use(s.startupMaintenanceMiddleware)
 	r.Use(URLNormalizeMiddleware)
 	r.Use(requestIDMiddleware)
 	r.Use(s.PathSecurityMiddleware)
@@ -719,6 +722,15 @@ func (s *Server) setupRoutes() {
 			"css/graphiql-theme.css":   graphqlapi.CSSVariables,
 		}
 		r.Handle("/static/*", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/static/css/notifications.css") {
+				webui := s.config.Server.Notifications.WebUI
+				w.Header().Set("Content-Type", "text/css; charset=utf-8")
+				w.Header().Set("Cache-Control", "no-cache")
+				if r.Method != http.MethodHead {
+					_, _ = fmt.Fprintf(w, ":root{--toast-duration:%ds;--toast-duration-warning:%ds}\n", webui.Duration, webui.WarningDuration)
+				}
+				return
+			}
 			if s.setAssetCacheHeaders(w, r) {
 				w.WriteHeader(http.StatusNotModified)
 				return
@@ -775,6 +787,75 @@ func (s *Server) setupRoutes() {
 	r.Post("/mcp", s.handleMCP)
 	r.Get("/api/autodiscover", s.handleAutodiscover)
 	r.Get("/cli/binaries/{binary}", s.handleCLIBinary)
+}
+
+func (s *Server) SetStartupMaintenance(active bool) {
+	s.startupMaintenance.Store(active)
+	if active {
+		s.SetMaintenanceMode(true)
+	}
+}
+
+func (s *Server) SetStartupDelegate(delegate *Server) {
+	s.startupDelegate.Store(delegate)
+	s.startupMaintenance.Store(false)
+	s.SetMaintenanceMode(false)
+}
+
+func (s *Server) startupMaintenanceMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if delegate := s.startupDelegate.Load(); delegate != nil {
+			delegate.router.ServeHTTP(w, r)
+			return
+		}
+		if !s.startupMaintenance.Load() || startupReadOnlyRoute(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		retryAfter := 30
+		if s.config != nil {
+			if interval, err := time.ParseDuration(s.config.Server.Maintenance.SelfHealing.RetryInterval); err == nil && interval > 0 {
+				retryAfter = max(1, int(interval.Seconds()))
+			}
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		w.Header().Set("X-Maintenance-Mode", "true")
+		w.Header().Set("X-Maintenance-Reason", "database_connection")
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"ok": false, "error": "MAINTENANCE", "message": "Server is in maintenance mode due to: Database connection failed",
+				"details": map[string]any{"reason": "database_connection", "self_healing": true},
+			})
+			return
+		}
+		s.errorResponse(w, r, "Database connection failed; the server is in maintenance mode", http.StatusServiceUnavailable)
+	})
+}
+
+func startupHealthRoute(path string) bool {
+	return path == "/server/healthz" || path == "/server/healthz.txt" || path == api.APIBasePath()+"/server/healthz" || path == api.APIBasePath()+"/server/healthz.txt"
+}
+
+func startupReadOnlyRoute(r *http.Request) bool {
+	if startupHealthRoute(r.URL.Path) {
+		return true
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	switch r.URL.Path {
+	case "/", "/search", "/coordinates", "/server/about", "/server/help", "/server/privacy", "/server/terms", "/server/security/policy", "/server/dpo", "/favicon.ico":
+		return true
+	}
+	if strings.HasPrefix(r.URL.Path, "/static/") {
+		return true
+	}
+	path := strings.TrimPrefix(r.URL.Path, api.APIBasePath())
+	switch path {
+	case "/countries", "/countries/search", "/coordinates", "/server/about", "/server/help", "/server/privacy", "/server/terms", "/server/security/policy", "/server/dpo":
+		return true
+	}
+	return strings.HasPrefix(path, "/countries/")
 }
 
 func (s *Server) configReloadMiddleware(next http.Handler) http.Handler {
@@ -949,6 +1030,7 @@ func (s *Server) registerAPIRoutes(r chi.Router) {
 	r.Post("/server/preferences", s.handleSavePreferencesAPI)
 	r.Get("/server/healthz", s.handleHealthAPI)
 	r.Get("/server/healthz.txt", s.handleHealthAPI)
+	r.Get("/server/auth/check", s.handleAuthCheck)
 	r.Get("/server/about", s.handleInfoAPI)
 	r.Get("/server/help", s.handleInfoAPI)
 	r.Get("/server/privacy", s.handleInfoAPI)
@@ -1249,7 +1331,7 @@ func (s *Server) recordAudit(r *http.Request, category, action, targetType, targ
 	if r != nil {
 		ip := requestClientIP(r.RemoteAddr)
 		actor = auditlog.Actor{Type: "anonymous", IP: &ip}
-		if targetType == "owner" && targetID != "" && !(action == "token.created" && fmt.Sprint(details["source"]) == "issue") {
+		if targetType == "owner" && targetID != "" && (action != "token.created" || fmt.Sprint(details["source"]) != "issue") {
 			actor.Type = "owner"
 			actor.ID = targetID
 		}

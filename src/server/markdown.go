@@ -33,8 +33,10 @@ func newPageHTMLPolicy(rich bool) *bluemonday.Policy {
 	return policy
 }
 
-var strictHTMLPolicy = newPageHTMLPolicy(false)
-var richHTMLPolicy = newPageHTMLPolicy(true)
+var (
+	strictHTMLPolicy = newPageHTMLPolicy(false)
+	richHTMLPolicy   = newPageHTMLPolicy(true)
+)
 
 func markdownToHTML(source string) template.HTML {
 	return template.HTML(sanitizePageHTML(markdownSourceToHTML(source), richHTMLPolicy))

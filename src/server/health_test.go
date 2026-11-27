@@ -144,8 +144,12 @@ func TestHealthFormatNegotiationAndStatusCodes(t *testing.T) {
 		status string
 		code   int
 	}{
-		{"healthy", http.StatusOK}, {"degraded", http.StatusOK}, {"restart_required", http.StatusOK},
-		{"unhealthy", http.StatusServiceUnavailable}, {"maintenance", http.StatusServiceUnavailable}, {"shutting_down", http.StatusServiceUnavailable},
+		{"healthy", http.StatusOK},
+		{"degraded", http.StatusOK},
+		{"restart_required", http.StatusOK},
+		{"unhealthy", http.StatusServiceUnavailable},
+		{"maintenance", http.StatusServiceUnavailable},
+		{"shutting_down", http.StatusServiceUnavailable},
 	} {
 		if got := healthResponseStatusCode(test.status); got != test.code {
 			t.Errorf("healthResponseStatusCode(%q) = %d, want %d", test.status, got, test.code)

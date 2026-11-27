@@ -33,7 +33,7 @@ func TestPrintServerStartupBannerPlainFirstRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = reader.Close()
-	for _, expected := range []string{"countries v1.2.3", "Listening: https://example.test", "Started:", "Tor: http://example.onion", "I2P: http://example.b32.i2p", "SMTP: mail.example.test:587", "Setup token: setup-token"} {
+	for _, expected := range []string{"countries v1.2.3", "Listening: https://example.test", "Started:", "Tor: http://example.onion", "I2P: http://example.b32.i2p", "SMTP: mail.example.test:587", "Admin token (shown once): setup-token"} {
 		if !strings.Contains(string(output), expected) {
 			t.Errorf("banner output %q does not contain %q", output, expected)
 		}

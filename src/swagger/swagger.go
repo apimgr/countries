@@ -97,17 +97,17 @@ func Spec(version string, router chi.Routes) (map[string]interface{}, error) {
 			"post": map[string]interface{}{"summary": "Import guest preferences from a code", "requestBody": map[string]interface{}{"required": true, "content": map[string]interface{}{"application/json": map[string]interface{}{"schema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"code": map[string]interface{}{"type": "string", "maxLength": 2048}, "theme": map[string]interface{}{"type": "string", "enum": []string{"dark", "light", "auto"}}, "lang": map[string]interface{}{"type": "string"}}}}, "application/x-www-form-urlencoded": map[string]interface{}{"schema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"code": map[string]interface{}{"type": "string", "maxLength": 2048}, "theme": map[string]interface{}{"type": "string", "enum": []string{"dark", "light", "auto"}}, "lang": map[string]interface{}{"type": "string"}}}}}}, "responses": map[string]interface{}{"200": jsonResponse("Applied preferences"), "400": jsonResponse("No supported preference value was supplied")}},
 		},
 		basePath + "/server/preferences/tokens": map[string]interface{}{
-			"get":  map[string]interface{}{"summary": "List masked owner tokens", "responses": map[string]interface{}{"200": jsonResponse("Masked token metadata"), "401": jsonResponse("Primary owner bearer token required")}},
-			"post": map[string]interface{}{"summary": "Create a linked owner token", "responses": map[string]interface{}{"201": jsonResponse("Created linked token"), "400": jsonResponse("Invalid token request"), "401": jsonResponse("Primary owner bearer token required")}},
+			"get":  map[string]interface{}{"summary": "List masked owner tokens", "responses": map[string]interface{}{"200": jsonResponse("Primary and linked token metadata, including scopes"), "401": jsonResponse("Primary owner bearer token required"), "403": jsonResponse("Global token-management scope required")}},
+			"post": map[string]interface{}{"summary": "Create a linked owner token", "requestBody": linkedTokenRequestBody(true), "responses": map[string]interface{}{"201": jsonResponse("Created linked token and raw linked_token value"), "400": jsonResponse("Invalid token request"), "401": jsonResponse("Primary owner bearer token required"), "403": jsonResponse("Global token-management scope required"), "409": jsonResponse("Token name already exists or linked-token limit reached")}},
 		},
 		basePath + "/server/preferences/tokens/primary": map[string]interface{}{
-			"post":   map[string]interface{}{"summary": "Issue the primary owner token", "responses": map[string]interface{}{"200": jsonResponse("Issued primary token")}},
+			"post":   map[string]interface{}{"summary": "Issue the primary owner token", "responses": map[string]interface{}{"201": jsonResponse("Issued primary token in owner_token")}},
 			"delete": map[string]interface{}{"summary": "Revoke the primary owner token and delete the owner, linked tokens, and resources", "requestBody": map[string]interface{}{"required": true, "content": map[string]interface{}{"application/json": map[string]interface{}{"schema": map[string]interface{}{"type": "object", "required": []string{"confirm"}, "properties": map[string]interface{}{"confirm": map[string]interface{}{"type": "string", "minLength": 4, "maxLength": 4, "description": "The last four characters of the primary token"}}}}}}, "responses": map[string]interface{}{"200": jsonResponse("Revoked primary owner and deleted its tokens and resources"), "400": jsonResponse("Confirmation must match the last four characters of the primary token"), "401": jsonResponse("Primary owner bearer token required"), "403": jsonResponse("Primary owner token required; linked tokens cannot manage tokens")}},
 		},
 		basePath + "/server/preferences/tokens/primary/reveal": map[string]interface{}{"post": map[string]interface{}{"summary": "Reveal the primary owner token", "responses": map[string]interface{}{"200": jsonResponse("Primary token"), "401": jsonResponse("Primary owner bearer token required")}}},
 		basePath + "/server/preferences/tokens/primary/rotate": map[string]interface{}{"post": map[string]interface{}{"summary": "Rotate the primary owner token", "responses": map[string]interface{}{"200": jsonResponse("Rotated primary token"), "401": jsonResponse("Primary owner bearer token required")}}},
 		basePath + "/server/preferences/tokens/{id}": map[string]interface{}{
-			"patch":  map[string]interface{}{"summary": "Update a linked token", "parameters": []interface{}{map[string]interface{}{"name": "id", "in": "path", "required": true, "schema": map[string]interface{}{"type": "string"}}}, "responses": map[string]interface{}{"200": jsonResponse("Updated token"), "401": jsonResponse("Primary owner bearer token required"), "404": jsonResponse("Token not found")}},
+			"patch":  map[string]interface{}{"summary": "Update a linked token", "parameters": []interface{}{map[string]interface{}{"name": "id", "in": "path", "required": true, "schema": map[string]interface{}{"type": "string"}}}, "requestBody": linkedTokenRequestBody(false), "responses": map[string]interface{}{"200": jsonResponse("Updated token metadata"), "400": jsonResponse("Invalid token request"), "401": jsonResponse("Primary owner bearer token required"), "403": jsonResponse("Global token-management scope required"), "404": jsonResponse("Token not found"), "409": jsonResponse("Token name already exists")}},
 			"delete": map[string]interface{}{"summary": "Revoke a linked token", "parameters": []interface{}{map[string]interface{}{"name": "id", "in": "path", "required": true, "schema": map[string]interface{}{"type": "string"}}}, "responses": map[string]interface{}{"200": jsonResponse("Revoked token"), "401": jsonResponse("Primary owner bearer token required"), "404": jsonResponse("Token not found")}},
 		},
 		basePath + "/server/preferences/tokens/{id}/reveal": map[string]interface{}{"post": map[string]interface{}{"summary": "Reveal a linked token", "parameters": []interface{}{map[string]interface{}{"name": "id", "in": "path", "required": true, "schema": map[string]interface{}{"type": "string"}}}, "responses": map[string]interface{}{"200": jsonResponse("Linked token"), "401": jsonResponse("Primary owner bearer token required"), "404": jsonResponse("Token not found")}}},
@@ -178,7 +178,7 @@ func Spec(version string, router chi.Routes) (map[string]interface{}, error) {
 			}
 			usedOperationIDs[operationID] = true
 			operation["operationId"] = operationID
-			if requiresBearer(path) {
+			if requiresBearer(method, path) {
 				operation["security"] = []interface{}{map[string]interface{}{"BearerAuth": []string{}}}
 			}
 		}
@@ -342,14 +342,34 @@ func isOpenAPIMethod(method string) bool {
 	}
 }
 
-func requiresBearer(path string) bool {
-	if strings.Contains(path, "/server/preferences/tokens/primary") && !strings.HasSuffix(path, "/server/preferences/tokens/primary") {
+func requiresBearer(method, path string) bool {
+	if strings.HasSuffix(path, "/server/preferences/tokens/primary") {
+		return method != "post"
+	}
+	if strings.Contains(path, "/server/preferences/tokens/primary") {
 		return true
 	}
 	if strings.Contains(path, "/server/preferences/tokens/{id}") || strings.HasSuffix(path, "/server/preferences/tokens") || strings.Contains(path, "/server/mcp") || path == "/api/mcp" || path == "/mcp" {
 		return true
 	}
 	return strings.Contains(path, "/metrics") || strings.Contains(path, "/debug/")
+}
+
+func linkedTokenRequestBody(create bool) map[string]interface{} {
+	properties := map[string]interface{}{
+		"name":       map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 64},
+		"scope":      map[string]interface{}{"type": "string", "enum": []string{"read", "read-write"}, "default": "read-write"},
+		"expires":    map[string]interface{}{"type": "string", "enum": []string{"never", "7d", "30d", "90d", "1y"}, "default": "never"},
+		"expires_on": map[string]interface{}{"type": "string", "format": "date", "description": "UTC date, valid through that date"},
+	}
+	if !create {
+		delete(properties, "scope")
+	}
+	required := []string(nil)
+	if create {
+		required = []string{"name"}
+	}
+	return map[string]interface{}{"required": create, "content": map[string]interface{}{"application/json": map[string]interface{}{"schema": map[string]interface{}{"type": "object", "required": required, "properties": properties, "additionalProperties": false}}}}
 }
 
 func makeOperationID(method, path string) string {

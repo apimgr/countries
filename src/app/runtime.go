@@ -57,10 +57,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var unresolvedFQDNWarning sync.Once
-var torAddressLogged sync.Once
-var errUpdateStaged = errors.New("update downloaded and staged; restart with elevated privileges to apply it")
-var auditMirrorDB *sql.DB
+var (
+	unresolvedFQDNWarning sync.Once
+	torAddressLogged      sync.Once
+	errUpdateStaged       = errors.New("update downloaded and staged; restart with elevated privileges to apply it")
+	auditMirrorDB         *sql.DB
+)
 
 var (
 	Version      = "devel"
@@ -131,10 +133,6 @@ func isRemoteDatabase(driver, connectionURL string) bool {
 var updaterReleaseURL = "https://api.github.com/repos/apimgr/countries/releases?per_page=100"
 
 func runWithContext(serviceContext context.Context, startupConfig config.Config) int {
-	if !flagsReady {
-		ParseFlags(os.Args[1:])
-	}
-	flagsReady = false
 	if preScanCommandHelp(os.Args[1:]) {
 		return 0
 	}
@@ -279,22 +277,14 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 		return 0
 	}
 	if args := flag.Args(); len(args) > 0 && args[0] == "email" {
-		cfg, loadErr := config.Load(configPath)
-		if loadErr != nil {
-			fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", loadErr)
-			os.Exit(1)
-		}
-		if err := runEmailCommand(args[1:], cfg, configPath, configDir); err != nil {
+		if err := runEmailCommand(args[1:], &startupConfig, configPath, configDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Email command failed: %v\n", err)
 			os.Exit(1)
 		}
 		return 0
 	}
 	if updateCmd.set {
-		cfg, loadErr := config.Load(configPath)
-		if loadErr != nil {
-			log.Fatalf("Failed to load configuration: %v", loadErr)
-		}
+		cfg := &startupConfig
 		if err := appmode.Initialize(resolveRuntimeMode(*modeFlag, os.Getenv("MODE"), cfg.Server.Mode)); err != nil {
 			fmt.Fprintf(os.Stderr, "Invalid application mode: %v\n", err)
 			os.Exit(78)
@@ -380,7 +370,7 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 		if err := os.Chown(configParent, 0, 0); err != nil {
 			log.Fatalf("Failed to secure container configuration directory: %v", err)
 		}
-		if err := os.Chmod(configParent, 0755); err != nil {
+		if err := os.Chmod(configParent, 0o755); err != nil {
 			log.Fatalf("Failed to set container configuration directory permissions: %v", err)
 		}
 	}
@@ -406,11 +396,11 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 		pidFilePath = paths.GetPIDFilePath(projectName, dataDir, startedElevated)
 	}
 	if startupSettings.PIDFile && !paths.IsContainer() && runtime.GOOS != "windows" && pidFilePath != "" && *pidFileFlag == "" {
-		if err := os.MkdirAll(filepath.Dir(pidFilePath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(pidFilePath), 0o755); err != nil {
 			log.Fatalf("Failed to create PID directory: %v", err)
 		}
 		if startedElevated {
-			if err := os.Chmod(filepath.Dir(pidFilePath), 0755); err != nil {
+			if err := os.Chmod(filepath.Dir(pidFilePath), 0o755); err != nil {
 				log.Fatalf("Failed to set PID directory permissions: %v", err)
 			}
 		}
@@ -480,9 +470,9 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 		log.Fatal(err)
 	}
 	if startupSettings.PIDFile && !paths.IsContainer() && runtime.GOOS != "windows" {
-		pidMode := os.FileMode(0600)
+		pidMode := os.FileMode(0o600)
 		if startedElevated {
-			pidMode = 0644
+			pidMode = 0o644
 		}
 		if err := pidfile.Acquire(pidFilePath, pidMode); err != nil {
 			log.Fatalf("Failed to acquire server PID file: %v", err)
@@ -494,25 +484,8 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 		}()
 	}
 
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
-	}
+	cfg := &startupConfig
 	cfg.Listener = startupConfig.Listener
-	// Values supplied by the process entry are the startup merge base; the
-	// persisted configuration remains authoritative when it provides a value.
-	if cfg.Lang == "" {
-		cfg.Lang = startupConfig.Lang
-	}
-	if cfg.Server.Port == "" {
-		cfg.Server.Port = startupConfig.Server.Port
-	}
-	if cfg.Server.Address == "" {
-		cfg.Server.Address = startupConfig.Server.Address
-	}
-	if *baseURL != "" {
-		cfg.Server.BaseURL = *baseURL
-	}
 	cfg.Lang = selectServerLanguage(*langFlag, cfg.Lang)
 	if (generatedInitialPort && cfg.Server.Port != serverPort) || invalidConfiguredPort {
 		cfg.Server.Port = serverPort
@@ -541,7 +514,7 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 	}
 	auditConfig := cfg.Server.Logging.Audit
 	auditOptions := auditlog.Options{
-		Enabled: auditConfig.Enabled, SystemMode: startedElevated || service.IsWindowsService(), Filename: auditConfig.Filename, Format: auditConfig.Format,
+		Enabled: auditConfig.Enabled, SystemMode: startedElevated || service.IsWindowsService(), Group: auditConfig.Group, Filename: auditConfig.Filename, Format: auditConfig.Format,
 		Rotate: auditConfig.Rotate, Keep: auditConfig.Keep, Compress: auditConfig.Compress,
 		IncludeUserAgent: auditConfig.IncludeUserAgent,
 		Events: auditlog.EventCategories{
@@ -622,21 +595,95 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 	server.Version = Version
 	server.Commit = CommitID
 	server.BuildDate = BuildDate
+	startupServer := server.New(countriesService, cfg, serverAddress, serverPort, Version, BuildDate, CommitID)
+	startupServer.SetStartupMaintenance(true)
+	listenerCtx, stopListener := context.WithCancel(serviceContext)
+	defer stopListener()
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- startupServer.RunListenersWithPrebound(listenerCtx, httpAddr, httpsAddr, sslManager, sslDomains(cfg), preboundListeners)
+	}()
+	startupAddress := httpAddr
+	if startupAddress == "" {
+		startupAddress = httpsAddr
+	}
+	if ready, listenerErr := waitForListener(serviceContext, startupAddress, serverDone); !ready {
+		if serviceContext.Err() != nil {
+			return 0
+		}
+		if listenerErr != nil {
+			log.Printf("Could not start maintenance listener: %v", listenerErr)
+		}
+		return 70
+	}
+	emailManager, emailErr := prepareNotificationManager(cfg, configPath, configDir)
+	if emailErr != nil {
+		log.Printf("SMTP connection failed; email notifications disabled until next startup: %v", emailErr)
+	}
+	defer emailManager.Close()
 
 	databasePath := localDatabasePath(cfg, dataDir)
 	maxLifetime, _ := time.ParseDuration(cfg.Server.Database.Pool.MaxLifetime)
 	maxIdleTime, _ := time.ParseDuration(cfg.Server.Database.Pool.MaxIdleTime)
-	db, err := database.OpenConfigured(database.DatabaseOptions{
+	databaseOptions := database.DatabaseOptions{
 		Driver:  cfg.Server.Database.Driver,
 		URL:     cfg.Server.Database.URL,
 		Token:   cfg.Server.Database.Token,
 		DataDir: dataDir,
 		Pool:    database.PoolOptions{MaxOpen: cfg.Server.Database.Pool.MaxOpen, MaxIdle: cfg.Server.Database.Pool.MaxIdle, MaxLifetime: maxLifetime, MaxIdleTime: maxIdleTime},
 		Cache:   database.ReplicaOptions{Enabled: cfg.Server.Database.Cache.Enabled, Path: cfg.Server.Database.Cache.Path, SyncInterval: cfg.Server.Database.Cache.SyncInterval, OfflineMode: cfg.Server.Database.Cache.OfflineMode, MaxAge: cfg.Server.Database.Cache.MaxAge},
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize server database: %v\n", err)
-		os.Exit(70)
+	}
+	databaseRetryInterval, retryErr := time.ParseDuration(cfg.Server.Maintenance.SelfHealing.RetryInterval)
+	if retryErr != nil || databaseRetryInterval <= 0 {
+		databaseRetryInterval = 30 * time.Second
+	}
+	var db *sql.DB
+	var databaseOpenErr error
+	var databaseAttempts int
+	databaseFailureLogged := false
+	for {
+		db, databaseOpenErr = database.OpenConfigured(databaseOptions)
+		if databaseOpenErr == nil {
+			break
+		}
+		databaseAttempts++
+		maxAttempts := cfg.Server.Maintenance.SelfHealing.MaxAttempts
+		exhausted := maxAttempts > 0 && databaseAttempts >= maxAttempts
+		startupServer.SetSelfHealingState("database_connection", time.Now().UTC(), databaseAttempts, exhausted)
+		if !databaseFailureLogged {
+			log.Printf("Database initialization failed (%s); maintenance mode is active and self-healing will retry", safeDatabaseStartupFailure(databaseOpenErr))
+			databaseFailureLogged = true
+		} else {
+			log.Printf("Database self-healing attempt %d failed", databaseAttempts)
+		}
+		if exhausted {
+			log.Printf("Database self-healing exhausted after %d attempts; restart after resolving the database error", databaseAttempts)
+			recordSelfHealingExhaustedAudit(logsDir, "database_connection", databaseAttempts)
+			if notifyErr := emailManager.Notify("scheduler_error", map[string]string{"task_name": "Database connection", "error": "Self-healing attempts exhausted; operator action is required"}); notifyErr != nil {
+				log.Printf("Could not send self-healing exhaustion notification: %v", notifyErr)
+			}
+			<-serviceContext.Done()
+			return 0
+		}
+		timer := time.NewTimer(databaseRetryInterval)
+		select {
+		case <-serviceContext.Done():
+			timer.Stop()
+			return 0
+		case listenerErr := <-serverDone:
+			timer.Stop()
+			if listenerErr != nil {
+				log.Printf("Maintenance listener stopped: %v", listenerErr)
+			}
+			return 70
+		case <-timer.C:
+		}
+	}
+	if databaseFailureLogged {
+		log.Print("Issue resolved, exiting database initialization recovery")
+		if notifyErr := emailManager.Notify("scheduler_error", map[string]string{"task_name": "Database connection", "error": "Database connection recovered"}); notifyErr != nil {
+			log.Printf("Could not send database recovery notification: %v", notifyErr)
+		}
 	}
 	auditMirrorDB = db
 	if err := RecoverPGPRotation(context.Background(), db, filepath.Join(configDir, "security")); err != nil {
@@ -743,11 +790,6 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 	if securityDataErr != nil {
 		log.Printf("Security data unavailable; continuing with fail-open checks: %v", securityDataErr)
 	}
-	emailManager, emailErr := prepareNotificationManager(cfg, configPath, configDir)
-	if emailErr != nil {
-		log.Printf("SMTP connection failed; email notifications disabled until next startup: %v", emailErr)
-	}
-	defer emailManager.Close()
 	if startupUpdateErr != nil {
 		log.Printf("update.failed error=%q", startupUpdateErr.Error())
 		recordUpdateAudit(logsDir, "update.failed", "error", "failure", nil)
@@ -805,6 +847,32 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 			runtime.SetMutexProfileFraction(cfg.Server.Debug.MutexProfileFraction)
 		}
 		srv.ApplyReloadedConfig(cfg)
+		if manager, logErr := appLogging.Open(logsDir, cfg.Server.Logging, string(appmode.Get())); logErr != nil {
+			log.Printf("WARN: could not apply reloaded log configuration; keeping current log files: %v", logErr)
+		} else {
+			if logManager != nil {
+				_ = logManager.Close()
+			}
+			logManager = manager
+			setLogOutput(logManager)
+		}
+		reloadedAudit := auditlog.Options{
+			Enabled: cfg.Server.Logging.Audit.Enabled, SystemMode: startedElevated || service.IsWindowsService(),
+			Group: cfg.Server.Logging.Audit.Group, Filename: cfg.Server.Logging.Audit.Filename,
+			Format: cfg.Server.Logging.Audit.Format, Rotate: cfg.Server.Logging.Audit.Rotate,
+			Keep: cfg.Server.Logging.Audit.Keep, Compress: cfg.Server.Logging.Audit.Compress,
+			IncludeUserAgent: cfg.Server.Logging.Audit.IncludeUserAgent,
+			Events: auditlog.EventCategories{
+				Configuration: cfg.Server.Logging.Audit.Events.Configuration,
+				Security:      cfg.Server.Logging.Audit.Events.Security,
+				Backup:        cfg.Server.Logging.Audit.Events.Backup,
+				Server:        cfg.Server.Logging.Audit.Events.Server,
+				TokenUsage:    cfg.Server.Logging.Audit.TokenUsage,
+			},
+		}
+		if logErr := auditlog.Configure(logsDir, reloadedAudit); logErr != nil {
+			log.Printf("WARN: could not apply reloaded audit configuration; keeping current settings: %v", logErr)
+		}
 		emailManager.Config = cfg
 		emailManager.Sender.Config = smtpSenderConfig(cfg.Server.Notifications.Email.SMTP)
 		emailManager.FQDN = notificationFQDN(cfg)
@@ -913,7 +981,7 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 	if catchUpErr != nil || catchUpWindow <= 0 {
 		catchUpWindow = time.Hour
 	}
-	schedulerLogFile, err := os.OpenFile(filepath.Join(logsDir, "server.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	schedulerLogFile, err := os.OpenFile(filepath.Join(logsDir, "server.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		log.Fatalf("Failed to open scheduler log: %v", err)
 	}
@@ -943,7 +1011,7 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 		if err := os.Remove(name); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		file, err := os.OpenFile(name, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		file, err := os.OpenFile(name, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {
 			return err
 		}
@@ -1511,11 +1579,8 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 		URLs:            startupURLs, OnionAddress: torOnion, I2PAddress: i2pAddress, SMTPAddress: smtpAddress,
 		SetupToken: setupToken, ForceColor: forceColor, Lang: cfg.Lang,
 	})
+	startupServer.SetStartupDelegate(srv)
 	log.Printf("Starting countries server on %s", primaryAddr)
-	serverDone := make(chan error, 1)
-	go func() {
-		serverDone <- srv.RunListenersWithPrebound(ctx, httpAddr, httpsAddr, sslManager, sslDomains(cfg), preboundListeners)
-	}()
 	ready, runErr := waitForListener(ctx, primaryAddr, serverDone)
 	started := ready
 	if ready {
@@ -1781,6 +1846,17 @@ func waitForListener(ctx context.Context, address string, serverDone <-chan erro
 	}
 }
 
+func safeDatabaseStartupFailure(err error) string {
+	if err == nil {
+		return "database check failed"
+	}
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "schema") || strings.Contains(message, "migrat") {
+		return err.Error()
+	}
+	return "database connection or health check failed"
+}
+
 func prepareNotificationManager(cfg *config.Config, configPath, configDir string) (*notifications.Manager, error) {
 	email := &cfg.Server.Notifications.Email
 	if strings.TrimSpace(email.SMTP.Host) == "" {
@@ -1966,7 +2042,7 @@ func persistDetectedSMTP(configPath, host string, port int) error {
 			log.Printf("remove temporary server configuration: %v", err)
 		}
 	}()
-	if err := temporary.Chmod(0600); err != nil {
+	if err := temporary.Chmod(0o600); err != nil {
 		_ = temporary.Close()
 		return err
 	}
@@ -2640,7 +2716,7 @@ func handleMaintenanceCommand(cmd, configDir, dataDir, logsDir, configPath strin
 					os.Exit(1)
 				}
 			}
-			cfg, err := config.Load(configPath)
+			cfg, err := config.LoadConfigFromFile(configPath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 				os.Exit(1)
@@ -2658,7 +2734,7 @@ func handleMaintenanceCommand(cmd, configDir, dataDir, logsDir, configPath strin
 			fmt.Printf("Backup verified: %s (version %s, %s)\n", backupFile, verified.Manifest.AppVersion, verified.Manifest.Type)
 			return
 		}
-		cfg, err := config.Load(configPath)
+		cfg, err := config.LoadConfigFromFile(configPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 			os.Exit(1)
@@ -2708,7 +2784,7 @@ func handleMaintenanceCommand(cmd, configDir, dataDir, logsDir, configPath strin
 		if !defaultSelection {
 			backupFile = args[0]
 		}
-		cfg, err := config.Load(configPath)
+		cfg, err := config.LoadConfigFromFile(configPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 			os.Exit(1)
@@ -2768,7 +2844,7 @@ func handleMaintenanceCommand(cmd, configDir, dataDir, logsDir, configPath strin
 		}
 		fmt.Println("Restore completed")
 	case "update":
-		cfg, err := config.Load(configPath)
+		cfg, err := config.LoadConfigFromFile(configPath)
 		if err != nil {
 			log.Printf("Failed to load configuration: %v", err)
 			os.Exit(1)
@@ -2789,7 +2865,7 @@ func handleMaintenanceCommand(cmd, configDir, dataDir, logsDir, configPath strin
 	case "setup":
 		fmt.Println("Countries API Initial Setup")
 		fmt.Println("===========================")
-		cfg, err := config.Load(configPath)
+		cfg, err := config.LoadConfigFromFile(configPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 			os.Exit(1)

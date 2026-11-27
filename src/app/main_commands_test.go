@@ -99,7 +99,7 @@ func TestMaintenanceAndModeCommands(t *testing.T) {
 	if got := resolveRuntimeMode("", "production", cfg.Server.Mode); got != "production" {
 		t.Fatalf("environment mode priority = %q, want production", got)
 	}
-	loaded, err := config.Load(configPath)
+	loaded, err := config.LoadConfigFromFile(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,10 +172,10 @@ func TestMaintenanceBackupAndRestoreUseTempPaths(t *testing.T) {
 	tempDir := testutil.TempDir(t)
 	configDir := filepath.Join(tempDir, "config")
 	dataDir := filepath.Join(tempDir, "data")
-	if err := os.MkdirAll(configDir, 0700); err != nil {
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(dataDir, 0700); err != nil {
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(configDir, "server.yml")
@@ -229,7 +229,7 @@ func TestMaintenanceBackupAndRestoreUseTempPaths(t *testing.T) {
 	if contents, err := os.ReadFile(filepath.Join(configDir, "server.yml")); err != nil || len(contents) == 0 {
 		t.Fatalf("source server.yml size = %d, error = %v", len(contents), err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "should-not-appear.txt"), []byte("outside backup roots"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "should-not-appear.txt"), []byte("outside backup roots"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

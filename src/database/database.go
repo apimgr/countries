@@ -44,7 +44,7 @@ var schema = []string{
 	`CREATE TABLE IF NOT EXISTS backups (id INTEGER PRIMARY KEY AUTOINCREMENT, filename TEXT NOT NULL UNIQUE, filepath TEXT NOT NULL, size_bytes INTEGER NOT NULL, type TEXT NOT NULL DEFAULT 'auto', created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), checksum TEXT, notes TEXT)`,
 	`CREATE INDEX IF NOT EXISTS idx_backups_created ON backups(created_at)`,
 	`CREATE TABLE IF NOT EXISTS owners (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), last_seen_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')))`,
-	`CREATE TABLE IF NOT EXISTS api_tokens (id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK (kind IN ('primary', 'linked')), name TEXT, token_hash TEXT NOT NULL UNIQUE, token_prefix TEXT NOT NULL, token_last4 TEXT NOT NULL DEFAULT '', token_enc TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), rotated_at INTEGER, expires_at INTEGER, last_used_at INTEGER, revoked_at INTEGER, revoked_reason TEXT)`,
+	`CREATE TABLE IF NOT EXISTS api_tokens (id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK (kind IN ('primary', 'linked')), name TEXT, scope TEXT NOT NULL DEFAULT 'read-write' CHECK (scope IN ('read', 'read-write', 'global')), token_hash TEXT NOT NULL UNIQUE, token_prefix TEXT NOT NULL, token_last4 TEXT NOT NULL DEFAULT '', token_enc TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')), rotated_at INTEGER, expires_at INTEGER, last_used_at INTEGER, revoked_at INTEGER, revoked_reason TEXT)`,
 }
 
 // Open initializes the configured SQLite file and applies the idempotent schema.
@@ -68,7 +68,7 @@ func EnsureSchema(ctx context.Context, db *sql.DB) error {
 			_, err := tx.ExecContext(ctx, statement)
 			return err
 		}); err != nil {
-			return fmt.Errorf("initialize server database schema: %w", err)
+			return fmt.Errorf("initialize server database schema with statement %q: %w", statement, err)
 		}
 	}
 	if err := ensureTokenOwner(ctx, db); err != nil {
@@ -80,12 +80,15 @@ func EnsureSchema(ctx context.Context, db *sql.DB) error {
 	if err := ensureTokenLast4(ctx, db); err != nil {
 		return fmt.Errorf("migrate API token metadata schema: %w", err)
 	}
+	if err := ensureTokenScope(ctx, db); err != nil {
+		return fmt.Errorf("migrate API token scopes: %w", err)
+	}
 	// Schema update 7107920 adds the canonical report window and erases legacy rotating identifiers.
 	if err := Write(ctx, db, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `ALTER TABLE security_reports ADD COLUMN id_window BIGINT NOT NULL DEFAULT 0`)
 		return err
 	}); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		return fmt.Errorf("add security report window column: %w", err)
+		return fmt.Errorf("migrate security_reports with statement %q: %w", `ALTER TABLE security_reports ADD COLUMN id_window BIGINT NOT NULL DEFAULT 0`, err)
 	}
 	legacySecurityID, err := hasColumn(ctx, db, "security_reports", "security_id")
 	if err != nil {
@@ -165,7 +168,7 @@ func columnType(ctx context.Context, db *sql.DB, table, column string) (string, 
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var index, notNull, primaryKey int
 		var name, dataType string

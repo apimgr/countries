@@ -68,17 +68,21 @@ func isContactAPI(r *http.Request) bool {
 	return value
 }
 
-var contactUsedTokens = map[string]time.Time{}
-var contactUsedMu sync.Mutex
-var fallbackCaptchaAnswers = map[string]string{}
-var contactRateMu sync.Mutex
-var contactRateEvents = map[string][]time.Time{}
-var contactStrikes = map[string][]time.Time{}
-var contactBans = map[string]time.Time{}
-var contactDuplicates = map[string]time.Time{}
+var (
+	contactUsedTokens      = map[string]time.Time{}
+	contactUsedMu          sync.Mutex
+	fallbackCaptchaAnswers = map[string]string{}
+	contactRateMu          sync.Mutex
+	contactRateEvents      = map[string][]time.Time{}
+	contactStrikes         = map[string][]time.Time{}
+	contactBans            = map[string]time.Time{}
+	contactDuplicates      = map[string]time.Time{}
+)
 
-var contactURLPattern = regexp.MustCompile(`(?i)(https?://[^\s<>]+|\bwww\.[a-z0-9.-]+\.[a-z]{2,}\b|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b)`)
-var contactMarkupPattern = regexp.MustCompile(`(?i)(</?[a-z][^>]*|<!|&(?:lt|gt|#0*60|#0*62);|\[(?:url|img|b|/))`)
+var (
+	contactURLPattern    = regexp.MustCompile(`(?i)(https?://[^\s<>]+|\bwww\.[a-z0-9.-]+\.[a-z]{2,}\b|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b)`)
+	contactMarkupPattern = regexp.MustCompile(`(?i)(</?[a-z][^>]*|<!|&(?:lt|gt|#0*60|#0*62);|\[(?:url|img|b|/))`)
+)
 
 func loadContactKey(db *sql.DB) []byte {
 	key := make([]byte, 32)

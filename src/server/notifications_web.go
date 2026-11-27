@@ -44,6 +44,10 @@ func (s *Server) publicNotificationsMiddleware(next http.Handler) http.Handler {
 		}
 		prefix := s.requestURLPrefix(r)
 		lang := s.languageForRequest(buffer, r)
+		webUI := s.config.Server.Notifications.WebUI
+		toastCSSURL := prefix + "/static/css/notifications.css?duration=" + strconv.Itoa(webUI.Duration) + "&warning_duration=" + strconv.Itoa(webUI.WarningDuration) + "&v=" + s.assetStamp()
+		toastCSS := `<link rel="stylesheet" href="` + template.HTMLEscapeString(toastCSSURL) + `">`
+		body = bytes.Replace(body, []byte("</head>"), []byte(toastCSS+"</head>"), 1)
 		if !strings.Contains(string(body), "/static/js/app.js") {
 			script := []byte(`<script src="` + template.HTMLEscapeString(prefix+"/static/js/app.js") + `" defer></script>`)
 			body = bytes.Replace(body, []byte("</body>"), append(script, []byte("</body>")...), 1)

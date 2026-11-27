@@ -34,6 +34,9 @@ type clientGUI struct {
 	values     []string
 	result     string
 	message    string
+	saveConfig bool
+	setDefault bool
+	autostart  bool
 }
 
 func clientGUIAvailable() bool { return true }
@@ -46,7 +49,7 @@ func launchClientGUI(server string, cfg *cliConfig, configPath string) error {
 		uiTheme = theme.DefaultLight()
 	}
 	ui := app.New(app.WithWindowProvider(window), app.WithPlatformProvider(window), app.WithEventSource(window.EventSource()), app.WithTheme(uiTheme))
-	state := &clientGUI{app: ui, server: server, token: cfg.Server.Token, configPath: configPath, config: cfg, screen: "menu"}
+	state := &clientGUI{app: ui, server: server, token: cfg.Server.Token, configPath: configPath, config: cfg, screen: "menu", saveConfig: true, autostart: autostartEnabled()}
 	if strings.TrimSpace(server) == "" {
 		state.screen = "setup"
 	}
@@ -92,6 +95,30 @@ func launchClientGUI(server string, cfg *cliConfig, configPath string) error {
 	return desktop.Run(window, ui)
 }
 
+func promptClientUpdateGUI(version, lang string) (bool, error) {
+	title := clientText(lang, "update.gui_title")
+	window := gogpu.NewApp(gogpu.DefaultConfig().WithTitle(title).WithSize(520, 220))
+	ui := app.New(app.WithWindowProvider(window), app.WithPlatformProvider(window), app.WithEventSource(window.EventSource()), app.WithTheme(theme.DefaultDark()))
+	selected := false
+	ui.SetRoot(primitives.Box(
+		primitives.Text(clientTextFormat(lang, "client.update.available", map[string]string{"version": version, "current": Version})).FontSize(18),
+		primitives.Text(clientText(lang, "update.gui_question")),
+	).Padding(28).Gap(16))
+	alert := dialog.New(
+		dialog.Title(title),
+		dialog.Content(primitives.Text(clientTextFormat(lang, "client.update.available", map[string]string{"version": version, "current": Version}))),
+		dialog.Actions(
+			dialog.Action{Label: clientText(lang, "update.gui_install"), Variant: dialog.VariantFilled, Default: true, OnClick: func() { selected = true; window.Close() }},
+			dialog.Action{Label: clientText(lang, "update.gui_skip"), Variant: dialog.VariantOutlined, OnClick: window.Close},
+		),
+	)
+	alert.Show(ui.Window().Context())
+	if err := desktop.Run(window, ui); err != nil {
+		return false, err
+	}
+	return selected, nil
+}
+
 func (state *clientGUI) view() *primitives.BoxWidget {
 	children := []widget.Widget{primitives.Text(clientText(state.config.Lang, "tui.title")).FontSize(28).Bold(), primitives.Text(state.message)}
 	switch state.screen {
@@ -101,6 +128,11 @@ func (state *clientGUI) view() *primitives.BoxWidget {
 		children = append(children, textfield.New(textfield.Placeholder(serverLabel), textfield.InitialValue(state.server), textfield.A11yLabel(serverLabel), textfield.OnChange(func(value string) { state.server = value })))
 		tokenLabel := clientText(state.config.Lang, "gui.optional_token")
 		children = append(children, textfield.New(textfield.Placeholder(tokenLabel), textfield.InitialValue(state.token), textfield.A11yLabel(tokenLabel), textfield.InputTypeOpt(textfield.TypePassword), textfield.OnChange(func(value string) { state.token = value })))
+		children = append(children, button.New(button.Text(setupCheckbox(state.saveConfig, clientText(state.config.Lang, "gui.save_config"))), button.OnClick(func() { state.saveConfig = !state.saveConfig; state.refresh() })))
+		children = append(children, button.New(button.Text(setupCheckbox(state.setDefault, clientText(state.config.Lang, "gui.set_default"))), button.OnClick(func() { state.setDefault = !state.setDefault; state.refresh() })))
+		if autostartSupported() {
+			children = append(children, button.New(button.Text(setupCheckbox(state.autostart, clientText(state.config.Lang, "gui.autostart"))), button.OnClick(func() { state.autostart = !state.autostart; state.refresh() })))
+		}
 		children = append(children, button.New(button.Text(clientText(state.config.Lang, "gui.test_save")), button.OnClick(state.saveSetup)))
 	case "arguments":
 		children = append(children, primitives.Text(clientText(state.config.Lang, "command."+state.command)))
@@ -135,6 +167,14 @@ func (state *clientGUI) view() *primitives.BoxWidget {
 
 func (state *clientGUI) refresh() { state.app.SetRoot(state.view()) }
 
+func setupCheckbox(checked bool, label string) string {
+	mark := "[ ]"
+	if checked {
+		mark = "[x]"
+	}
+	return mark + " " + label
+}
+
 func (state *clientGUI) showMenu() {
 	state.screen, state.message = "menu", ""
 	state.refresh()
@@ -167,8 +207,9 @@ func (state *clientGUI) choose(command string) {
 
 func (state *clientGUI) saveSetup() {
 	server, err := normalizeBaseURL(state.server, state.config.Lang)
+	var info clientSetupInfo
 	if err == nil {
-		err = checkServer(server, state.token, state.config.Lang)
+		info, err = validateClientSetup(server, state.token, state.config.Lang)
 	}
 	if err != nil {
 		state.message = ""
@@ -177,15 +218,22 @@ func (state *clientGUI) saveSetup() {
 		return
 	}
 	state.server = server
-	state.config.Server.Primary = server
-	state.config.Server.Token = state.token
-	if err := saveConfigAt(*state.config, state.configPath); err != nil {
+	if err := persistWizardSettings(state.configPath, server, state.token, state.saveConfig, state.setDefault); err != nil {
 		state.message = ""
 		state.refresh()
 		state.showError(err.Error())
 		return
 	}
-	state.screen, state.message = "menu", clientText(state.config.Lang, "gui.saved")
+	state.config.Server.Primary = server
+	state.config.Server.Token, state.config.Auth.Token = state.token, state.token
+	if autostartSupported() {
+		if err := setAutostart(state.autostart); err != nil {
+			state.autostart = false
+			log.Printf("WARN: could not update CLI login autostart: %v", err)
+		}
+	}
+	state.screen = "menu"
+	state.message = clientTextFormat(state.config.Lang, "client.gui.connected", map[string]string{"server": clientSetupInfoText(info)})
 	state.refresh()
 }
 

@@ -8,8 +8,10 @@ import (
 	"time"
 )
 
-var databaseCredentialURL = regexp.MustCompile(`(?i)(://)[^/@\s]+:[^/@\s]+@`)
-var databaseCredentialQuery = regexp.MustCompile(`(?i)((?:auth[_-]?)?(?:token|password|passwd|secret|key)\s*[=:]\s*)[^&#\s,;]+`)
+var (
+	databaseCredentialURL   = regexp.MustCompile(`(?i)(://)[^/@\s]+:[^/@\s]+@`)
+	databaseCredentialQuery = regexp.MustCompile(`(?i)((?:auth[_-]?)?(?:token|password|passwd|secret|key)\s*[=:]\s*)[^&#\s,;]+`)
+)
 
 // DatabaseMonitor applies the consecutive-failure and repeat-notification
 // policy for the database_check task.

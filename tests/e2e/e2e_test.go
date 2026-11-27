@@ -63,7 +63,7 @@ func TestMain(m *testing.M) {
 		os.Exit(2)
 	}
 	for _, dir := range []string{"config", "data", "logs", "cache", "backup", "failures"} {
-		if err := os.MkdirAll(filepath.Join(artifactDir, dir), 0700); err != nil {
+		if err := os.MkdirAll(filepath.Join(artifactDir, dir), 0o700); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
@@ -78,13 +78,13 @@ func TestMain(m *testing.M) {
 	}
 	dependencyURL := strings.Replace(dependencyStub.URL, "127.0.0.1", "localhost", 1)
 	certificatePath := filepath.Join(artifactDir, "config", "e2e-ca.pem")
-	if err := os.WriteFile(certificatePath, caCertificate, 0600); err != nil {
+	if err := os.WriteFile(certificatePath, caCertificate, 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
 	databasePath := filepath.Join(artifactDir, "data", "db", "server.db")
 	fixtureConfig := fmt.Sprintf("data:\n  cve:\n    source: %q\nserver:\n  port: %q\n  address: 0.0.0.0\n  database:\n    driver: sqlite\n    url: %q\n  geoip:\n    enabled: false\n  tor:\n    enabled: false\n  i2p:\n    enabled: false\n  security:\n    blocklists:\n      enabled: false\n  rate_limit:\n    global_burst: 10000\n    read:\n      requests: 10000\n      window: 60\n    write:\n      requests: 10000\n      window: 60\n    health:\n      requests: 10000\n      window: 60\n    strict:\n      requests: 10000\n      window: 60\n    auth_failures:\n      requests: 10000\n      window: 60\n", dependencyURL, port, databasePath)
-	if err := os.WriteFile(filepath.Join(artifactDir, "config", "server.yml"), []byte(fixtureConfig), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(artifactDir, "config", "server.yml"), []byte(fixtureConfig), 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
@@ -100,7 +100,7 @@ func TestMain(m *testing.M) {
 	}
 	e2eOperatorToken = "adm_" + string(tokenCharacters)
 	secretsConfig := "server:\n  token: " + e2eOperatorToken + "\n"
-	if err := os.WriteFile(filepath.Join(artifactDir, "config", "secrets.yml"), []byte(secretsConfig), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(artifactDir, "config", "secrets.yml"), []byte(secretsConfig), 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
@@ -110,7 +110,7 @@ func TestMain(m *testing.M) {
 	}
 	logPath := filepath.Join(artifactDir, "logs", "server.log")
 	var err error
-	serverLog, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	serverLog, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -565,7 +565,7 @@ func TestTier1SSRAccessibility(t *testing.T) {
 
 func TestTier1SSRAssetsNegotiationAndErrors(t *testing.T) {
 	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	for _, path := range []string{"/static/css/common.css", "/static/css/components.css", "/static/css/public.css", "/static/js/app.js", "/manifest.json", "/sw.js"} {
+	for _, path := range []string{"/static/css/common.css", "/static/css/components.css", "/static/css/public.css", "/static/css/notifications.css", "/static/js/app.js", "/manifest.json", "/sw.js"} {
 		response, err := client.Get(baseURL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -1018,7 +1018,7 @@ func isOptionalRuntimeRoute(path string) bool {
 }
 
 func documentedAPIRoutes(document, sourceName string) [][3]string {
-	var table string
+	var tables []string
 	if sourceName == "IDEA.md" {
 		start := strings.Index(document, "### API routes")
 		if start < 0 {
@@ -1028,48 +1028,56 @@ func documentedAPIRoutes(document, sourceName string) [][3]string {
 		if end := strings.Index(document, "\n## "); end >= 0 {
 			document = document[:end]
 		}
-		table = document
+		tables = append(tables, document)
 	} else {
 		start := strings.Index(document, "## Root-Level Endpoints")
 		if start < 0 {
 			return nil
 		}
-		document = document[start:]
-		if end := strings.Index(document, "**NOTE:** OpenAPI is JSON only"); end >= 0 {
-			document = document[:end]
+		rootEndpoints := document[start:]
+		if end := strings.Index(rootEndpoints, "**NOTE:** OpenAPI is JSON only"); end >= 0 {
+			rootEndpoints = rootEndpoints[:end]
 		}
-		table = document
+		tables = append(tables, rootEndpoints)
+		if start := strings.Index(document, "### /server/ API Endpoints"); start >= 0 {
+			serverEndpoints := document[start+len("### /server/ API Endpoints"):]
+			if end := strings.Index(serverEndpoints, "\n### "); end >= 0 {
+				serverEndpoints = serverEndpoints[:end]
+			}
+			tables = append(tables, serverEndpoints)
+		}
 	}
 	code := regexp.MustCompile("`([^`]+)`")
-	rows := strings.Split(table, "\n")
 	var routes [][3]string
-	for _, row := range rows {
-		cells := strings.Split(row, "|")
-		if len(cells) < 4 {
-			continue
-		}
-		methodCell, routeCell := strings.TrimSpace(cells[1]), cells[2]
-		if sourceName == "AI.md" {
-			routeCell, methodCell = cells[1], strings.TrimSpace(cells[2])
-		}
-		if !strings.Contains(strings.ToUpper(methodCell), "GET") && !strings.Contains(strings.ToUpper(methodCell), "POST") && !strings.Contains(strings.ToUpper(methodCell), "PATCH") && !strings.Contains(strings.ToUpper(methodCell), "DELETE") && !strings.Contains(strings.ToUpper(methodCell), "PUT") {
-			continue
-		}
-		methods := strings.Split(strings.ToLower(methodCell), ",")
-		paths := code.FindAllStringSubmatch(routeCell, -1)
-		for _, entry := range paths {
-			path := strings.ReplaceAll(entry[1], "{api_version}", "v1")
-			if (!strings.HasPrefix(path, "/api/") && path != "/mcp") || strings.ContainsAny(path, "[]*") {
+	for _, table := range tables {
+		for _, row := range strings.Split(table, "\n") {
+			cells := strings.Split(row, "|")
+			if len(cells) < 4 {
 				continue
 			}
-			textVariant := strings.Contains(routeCell, ".txt")
-			for _, method := range methods {
-				method = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(method), "|"))
-				if method == "all" || method == "get, post" || method == "get post" {
+			methodCell, routeCell := strings.TrimSpace(cells[1]), cells[2]
+			if sourceName == "AI.md" {
+				routeCell, methodCell = cells[1], strings.TrimSpace(cells[2])
+			}
+			if !strings.Contains(strings.ToUpper(methodCell), "GET") && !strings.Contains(strings.ToUpper(methodCell), "POST") && !strings.Contains(strings.ToUpper(methodCell), "PATCH") && !strings.Contains(strings.ToUpper(methodCell), "DELETE") && !strings.Contains(strings.ToUpper(methodCell), "PUT") {
+				continue
+			}
+			methods := strings.Split(strings.ToLower(methodCell), ",")
+			paths := code.FindAllStringSubmatch(routeCell, -1)
+			for _, entry := range paths {
+				path := strings.ReplaceAll(entry[1], "{api_version}", "v1")
+				if (!strings.HasPrefix(path, "/api/") && path != "/mcp") || strings.ContainsAny(path, "[]*") {
 					continue
 				}
-				if method == "get" || method == "post" || method == "patch" || method == "delete" || method == "put" {
-					routes = append(routes, [3]string{method, path, strconv.FormatBool(textVariant)})
+				textVariant := strings.Contains(routeCell, ".txt")
+				for _, method := range methods {
+					method = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(method), "|"))
+					if method == "all" || method == "get, post" || method == "get post" {
+						continue
+					}
+					if method == "get" || method == "post" || method == "patch" || method == "delete" || method == "put" {
+						routes = append(routes, [3]string{method, path, strconv.FormatBool(textVariant)})
+					}
 				}
 			}
 		}
@@ -1105,21 +1113,21 @@ func TestTier1OwnerTokenLifecycleAPI(t *testing.T) {
 	}
 	type tokenData struct {
 		Data struct {
-			OwnerToken string `json:"owner_token"`
-			Token      string `json:"token"`
-			ID         string `json:"id"`
+			OwnerToken  string `json:"owner_token"`
+			LinkedToken string `json:"linked_token"`
+			ID          string `json:"id"`
 		} `json:"data"`
 	}
 	decodeToken := func(status int, body []byte, wantStatus int, field string) (string, string) {
 		t.Helper()
 		if status != wantStatus {
-			t.Fatalf("token API status=%d, want %d", status, wantStatus)
+			t.Fatalf("token API status=%d, want %d; response=%s", status, wantStatus, body)
 		}
 		var result tokenData
 		if err := json.Unmarshal(body, &result); err != nil {
 			t.Fatalf("decode token API response: %v", err)
 		}
-		value := result.Data.Token
+		value := result.Data.LinkedToken
 		if field == "owner_token" {
 			value = result.Data.OwnerToken
 		}
@@ -1140,8 +1148,8 @@ func TestTier1OwnerTokenLifecycleAPI(t *testing.T) {
 	if status, _ := call(http.MethodPost, listPath+"/primary", primary, `{}`); status != http.StatusConflict {
 		t.Fatalf("second primary issue status=%d, want 409", status)
 	}
-	status, body = call(http.MethodPost, listPath, primary, `{"name":"e2e-client","expiry":"7d"}`)
-	linked, linkedID := decodeToken(status, body, http.StatusCreated, "token")
+	status, body = call(http.MethodPost, listPath, primary, `{"name":"e2e-client","expires":"7d"}`)
+	linked, linkedID := decodeToken(status, body, http.StatusCreated, "linked_token")
 	if linkedID == "" || linked == primary {
 		t.Fatal("linked token was not independently issued")
 	}
@@ -1153,12 +1161,12 @@ func TestTier1OwnerTokenLifecycleAPI(t *testing.T) {
 		t.Fatalf("linked token management status=%d, want 403", status)
 	}
 	linkedPath := listPath + "/" + linkedID
-	status, _ = call(http.MethodPatch, linkedPath, primary, `{"name":"renamed-client","expiry":"30d"}`)
+	status, _ = call(http.MethodPatch, linkedPath, primary, `{"name":"renamed-client","expires":"30d"}`)
 	if status != http.StatusOK {
 		t.Fatalf("linked token update status=%d, want 200", status)
 	}
 	status, body = call(http.MethodPost, linkedPath+"/rotate", primary, `{"confirm":true}`)
-	rotatedLinked, _ := decodeToken(status, body, http.StatusOK, "token")
+	rotatedLinked, _ := decodeToken(status, body, http.StatusOK, "linked_token")
 	if rotatedLinked == linked {
 		t.Fatal("linked-token rotation did not replace its value")
 	}
@@ -1953,10 +1961,10 @@ func browserContext(t *testing.T) context.Context {
 		defer pageCancel()
 		html, _ = chromedp.Run(pageCtx, chromedp.OuterHTML("html"))
 		if html != "" {
-			_ = os.WriteFile(filepath.Join(artifactDir, "failures", name+".html"), []byte(html), 0600)
+			_ = os.WriteFile(filepath.Join(artifactDir, "failures", name+".html"), []byte(html), 0o600)
 		}
 		if screenshot, err := chromedp.Run(pageCtx, chromedp.CaptureScreenshot()); err == nil {
-			_ = os.WriteFile(filepath.Join(artifactDir, "failures", name+".png"), screenshot, 0600)
+			_ = os.WriteFile(filepath.Join(artifactDir, "failures", name+".png"), screenshot, 0o600)
 		}
 	})
 	return ctx
