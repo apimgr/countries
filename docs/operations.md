@@ -23,10 +23,14 @@ Use the server maintenance commands, not `countries-cli`:
 ```sh
 countries --maintenance backup
 countries --maintenance backup /path/to/backup.tar.gz --include-ssl --include-data
-countries --maintenance restore /path/to/backup.tar.gz
+countries --maintenance restore [/path/to/backup.tar.gz]
 ```
 
+If no archive is named, restore selects the newest full backup by its UTC filename date (later modification time breaks ties) and requires typed confirmation. `countries --maintenance backup test` uses the same default selection without changing live data.
+
 A backup contains the server database and configuration; optional data and SSL files are included only when requested. New backups use AES-256-GCM when the backup encryption password is configured in `secrets.yml`. Compliance mode requires that password before creating a backup. The password is not accepted as a command-line argument.
+
+Backups also include every database-managed application secret, including previous-key values and their grace-period expiry timestamps. Restore replaces the application secret rows from the archive, which preserves decryption during an active key-rotation grace period and also works with a remote database.
 
 Scheduled full and incremental backups run daily at 02:00 in the configured scheduler timezone. Hourly incrementals are disabled by default. Retention settings control the number of daily full backups, weekly/monthly/yearly checkpoints, and the total backup-volume size cap. The server verifies archives after creation. Restore checks archive limits and integrity before staging replacement files; stop the service before a restore and keep an independent copy of the backup until the service has restarted successfully.
 

@@ -60,7 +60,7 @@ The server URL is selected from `--server`, `COUNTRIES_SERVER_PRIMARY`, `server.
 
 The client reads `server.token` from its config file unless overridden with `--token` or `--token-file`. Tokens are sent only in the `Authorization: Bearer` header. Output language precedence is `--lang`, `lang` in `cli.yml`, `LANG`, then English. Supported language codes are `en`, `es`, `fr`, `de`, `it`, `ar`, `zh`, and `ja`. The HTTP client timeout is 15 seconds, and response bodies larger than 16 MiB are rejected. `--version` and `--help` print the invoked binary's filename, so those labels remain accurate if the binary is renamed.
 
-`display.mode` in `cli.yml` accepts `auto` (default), `gui`, or `tui`. With no command, auto mode chooses a local GUI when the optional GUI build is available, then an interactive TUI; it reports an error when neither is available. Any explicit command runs in CLI mode regardless of display settings. Help, version, and shell integration options exit without opening an interface.
+`display.mode` in `cli.yml` accepts `auto` (default), `gui`, or `tui`. With no command, auto mode chooses a local GUI when the optional GUI build is available, then an interactive TUI; in a headless environment it prints the usage error and exits with status 2. Any explicit command runs in CLI mode, printing plain output when headless. Help, version, and shell integration options exit without opening an interface.
 
 ## Updates
 
@@ -74,7 +74,8 @@ The `countries` server binary has separate maintenance commands. These commands 
 
 ```sh
 countries --maintenance backup [filename] [--include-ssl] [--include-data]
-countries --maintenance restore BACKUP_FILE
+countries --maintenance backup test [BACKUP_FILE]
+countries --maintenance restore [BACKUP_FILE]
 countries --maintenance update [check|yes|branch {stable|beta|devel}]
 countries --maintenance mode
 countries --maintenance setup
@@ -96,6 +97,8 @@ countries --maintenance security show TRACKING_ID
 countries --maintenance security update TRACKING_ID [--status STATUS] [--comment TEXT] [--disclosure-date YYYY-MM-DD] [--severity LEVEL]
 countries --maintenance compliance report
 ```
+
+When `BACKUP_FILE` is omitted, `backup test` and `restore` select the newest full backup by UTC date in its filename, breaking same-date ties by modification time. Restore requires typed confirmation before proceeding.
 
 `mode` prints the current application mode. `setup` loads the selected server configuration and prints its setup summary.
 
