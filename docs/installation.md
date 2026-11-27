@@ -64,10 +64,10 @@ The bind address limits access to the Docker bridge interface. Change it only wh
 Docker and the `casjaysdev/go:latest` image are required. The project Makefile runs Go inside that container with CGO disabled.
 
 ```sh
-make dev
+make build
 ```
 
-The command builds the server and CLI into a project-scoped OS temporary directory and prints its path. Run the server binary from that directory. On first start, a native server selects and saves an available port in the `64000`–`64999` range.
+The command builds debug server and CLI binaries for the local platform and all eight supported OS/architecture targets under `binaries/`. Run the server binary from that directory. On first start, a native server selects and saves an available port in the `64000`–`64999` range.
 
 ## System service
 

@@ -10,7 +10,8 @@
 
 ## CRITICAL - ALWAYS DO
 - Put runtime/test artifacts in project-scoped temporary directories and clean them according to the script contract.
-- Keep `make test` as the unit/route commit gate; run Docker, Incus, and browser E2E through their standalone scripts as specified.
+- Keep `make test` as the commit gate: it runs Go quality checks and unit coverage, then the basic Docker binary tier through `./tests/run_tests.sh`.
+- Run `./tests/incus.sh` as the separate full-app init-system check; run `./tests/e2e.sh` on demand, outside the commit gate.
 - Maintain ReadTheDocs documentation that describes the shipped product accurately.
 - Keep localization, English fallback behavior, accessibility, and JavaScript-on/off behavior compliant.
 
@@ -23,10 +24,10 @@
 ## TERMINOLOGY
 | Term | Meaning |
 |------|---------|
-| Basic test tier | `make test` unit and route tests with the commit-gate checks |
+| Basic test tier | `./tests/run_tests.sh`, invoked by `make test`, for compiled-binary checks in Docker |
 
 ## QUICK REFERENCE
-The required standalone scripts include `run_tests.sh`, `docker.sh`, `incus.sh`, and `e2e.sh`; they are not interchangeable.
+The required scripts include `run_tests.sh`, `docker.sh`, `incus.sh`, and `e2e.sh`; the first two make up the basic binary tier, while Incus and E2E are explicit standalone runs.
 
 ---
 For complete details, see AI.md PART 28, PART 29, and PART 30.

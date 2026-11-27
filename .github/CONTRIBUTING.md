@@ -4,8 +4,9 @@
 
 The project is implemented in Go. Go toolchain commands run in the supported `casjaysdev/go:latest` container with `CGO_ENABLED=0`.
 
-- `make dev` builds the server and CLI into a temporary directory.
-- `make test` runs vet, vulnerability scanning, the Go tests, and the coverage gate.
+- `make build` builds debug server and CLI binaries for the local platform and all eight supported targets.
+- `make test` runs lint, vulnerability scanning, Go tests with coverage, and the basic Docker binary suite.
+- `./tests/incus.sh` runs the separate full systemd/OpenRC integration suite.
 - Update or add tests and user documentation with behavior changes.
 
 Before contributing, read [`AI.md`](../AI.md) and [`IDEA.md`](../IDEA.md). AI.md is the implementation specification; IDEA.md defines intended product behavior.

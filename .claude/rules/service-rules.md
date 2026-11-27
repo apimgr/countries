@@ -4,7 +4,7 @@
 
 ## CRITICAL - NEVER DO
 - Never prompt for privilege escalation when the user cannot actually escalate.
-- Never run service installation or host-mutating operations without the specified privilege and confirmation flow.
+- Never run service installation or host-mutating operations outside the specified privilege-escalation policy.
 - Never assume only systemd is available.
 
 ## CRITICAL - ALWAYS DO
