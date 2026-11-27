@@ -186,3 +186,22 @@ Country-data and public information routes below require no authentication. Owne
 | GET | `/api/autodiscover` | Public | Return server, API, overlay-address, and CLI version discovery data. |
 | GET | `/cli/binaries/{binary}` | Public | Download an allowlisted CLI binary. |
 | POST | `/mcp`, `/api/mcp` | Owner token | Handle MCP protocol requests using the compatibility endpoint aliases. |
+
+### UI components
+
+| Component | Block and elements | Variants | States |
+|---|---|---|---|
+| Landing hero | `.hero`, `.hero-content`, `.hero-badge`, `.hero-badge-dot`, `.hero-title`, `.hero-title-gradient`, `.hero-description`, `.hero-actions`, `.hero-stats`, `.hero-stat*` | none | `:hover`, `:focus-visible` |
+| Feature cards | `.features`, `.features-grid`, `.feature-card`, `.feature-icon`, `.feature-title`, `.feature-description`, `.section-header`, `.section-title`, `.section-description` | none | `:hover`, `:focus-visible` |
+| Country search | `.search-section`, `.search-container`, `.search-box`, `.search-form`, `.search-input`, `.search-icon`, `.search-btn`, `.location-status*` | none | `:focus-visible`, `[aria-invalid]`, `:disabled` |
+| Country results | `.results-section`, `.results-header`, `.results-title`, `.results-count`, `.results-grid`, `.result-card*`, `.result-header`, `.result-title`, `.result-meta*`, `.result-badge` | `.result-card-featured` | `:hover`, `:focus-visible` |
+| API documentation | `.api-*`, `.endpoint*`, `.api-method*`, `.api-section*`, `.api-overview*`, `.api-params*`, `.api-response-*` | `.api-method-get`, `.api-method-post`, `.api-method-put`, `.api-method-delete`, `.get`, `.post`, `.put`, `.delete` | none |
+| Public shell | `.header`, `.header-actions`, `.header-link`, `.nav`, `.nav-brand*`, `.nav-links`, `.nav-link`, `.footer*` | none | `[aria-current="page"]`, `[aria-expanded]`, `.is-nav-collapsed`, `:focus-visible` |
+| Forms | `.form-*`, `.form-group`, `.form-input`, `.form-select`, `.form-actions`, `.search-form`, `.btn-group` | `.form-input-lg`, `.full-width` | `:focus-visible`, `[aria-invalid]`, `:disabled`, `:read-only` |
+| Contact review | `.contact-review-*`, `.contact-trap` | none | `[open]`, `:focus-visible` |
+| Code and copy | `.code-*`, `.copy-*` | none | `[aria-live]`, `.is-copied`, `:focus-visible` |
+| Token management | `.token-*`, `.token-browser-card`, `.token-create-card`, `.token-linked-card`, `.token-revoke-card`, `.token-management-layout` | none | `:focus-visible`, `[aria-invalid]`, `:disabled` |
+| Empty, loading, and status | `.empty-*`, `.loading`, `.loading-*`, `.status`, `.status-*`, `.status-banner`, `.status-icon`, `.status-text`, `.status-info`, `.status-neutral`, `.feature-list`, `.feature-enabled`, `.feature-disabled`, `.stats-grid`, `.notification-flash`, `.offline-indicator` | `.alert-*`, `.toast-*`, `.badge-production`, `.badge-development`, `.badge-debug` | `.toast-removing`, `[role="status"]`, `[role="alert"]` |
+| GraphQL form | `.graphql-query`, `.graphql-result` | none | `[aria-live]`, `:focus-visible` |
+| Preference sharing | `.preference-export` | none | `[aria-invalid]`, `:disabled` |
+| Responsive controls | `.pwa-*`, `.cookie-*`, `.theme-*`, `.theme-form`, `.language-form`, `.theme-preview` | none | `[open]`, `[aria-expanded]`, `:focus-visible` |

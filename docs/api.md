@@ -12,7 +12,7 @@ Metrics endpoints keep their protocol media types: Prometheus endpoints return t
 
 Successful public GET responses for country data, search, coordinates, nearby, statistics, and count endpoints use `Cache-Control: public, max-age=60` and vary by language and cookie. Error responses, writes, server pages, and other private API responses use `no-store` or `private, no-store`.
 
-When debug endpoints are enabled with `--debug`, a truthy `DEBUG`, or `MODE=debug` with `DEBUG` unset, every root `/debug/*` route requires the operator bearer token. The routes include `/debug/config`, `/debug/routes`, `/debug/cache`, `/debug/db`, `/debug/scheduler`, `/debug/error500`, `/debug/memory`, `/debug/goroutines`, `/debug/vars`, and `/debug/pprof` with its profile subpaths. `server.debug.pprof` and `server.debug.runtime_endpoints` can disable their endpoint groups. Debug routes have no API aliases and are absent when the runtime debug flag is off. Configuration output omits secret-only fields; goroutine stacks are returned as plain text.
+When debug endpoints are enabled with `--debug`, a truthy `DEBUG`, or `MODE=debug` with `DEBUG` unset, every root `/debug/*` route requires the operator bearer token. The routes include `/debug/config`, `/debug/routes`, `/debug/cache`, `/debug/db`, `/debug/scheduler`, `/debug/components` (the shared component-state gallery), `/debug/error500`, `/debug/memory`, `/debug/goroutines`, `/debug/vars`, and `/debug/pprof` with its profile subpaths. `server.debug.pprof` and `server.debug.runtime_endpoints` can disable their endpoint groups. Debug routes have no API aliases and are absent when the runtime debug flag is off. Configuration output omits secret-only fields; goroutine stacks are returned as plain text.
 
 ## Country records
 
