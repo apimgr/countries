@@ -28,7 +28,7 @@ countries --maintenance backup /path/to/backup.tar.gz --include-ssl --include-da
 countries --maintenance restore [/path/to/backup.tar.gz]
 ```
 
-If no archive is named, restore selects the newest full backup by its UTC filename date (later modification time breaks ties) and requires typed confirmation. `countries --maintenance backup test` uses the same default selection without changing live data.
+If no archive is named, restore selects the newest full backup by its UTC filename date (later modification time breaks ties) and requires typed confirmation. `countries --maintenance backup test` verifies that newest full and each present daily and hourly incremental with its base, without changing live data. Encrypted archives prompt for their password in a terminal.
 
 SQLite backups contain the server database and configuration. With a remote database, the provider retains the database and the archive contains configuration but omits the remote database and its derived cache. Optional data and SSL files are included only when requested. New backups use AES-256-GCM when the backup encryption password is configured in `secrets.yml`. Compliance mode requires that password before creating a backup. The password is not accepted as a command-line argument.
 

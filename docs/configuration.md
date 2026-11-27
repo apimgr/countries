@@ -440,8 +440,8 @@ Each task accepts `enabled` and `schedule`; `retry_on_fail` and `retry_delay` ap
 | `server.privacy.consent.buttons.accept` | configured default | Accept button label. |
 | `server.privacy.consent.preferences_text` | configured default | Preferences control label. |
 | `server.privacy.cookies.essential` | configured default | Essential-cookie description and enabled state. |
-| `server.privacy.cookies.preferences` | configured default | Preferences-cookie description and enabled state. |
-| `server.privacy.cookies.analytics` | configured default | Analytics-cookie description and enabled state. |
+| `server.privacy.cookies.preferences` | configured default | Preferences-cookie description and whether its consent control is offered. When disabled, the control is hidden, submitted choices are ignored, existing stored consent is retained, and preference cookies are treated as off. |
+| `server.privacy.cookies.analytics` | configured default | Analytics-cookie description and whether its consent control is offered. When disabled, the control is hidden, submitted choices are ignored, existing stored consent is retained, and analytics cookies are treated as off. |
 | `server.privacy.retention.period` | configured default | Data-retention period description. |
 | `server.privacy.retention.export_available` | configured default | Whether data export is available. |
 | `server.privacy.retention.deletion_available` | configured default | Whether data deletion is available. |

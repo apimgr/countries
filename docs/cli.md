@@ -98,9 +98,17 @@ countries --maintenance security list [--status STATUS]
 countries --maintenance security show TRACKING_ID
 countries --maintenance security update TRACKING_ID [--status STATUS] [--comment TEXT] [--disclosure-date YYYY-MM-DD] [--severity LEVEL]
 countries --maintenance compliance report
+countries --maintenance scheduler list
+countries --maintenance scheduler show TASK_ID
+countries --maintenance scheduler run TASK_ID
+countries --maintenance scheduler enable TASK_ID
+countries --maintenance scheduler disable TASK_ID
+countries --maintenance scheduler history TASK_ID
 ```
 
-When `BACKUP_FILE` is omitted, `backup test` and `restore` select the newest full backup by UTC date in its filename, breaking same-date ties by modification time. Restore requires typed confirmation before proceeding.
+When `BACKUP_FILE` is omitted, `backup test` selects the newest full backup by UTC date in its filename, breaking same-date ties by modification time, and also verifies each present daily and hourly incremental with its base. `restore` selects the newest full backup using the same date and tie-breaking rules. Restore requires typed confirmation before proceeding.
+
+Scheduler commands require the operator token or root. `list`, `show`, and `history` are read-only. `run` executes the task in the maintenance process while taking its shared database lock; `enable` and `disable` write the task's enabled setting to `yaml.d/maintenance.yml` for the running server to apply on its next configuration reload. Runs and task-state changes are audited.
 
 `mode` prints the current application mode. `setup` loads the selected server configuration and prints its setup summary.
 
@@ -108,7 +116,7 @@ Without a filename, `backup` creates a timestamped archive in the default backup
 
 The archive is verified before it is installed. Restore verifies the selected archive and its incremental base, applies configured size and expansion limits, stages the files, and then replaces the configured files. Encrypted restores prompt for the backup password in an interactive terminal; passwords are never accepted as command-line arguments. Restore is destructive and should be run by the deployment operator with the service stopped.
 
-Scheduled backups run daily at 02:00. Daily full backups and the daily incremental are enabled by default; hourly incremental backups are disabled. Retention and disk-pressure checks use the `server.backup.retention.*` settings. See [configuration](configuration.md#backup-and-restore).
+Scheduled backups run daily at 02:00. Daily full backups and the daily incremental are enabled by default; hourly incremental backups are disabled. Retention and disk-pressure checks use the `server.backup.retention.*` settings. Use `countries --maintenance scheduler list` to review task state and `countries --maintenance scheduler history TASK_ID` to inspect task runs. See [configuration](configuration.md#backup-and-restore).
 
 PGP key management is operator-only and requires the operator token or root. Private-key export, import, and deletion also require an interactive confirmation. Generate stores the encrypted private key and public key under `security/` in the configuration directory and publishes the public key to configured keyservers. Public export writes to standard output unless a path is supplied. Private export requires a destination path, an operator-supplied reason, writes mode `0600`, and is limited to one export per hour per operator. Import validates the key and warns before accepting a key whose identity differs from the configured security identity. Delete warns that PGP-encrypted security reports will become unreadable. See [security](security.md#gpg-keypair-management) for the full workflow.
 
