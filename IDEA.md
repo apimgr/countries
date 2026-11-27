@@ -105,7 +105,7 @@ Core country lookups make no external runtime calls. Contact delivery and third-
 
 ### API routes
 
-Country-data and public information routes below require no authentication. Owner-token API operations require the owner bearer token; browser mutations require the owner cookie and CSRF token except initial token issue/restore, which use the one-time browser flow. Contact and CCPA forms are public and antispam-protected. API responses use the documented JSON envelope unless marked plain text. The `{api_version}` placeholder currently resolves to `v1`.
+Country-data and public information routes below require no authentication. Owner-token API operations require the owner bearer token; browser mutations require the owner cookie and CSRF token except initial token issue/restore, which use the one-time browser flow. Contact and CCPA forms are public and antispam-protected. API responses use the documented JSON envelope unless marked plain text. The `{api_version}` placeholder currently resolves to `v1`; the versioned API root returns the discovery envelope and permanently redirects a trailing-slash request to the canonical path.
 
 | Method | Path | Auth | Purpose and request/response summary |
 |---|---|---|

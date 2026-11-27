@@ -138,13 +138,26 @@ func readContractRoutes(t *testing.T, path string, ideaInventory bool) map[strin
 }
 
 func collectRegisteredRoutes(routes chi.Routes, result map[string]struct{}) error {
-	return chi.Walk(routes, func(method, path string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+	if err := chi.Walk(routes, func(method, path string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		if (!strings.HasPrefix(path, "/api/") && path != "/mcp") || !contractMethodRE.MatchString(method) {
 			return nil
 		}
 		result[method+" "+path] = struct{}{}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	for _, route := range routes.Routes() {
+		if route.Pattern != api.APIBasePath()+"/*" || route.SubRoutes == nil {
+			continue
+		}
+		for _, child := range route.SubRoutes.Routes() {
+			if child.Pattern == "/" && child.Handlers[http.MethodGet] != nil {
+				result[http.MethodGet+" "+api.APIBasePath()] = struct{}{}
+			}
+		}
+	}
+	return nil
 }
 
 func openAPIRoutes(spec map[string]interface{}) map[string]struct{} {

@@ -9,7 +9,7 @@ import (
 
 func TestSpecIncludesVersionAndCoreRoutes(t *testing.T) {
 	router := chi.NewRouter()
-	for _, route := range []string{"/api/v1/countries", "/api/v1/countries/{code}", "/api/v1/countries/search", "/api/v1/coordinates", "/api/v1/nearby", "/api/v1/stats", "/api/v1/stats.txt", "/api/v1/count", "/api/v1/count.txt", "/api/v1/server/healthz", "/api/v1/server/about", "/api/v1/server/help", "/api/v1/server/help/mcp", "/api/v1/server/privacy", "/api/v1/server/terms", "/api/v1/server/security", "/api/v1/server/contact", "/api/v1/server/dpo", "/api/v1/server/preferences", "/api/v1/server/preferences/sync", "/api/v1/server/preferences/sync/import", "/api/v1/server/preferences/tokens/primary", "/api/v1/server/swagger", "/api/v1/server/graphql", "/api/v1/server/reports/{report}", "/api/healthz", "/api/swagger", "/api/graphql"} {
+	for _, route := range []string{"/api/v1", "/api/v1/countries", "/api/v1/countries/{code}", "/api/v1/countries/search", "/api/v1/coordinates", "/api/v1/nearby", "/api/v1/stats", "/api/v1/stats.txt", "/api/v1/count", "/api/v1/count.txt", "/api/v1/server/healthz", "/api/v1/server/about", "/api/v1/server/help", "/api/v1/server/help/mcp", "/api/v1/server/privacy", "/api/v1/server/terms", "/api/v1/server/security", "/api/v1/server/contact", "/api/v1/server/dpo", "/api/v1/server/preferences", "/api/v1/server/preferences/sync", "/api/v1/server/preferences/sync/import", "/api/v1/server/preferences/tokens/primary", "/api/v1/server/swagger", "/api/v1/server/graphql", "/api/v1/server/reports/{report}", "/api/healthz", "/api/swagger", "/api/graphql"} {
 		if route == "/api/v1/server/preferences/tokens/primary" {
 			router.Post(route, http.NotFound)
 			router.Delete(route, http.NotFound)
@@ -115,6 +115,9 @@ func TestSpecTokenManagementScopeAndRequestContract(t *testing.T) {
 
 func TestSpecPathsComeFromRegisteredRoutes(t *testing.T) {
 	router := chi.NewRouter()
+	router.Route("/api/v1", func(router chi.Router) {
+		router.Get("/", http.NotFound)
+	})
 	router.Get("/api/v1/countries", http.NotFound)
 	router.Post("/api/v1/coordinates", http.NotFound)
 	router.Get("/api/healthz", http.NotFound)
@@ -129,7 +132,7 @@ func TestSpecPathsComeFromRegisteredRoutes(t *testing.T) {
 	if !ok {
 		t.Fatalf("paths has type %T", spec["paths"])
 	}
-	for _, route := range []string{"/api/v1/countries", "/api/v1/countries.txt", "/api/v1/coordinates", "/api/healthz", "/mcp", "/api/v1/server/metrics/prometheus", "/api/metrics/prometheus"} {
+	for _, route := range []string{"/api/v1", "/api/v1/countries", "/api/v1/countries.txt", "/api/v1/coordinates", "/api/healthz", "/mcp", "/api/v1/server/metrics/prometheus", "/api/metrics/prometheus"} {
 		if _, exists := paths[route]; !exists {
 			t.Errorf("registered route %q is missing from generated OpenAPI", route)
 		}

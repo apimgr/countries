@@ -53,6 +53,7 @@ func Spec(version string, router chi.Routes) (map[string]interface{}, error) {
 	}
 	basePath := api.APIBasePath()
 	annotations := map[string]interface{}{
+		basePath: map[string]interface{}{"get": map[string]interface{}{"summary": "Discover API and CLI versions", "responses": map[string]interface{}{"200": jsonResponse("API and CLI discovery metadata")}}},
 		basePath + "/countries": map[string]interface{}{"get": map[string]interface{}{"summary": "List and filter countries", "parameters": []interface{}{
 			map[string]interface{}{"name": "page", "in": "query", "schema": map[string]interface{}{"type": "integer", "minimum": 1, "default": 1}},
 			map[string]interface{}{"name": "limit", "in": "query", "schema": map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 1000, "default": 250}},
@@ -229,6 +230,16 @@ func addMetricsAnnotations(annotations map[string]interface{}, prefix string) {
 func generatedPaths(routers []chi.Routes, annotations map[string]interface{}) (map[string]interface{}, error) {
 	paths := make(map[string]interface{})
 	for _, router := range routers {
+		for _, mounted := range router.Routes() {
+			if mounted.Pattern != api.APIBasePath()+"/*" || mounted.SubRoutes == nil {
+				continue
+			}
+			for _, child := range mounted.SubRoutes.Routes() {
+				if child.Pattern == "/" && child.Handlers[http.MethodGet] != nil {
+					addGeneratedOperation(paths, annotations, api.APIBasePath(), "get")
+				}
+			}
+		}
 		if err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 			if !isDocumentedAPIPath(route) {
 				return nil

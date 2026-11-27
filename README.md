@@ -94,6 +94,7 @@ Country data is available under `/api/v1/`. The service also provides a read-onl
 
 | Endpoint | Description |
 |---|---|
+| `GET /api/v1` | Read the API and CLI discovery document (`/api/v1/` redirects here) |
 | `GET /api/v1/countries` | List and filter country records |
 | `GET /api/v1/countries/{code}` | Look up a country by alpha-2, alpha-3, or numeric code |
 | `GET /api/v1/countries/search?q={query}` | Search country records |

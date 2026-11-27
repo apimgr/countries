@@ -1014,6 +1014,7 @@ func fallbackErrorCode(status int) string {
 }
 
 func (s *Server) registerAPIRoutes(r chi.Router) {
+	r.Get("/", s.handleAutodiscover)
 	r.Get("/server/preferences", s.handlePreferencesAPI)
 	r.Get("/server/preferences/sync/import", s.handlePreferencesImport)
 	r.Post("/server/preferences/sync", s.handlePreferencesSyncAPI)

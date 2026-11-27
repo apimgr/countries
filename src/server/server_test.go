@@ -67,6 +67,26 @@ func doRequest(s *Server, method, path string, body []byte) *httptest.ResponseRe
 	return rec
 }
 
+func TestVersionedAPIRootMatchesAutodiscoverAndRedirectsTrailingSlash(t *testing.T) {
+	server := newTestServer(t)
+	root := doRequest(server, http.MethodGet, "/api/v1", nil)
+	if root.Code != http.StatusOK {
+		t.Fatalf("API root status = %d, want %d: %s", root.Code, http.StatusOK, root.Body.String())
+	}
+	autodiscover := doRequest(server, http.MethodGet, "/api/autodiscover", nil)
+	if root.Body.String() != autodiscover.Body.String() {
+		t.Fatalf("API root response differs from autodiscover:\nroot: %s\nautodiscover: %s", root.Body.String(), autodiscover.Body.String())
+	}
+
+	redirect := doRequest(server, http.MethodGet, "/api/v1/?source=test", nil)
+	if redirect.Code != http.StatusMovedPermanently {
+		t.Fatalf("API root trailing-slash status = %d, want %d", redirect.Code, http.StatusMovedPermanently)
+	}
+	if got := redirect.Header().Get("Location"); got != "/api/v1?source=test" {
+		t.Fatalf("API root trailing-slash Location = %q", got)
+	}
+}
+
 func TestGraphQLUnversionedAliasGETMatchesCanonicalRoute(t *testing.T) {
 	server := newTestServer(t)
 	query := url.QueryEscape("{ countries { name { common } } }")
