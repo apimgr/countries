@@ -20,6 +20,12 @@ The server loads `server.yml`, ordered `yaml.d/*.yml` and `yaml.d/*.yaml` area f
 | `server.debug.runtime_endpoints` | `true` | Allow `/debug/vars`, `/debug/memory`, and `/debug/goroutines` when debug is enabled. |
 | `server.database.driver` | `sqlite` | Database driver (`sqlite` or remote `libsql`/Turso). |
 | `server.database.url` | `{data_dir}/db/server.db` | SQLite database file path or remote libsql URL. `DATABASE_DIR` overrides the default SQLite directory. |
+| `server.database.pool.{max_open,max_idle,max_lifetime,max_idle_time}` | `25`, `5`, `5m`, `1m` | Connection-pool limits and connection lifetimes for the active database driver. |
+| `server.database.cache.enabled` | `false` | Enable the separate SQLite read replica when using remote libSQL/Turso. |
+| `server.database.cache.path` | `{data_dir}/db/cache.db` | SQLite replica path. It contains derived data and is never included in backups. |
+| `server.database.cache.sync_interval` | `30s` | Interval between background replica synchronizations. |
+| `server.database.cache.offline_mode` | `true` | Permit eligible reads from a fresh cache while the remote database is unavailable; writes still fail. |
+| `server.database.cache.max_age` | `1h` | Maximum cache age for serving offline reads. |
 | `server.tokens.max_linked` | `25` | Maximum active linked tokens per owner. |
 | `server.tokens.cookie_max_age` | `1y` | Sliding lifetime of the primary owner token cookie. |
 | `server.tokens.idle_purge_days` | `0` | Days before purging an owner with no resources and no token use; zero disables idle purge. |
