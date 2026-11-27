@@ -139,9 +139,9 @@ Owner tokens identify anonymous resource owners; there are no user accounts. A p
 
 For MCP `POST` requests, send the required `MCP-Protocol-Version` and `Mcp-Method` headers matching the request body; tool calls also require `Mcp-Name`. Only protocol revision `2026-07-28` is supported. See `/server/help/mcp` for the deployment-specific endpoint URL and the live tool list.
 
-The token-list response contains masked values and metadata only: `id`, `kind`, `name`, `prefix`, `last4`, `masked`, `created_at`, `rotated_at`, `expires_at`, `last_used_at`, and `status`. Reveal and rotate actions return the raw token only in that action's no-store response. They never return it in a later list response.
+The token-list response contains masked values and metadata only: `id`, `kind`, `name`, `prefix`, `last4`, `masked`, `created_at`, `rotated_at`, `expires_at`, `last_used_at`, and `status`. Token `id` values are opaque UUID v7 identifiers, never sequential database integers. On upgraded databases that retain an integer primary key internally, the public UUID is stored as `public_id`; only that UUID appears in URLs, JSON, logs, and audit events. Reveal and rotate actions return the raw token only in that action's no-store response. They never return it in a later list response.
 
-Create a linked token using the primary token and a JSON body. `expiry` accepts `never`, `7d`, `30d`, `90d`, `1y`, or `custom`; for `custom`, supply a future `expires_on` date in `YYYY-MM-DD` format.
+Create a linked token using the primary token and a JSON body. `expires` accepts `never`, `7d`, `30d`, `90d`, or `1y` (default `never`); alternatively, supply `expires_on` as a UTC date in `YYYY-MM-DD` format. Do not send both fields. A date may be today or later in UTC and remains valid through that day; it expires at 00:00 UTC the following day.
 
 ```sh
 curl -q -LSsf -X POST \

@@ -470,9 +470,17 @@ Each task accepts `enabled` and `schedule`; `retry_on_fail` and `retry_delay` ap
 | `server.logs.error.rotate` | inherited | Error log rotation policy; inherits `server.logs.defaults.rotate`. |
 | `server.logs.error.keep` | inherited | Error log retention policy; inherits `server.logs.defaults.keep`. |
 | `server.logs.audit.enabled` | `true` | Enable the append-only audit log. |
+| `server.logs.audit.filename` | `audit.log` | Audit file name within the log directory. |
 | `server.logs.audit.format` | `json` | Audit log format; JSON is required. |
 | `server.logs.audit.rotate` | `daily` | Audit log rotation policy. |
+| `server.logs.audit.keep` | `none` | Retention policy for rotated audit logs. |
 | `server.logs.audit.compress` | `false` | Compress retained audit logs. |
+| `server.logs.audit.token_usage` | `false` | Include individual token usage events in the audit log. |
+| `server.logs.audit.events.configuration` | `true` | Include configuration audit events. |
+| `server.logs.audit.events.security` | `true` | Include security audit events. |
+| `server.logs.audit.events.backup` | `true` | Include backup and restore audit events. |
+| `server.logs.audit.events.server` | `true` | Include server lifecycle and maintenance audit events. |
+| `server.logs.audit.include_user_agent` | `true` | Include a sanitized user agent in network audit events. |
 | `server.logs.security.format` | `fail2ban` | Security log format: `fail2ban`, `syslog`, `cef`, `json`, or `text`. |
 | `server.logs.security.filename` | `security.log` | Security event log file name within the log directory. |
 | `server.logs.security.rotate` | inherited | Security log rotation policy; inherits `server.logs.defaults.rotate`. |

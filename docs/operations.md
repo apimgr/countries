@@ -12,7 +12,7 @@ Configure task schedules and retry behavior in `server.yml` under `server.schedu
 
 ## Maintenance mode and recovery
 
-Detected database connection failures put the server into read-only maintenance mode. Read requests and the authenticated health/status endpoint remain available; writes receive `503 Service Unavailable` with `Retry-After` and maintenance headers. The server retries recovery every 30 seconds by default and reports its reason, attempt count, and next attempt through `/server/healthz`. `server.maintenance.self_healing.max_attempts: 0` retries without a limit; a positive limit stops retries and leaves the service in maintenance mode until an operator fixes the cause and restarts it. Exhaustion is audited and produces one operator notification when email is configured.
+Detected database connection failures put the server into read-only maintenance mode. Read requests and the public health endpoint remain available; writes receive `503 Service Unavailable` with `Retry-After` and maintenance headers. The server retries recovery every 30 seconds by default and reports its reason, attempt count, and next attempt through `/server/healthz`. `server.maintenance.self_healing.max_attempts: 0` retries without a limit; a positive limit stops retries and leaves the service in maintenance mode until an operator fixes the cause and restarts it. Exhaustion is audited and produces one operator notification when email is configured.
 
 The current recovery loop checks database connectivity. It does not yet detect filesystem write failures or apply automatic disk-pressure cleanup. For filesystem or disk-space problems, check the service logs, filesystem permissions, free space, and backup retention manually; do not rely on automatic cleanup.
 
@@ -45,6 +45,8 @@ GeoIP refreshes run weekly by default. Built-in and configured IP/domain blockli
 See [external security-data configuration](configuration.md#external-security-data), [security policy](security.md), and the public `/server/healthz` page for current status and attribution.
 
 ## Metrics and monitoring
+
+Successful health probes are omitted from access logs and console request lines, including probes made by `countries --status`; failed probes are logged. The status command reports its result through stdout and its exit status (0 healthy, 1 unhealthy), and does not require authentication.
 
 Metrics are internal operational endpoints. Keep them off public reverse-proxy routes and restrict access at the firewall or network-policy layer. Configure a separate bearer token for each service in `server.yml` and keep those credentials out of URLs, source control, and logs.
 
