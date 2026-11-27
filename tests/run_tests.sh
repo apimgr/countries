@@ -24,8 +24,8 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if ! command -v docker >/dev/null 2>&1; then
-	printf 'ERROR: Docker is required because the binary integration suite builds with the project Go container.\n' >&2
-	exit 69
+  printf 'ERROR: Docker is required because the binary integration suite builds with the project Go container.\n' >&2
+  exit 69
 fi
 
 printf 'Docker detected; running the basic binary integration suite.\n'

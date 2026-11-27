@@ -990,12 +990,19 @@ func (s *Server) registerDebugRoutes(router chi.Router, prefix string) {
 
 func (s *Server) requireDebugOperator(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.validOperatorToken(bearerValue(r)) {
-			w.Header().Set("WWW-Authenticate", "Bearer")
-			writeAPIError(w, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "A valid operator token is required")
+		token := bearerValue(r)
+		if s.validOperatorToken(token) {
+			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+		if token != "" && s.db != nil {
+			if _, err := database.LookupOwnerToken(r.Context(), s.db, token, time.Now()); err == nil {
+				writeAPIError(w, http.StatusForbidden, "INSUFFICIENT_SCOPE", "An operator token is required")
+				return
+			}
+		}
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		writeAPIError(w, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "A valid operator token is required")
 	})
 }
 

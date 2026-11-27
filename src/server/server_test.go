@@ -148,7 +148,10 @@ func TestDebugEndpointsRequireDebugFlag(t *testing.T) {
 	cfg.Server.Token = "adm_debug_test_token"
 	cfg.Server.Database.URL = "libsql://db.example.test?authToken=database-url-secret"
 	cfg.Server.Cache.URL = "rediss://cache-user:cache-url-secret@cache.example.test:6379/0"
-	withDebug := newTestServerWithConfig(t, cfg)
+	withDebug, db := newTokenTestServer(t)
+	withDebug.config.Server.Token = cfg.Server.Token
+	withDebug.config.Server.Database.URL = cfg.Server.Database.URL
+	withDebug.config.Server.Cache.URL = cfg.Server.Cache.URL
 	paths := []string{
 		"/debug/vars", "/debug/config", "/debug/routes", "/debug/cache", "/debug/db",
 		"/debug/scheduler", "/debug/memory", "/debug/goroutines", "/debug/pprof",
@@ -177,6 +180,38 @@ func TestDebugEndpointsRequireDebugFlag(t *testing.T) {
 	withDebug.router.ServeHTTP(response, request)
 	if response.Code != http.StatusInternalServerError {
 		t.Errorf("debug error renderer status = %d, want 500", response.Code)
+	}
+	_, ownerToken, err := database.CreateOwnerToken(context.Background(), db, withDebug.config.Server.Security.EncryptionKey)
+	if err != nil {
+		t.Fatalf("create owner token: %v", err)
+	}
+	for _, tc := range []struct {
+		name       string
+		authorize  string
+		queryToken string
+		wantStatus int
+	}{
+		{name: "missing authorization", wantStatus: http.StatusUnauthorized},
+		{name: "wrong token", authorize: "adm_wrong_test_token", wantStatus: http.StatusUnauthorized},
+		{name: "owner token", authorize: ownerToken, wantStatus: http.StatusForbidden},
+		{name: "token in query", queryToken: cfg.Server.Token, wantStatus: http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/debug/error500", nil)
+			if tc.authorize != "" {
+				request.Header.Set("Authorization", "Bearer "+tc.authorize)
+			}
+			if tc.queryToken != "" {
+				query := request.URL.Query()
+				query.Set("token", tc.queryToken)
+				request.URL.RawQuery = query.Encode()
+			}
+			response := httptest.NewRecorder()
+			withDebug.router.ServeHTTP(response, request)
+			if response.Code != tc.wantStatus {
+				t.Errorf("debug error route status = %d, want %d", response.Code, tc.wantStatus)
+			}
+		})
 	}
 	for _, path := range []string{"/api/v1/debug/config", "/api/debug/config"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)

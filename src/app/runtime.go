@@ -2192,6 +2192,7 @@ type diskLowMonitor struct {
 	repeat    time.Duration
 	volumes   map[string]diskVolumeState
 	status    string
+	usage     func(string) (*disk.UsageStat, error)
 }
 
 func newDiskLowMonitor(threshold int, repeatText string) *diskLowMonitor {
@@ -2202,7 +2203,7 @@ func newDiskLowMonitor(threshold int, repeatText string) *diskLowMonitor {
 	if threshold < 1 || threshold > 100 {
 		threshold = 85
 	}
-	return &diskLowMonitor{threshold: threshold, repeat: repeat, volumes: make(map[string]diskVolumeState), status: "ok"}
+	return &diskLowMonitor{threshold: threshold, repeat: repeat, volumes: make(map[string]diskVolumeState), status: "ok", usage: disk.Usage}
 }
 
 func (m *diskLowMonitor) Status() string {
@@ -2228,7 +2229,7 @@ func (m *diskLowMonitor) Check(ctx context.Context, dataDir, logsDir, backupDir 
 	}
 	for _, requested := range paths {
 		path := existingDiskPath(requested)
-		usage, err := disk.Usage(path)
+		usage, err := m.usage(path)
 		if err != nil {
 			m.setStatus("error")
 			return fmt.Errorf("read disk usage for %s: %w", requested, err)

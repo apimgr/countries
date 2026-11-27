@@ -241,7 +241,10 @@ func TestMainHelpers(t *testing.T) {
 
 	t.Run("disk monitor healthy paths", func(t *testing.T) {
 		root := testutil.TempDir(t)
-		monitor := newDiskLowMonitor(101, "1h")
+		monitor := newDiskLowMonitor(85, "1h")
+		monitor.usage = func(path string) (*disk.UsageStat, error) {
+			return &disk.UsageStat{Path: path, Total: 100, Free: 50, Used: 50, UsedPercent: 50}, nil
+		}
 		if err := monitor.Check(context.Background(), root, root, root, nil); err != nil {
 			t.Fatalf("Check(healthy paths) error = %v", err)
 		}

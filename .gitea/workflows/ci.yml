@@ -105,7 +105,9 @@ jobs:
           COVDIR=$(mktemp -d "$TEMP_ROOT/$(basename "${{ gitea.repository }}")-XXXXXX")
           export TMPDIR="$COVDIR"
           echo "COVDIR=$COVDIR" >> "$GITEA_ENV"
-          go test -cover -coverprofile="$COVDIR/coverage.out" ./...
+          mkdir -p "$COVDIR/data"
+          TMPDIR="$COVDIR" go test -buildvcs=false -cover ./... -args -test.gocoverdir="$COVDIR/data"
+          go tool covdata textfmt -i="$COVDIR/data" -o="$COVDIR/coverage.out"
       - name: Enforce coverage threshold
         run: |
           THRESHOLD=60

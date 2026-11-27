@@ -95,7 +95,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -113,7 +113,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -132,7 +132,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -150,7 +150,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -169,7 +169,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -187,7 +187,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -206,7 +206,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -224,7 +224,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -251,7 +251,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -269,7 +269,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -287,7 +287,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -305,7 +305,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -323,7 +323,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -341,7 +341,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -359,7 +359,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -377,7 +377,7 @@ pipeline {
                     steps {
                         sh '''
                             docker run --rm \
-                                --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                                --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                                 -v ${WORKSPACE}:/app \
                                 -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                                 -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -407,7 +407,7 @@ pipeline {
                         EXT=""
                         if [ "$GOOS" = windows ]; then EXT=".exe"; fi
                         docker run --rm \
-                            --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                            --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                             -v ${WORKSPACE}:/app \
                             -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                             -v ${GO_BUILD}:/usr/local/share/go/cache \
@@ -426,14 +426,26 @@ pipeline {
             agent { label 'amd64' }
             steps {
                 sh '''
+                    set -eu
+                    TEMP_ROOT="${TMPDIR:-/tmp}/${PROJECT_ORG}"
+                    mkdir -p "$TEMP_ROOT"
+                    COVDIR=$(mktemp -d "$TEMP_ROOT/${INTERNAL_NAME}-XXXXXX")
+                    trap 'find "$COVDIR" -depth -delete' EXIT
                     docker run --rm \
-                        --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
-                        -v ${WORKSPACE}:/app \
+                        --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
+                        -v ${WORKSPACE}:/app -v "$COVDIR:/cov" \
                         -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
                         -v ${GO_BUILD}:/usr/local/share/go/cache \
-                        -w /app \
-                        casjaysdev/go:latest \
-                        go test -v -cover ./...
+                        -w /app casjaysdev/go:latest \
+                        sh -c 'mkdir -p /cov/data && TMPDIR=/cov go test -buildvcs=false -v -cover ./... -args -test.gocoverdir=/cov/data && go tool covdata textfmt -i=/cov/data -o=/cov/coverage.out'
+                    PCT=$(docker run --rm \
+                        --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
+                        -v ${WORKSPACE}:/app -v "$COVDIR:/cov" \
+                        -v ${GO_CACHE}:/usr/local/share/go/pkg/mod \
+                        -v ${GO_BUILD}:/usr/local/share/go/cache \
+                        -w /app casjaysdev/go:latest \
+                        go tool cover -func=/cov/coverage.out | awk '/^total:/ {gsub("%","",$3); print int($3)}')
+                    [ "$PCT" -ge 60 ] || { echo "coverage ${PCT}% < 60%" >&2; exit 1; }
                 '''
             }
         }
@@ -521,7 +533,7 @@ pipeline {
                 // SBOM tooling lives in the build image - never install it on the agent
                 sh '''
                     docker run --rm \
-                        --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                        --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                         -v ${WORKSPACE}:/app \
                         -w /app \
                         -e GOFLAGS=-buildvcs=false \
@@ -561,7 +573,7 @@ pipeline {
                 // SBOM tooling lives in the build image - never install it on the agent
                 sh '''
                     docker run --rm \
-                        --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                        --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                         -v ${WORKSPACE}:/app \
                         -w /app \
                         -e GOFLAGS=-buildvcs=false \
@@ -601,7 +613,7 @@ pipeline {
                 // SBOM tooling lives in the build image - never install it on the agent
                 sh '''
                     docker run --rm \
-                        --name "${PROJECT_NAME}-$(tr -dc 'a-z0-9' </dev/urandom | head -c8)" \
+                        --name "${PROJECT_NAME}-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \\n')" \
                         -v ${WORKSPACE}:/app \
                         -w /app \
                         -e GOFLAGS=-buildvcs=false \
