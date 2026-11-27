@@ -63,6 +63,7 @@ The browser interface also includes `/`, `/search`, and `/coordinates`. Server p
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/v1/server/healthz` | Public-safe health status, version/build information, enabled features, component checks, and aggregate request statistics. |
+| GET | `/api/v1/server/auth/check` | Validate an operator or owner bearer token without changing token activity metadata; returns `kind` or 401. |
 | GET | `/api/v1/server/about` | Service information. |
 | GET | `/api/v1/server/help` | Help page data: title, configured Markdown source for the resolved language (then `default`), or built-in localized guidance when no configured entry matches; `format: markdown`; and registered help pages (`title` and `path`) in hub order. |
 | GET | `/api/v1/server/privacy` | Privacy notice. |
@@ -135,7 +136,7 @@ The `/server/preferences` page saves theme (`dark`, `light`, or `auto`), languag
 
 ### Owner token and MCP authentication
 
-Owner tokens identify anonymous resource owners; there are no user accounts. A primary token manages linked tokens, while a linked token has access to its owner's resources and cannot manage tokens. Generate a primary token with `POST /api/v1/server/preferences/tokens/primary`, then create a linked token for each MCP client. Send the token only in the `Authorization: Bearer` header. MCP does not accept cookies and never exposes token management as tools. Keep raw tokens out of URLs and logs. The token preferences page at `/server/preferences/tokens` provides the browser management flow.
+Owner tokens identify anonymous resource owners; there are no user accounts. A primary token manages linked tokens, while a linked token has access to its owner's resources and cannot manage tokens. Generate a primary token with `POST /api/v1/server/preferences/tokens/primary`, then create a linked token for each MCP client. Send the token only in the `Authorization: Bearer` header. `GET /api/v1/server/auth/check` validates operator and owner tokens without updating last-used timestamps. MCP does not accept cookies and never exposes token management as tools. Keep raw tokens out of URLs and logs. The token preferences page at `/server/preferences/tokens` provides the browser management flow.
 
 For MCP `POST` requests, send the required `MCP-Protocol-Version` and `Mcp-Method` headers matching the request body; tool calls also require `Mcp-Name`. Only protocol revision `2026-07-28` is supported. See `/server/help/mcp` for the deployment-specific endpoint URL and the live tool list.
 

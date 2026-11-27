@@ -33,7 +33,7 @@ The interactive menu and GUI expose these same seven commands in this order. The
 | `--output table\|plain\|json` | Choose output format. |
 | `--color auto\|yes\|no` | Choose color behavior. |
 | `--update check` | Check whether the configured server offers a newer CLI. |
-| `--update yes` | Permit automatic installation in non-interactive mode when `update.auto: true`; interactive runs prompt before installing. |
+| `--update yes` | Install a verified update without prompting in any run. |
 | `--debug` | Write request diagnostics to stderr. |
 | `--help`, `-h` | Show help and exit. |
 | `--version`, `-v` | Show build version and exit. |
@@ -50,21 +50,23 @@ countries-cli --shell completions zsh > ~/.zsh/completions/_countries-cli
 
 ## Interactive interfaces
 
-On first run, the setup screen asks for a server URL, checks the health endpoint, accepts an optional token, and saves the connection settings. The TUI and GUI each provide one screen for every command above. TUI controls include Up/Down or `j`/`k` to move, `/` to filter, Enter to select or submit, Tab and Shift+Tab to move between fields, `?` for help, Esc to return, and `q` or Ctrl+C to exit. Results remain visible on the result screen; TUI errors appear in its status area and GUI errors open a dismissible dialog that shows the server message.
+On first run, the setup flow asks for a server URL and optional token, validates the connection and token, and shows the server name and version. The GUI and TUI expose the same options: save to the selected configuration file and set that server as the default. A GUI build also offers a per-user autostart entry on Linux, macOS, and Windows. On `TERM=dumb` terminals or terminals narrower than 40 columns, setup uses inline prompts with hidden token input. Without terminals on stdin and stdout, setup exits with status 2 and tells you to set `server.primary` in `cli.yml` or pass `--config`.
+
+`--config PATH` names the selected configuration file. Saving writes its `server.primary` and `auth.token` values; “Set as default server” also writes them to the default `cli.yml`. If saving is unchecked, the connection applies only to the current run. The TUI and GUI each provide one screen for every command above. TUI controls include Up/Down or `j`/`k` to move, `/` to filter, Enter to select or submit, Tab and Shift+Tab to move between fields, `?` for help, Esc to return, and `q` or Ctrl+C to exit. Results remain visible on the result screen; TUI errors appear in its status area and GUI errors open a dismissible dialog that shows the server message.
 
 The GUI is implemented with the pure-Go `gogpu/ui` and `gogpu/gogpu` toolkits and follows the detected operating system light or dark theme. It is an optional, separately named `countries-cli-gui` artifact built with `BUILD_GUI=1`; Linux, macOS, and Windows GUI artifacts use the `-cli-gui-{os}-{arch}` suffix. These binaries require the dynamic loader from their Go build toolchain. BSD builds have no GUI support and use the TUI when a terminal is available. A forced `display.mode: gui` requires a local display and GUI-enabled binary. Forced `display.mode: tui` requires a terminal.
 
 ## Server and configuration
 
-The server URL is selected from `--server`, `COUNTRIES_SERVER_PRIMARY`, `server.primary` in `cli.yml`, then the compiled official site when defined. The default config directory is the invoking user's OS config directory under `apimgr/countries/`. Config files are written with owner-only permissions.
+The server URL is selected from `--server`, `COUNTRIES_SERVER_PRIMARY`, then `server.primary` in `cli.yml`. The first-run wizard runs when no server is configured; it does not select an implicit server. The default config directory is the invoking user's OS config directory under `apimgr/countries/`. Config files are written with owner-only permissions.
 
-The client reads `server.token` from its config file unless overridden with `--token` or `--token-file`. Tokens are sent only in the `Authorization: Bearer` header. Output language precedence is `--lang`, `lang` in `cli.yml`, `LANG`, then English. Supported language codes are `en`, `es`, `fr`, `de`, `it`, `ar`, `zh`, and `ja`. The HTTP client timeout is 15 seconds, and response bodies larger than 16 MiB are rejected. `--version` and `--help` print the invoked binary's filename, so those labels remain accurate if the binary is renamed.
+The client reads `auth.token` from its config file unless overridden with `--token` or `--token-file`. Tokens are sent only in the `Authorization: Bearer` header. Output language precedence is `--lang`, `lang` in `cli.yml`, `LANG`, then English. Supported language codes are `en`, `es`, `fr`, `de`, `it`, `ar`, `zh`, and `ja`. The HTTP client timeout is 15 seconds, and response bodies larger than 16 MiB are rejected. `--version` and `--help` print the invoked binary's filename, so those labels remain accurate if the binary is renamed.
 
 `display.mode` in `cli.yml` accepts `auto` (default), `gui`, or `tui`. With no command, auto mode chooses a local GUI when the optional GUI build is available, then an interactive TUI; in a headless environment it prints the usage error and exits with status 2. Any explicit command runs in CLI mode, printing plain output when headless. Help, version, and shell integration options exit without opening an interface.
 
 ## Updates
 
-The CLI checks `/api/autodiscover` on startup when it has a server URL. An available interactive update prompts before download. A non-interactive update is installed only when both `update.auto: true` and `--update yes` are set. Downloads require HTTPS, are checked against the published SHA-256, and replace the current executable using a platform-specific staged replacement. If the server sets `cli_min_version` above the installed version, the client refuses API requests and instructs the user to run `countries-cli --update yes`.
+The CLI checks `/api/autodiscover` on startup when it has a server URL. An interactive update always prompts before download. With `update.auto: true`, a non-interactive run installs a verified update silently; the default is false. `--update yes` explicitly installs without a prompt in any run. Downloads require HTTPS, are checked against the published SHA-256, and replace the current executable using a platform-specific staged replacement. If the server sets `cli_min_version` above the installed version, the client refuses API requests and instructs the user to run `countries-cli --update yes`.
 
 See the [installation guide](installation.md) for release assets and the [API reference](api.md) for route and response details.
 

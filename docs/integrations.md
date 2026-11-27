@@ -37,7 +37,7 @@ cli:
 
 When enabled, downloads require `Authorization: Bearer <operator-token>`. The server otherwise accepts the request without a token so new users can obtain the client before creating an owner token.
 
-The companion CLI checks autodiscovery on each invocation. When a newer compatible client is available, it prompts before updating in an interactive session. Automatic non-interactive updates require both `update.auto: true` in the user's `cli.yml` and an explicit `--update yes`. The client downloads from the server, checks the binary against the discovered SHA-256, atomically replaces its installed executable, and restarts with the original arguments. If `cli_min_version` is set and the installed client is older, the client stops API requests and directs the user to update.
+The companion CLI checks autodiscovery on each invocation. When a newer compatible client is available, an interactive session prompts before updating. In a non-interactive run, `update.auto: true` in the user's `cli.yml` installs the verified update silently; `--update yes` installs without a prompt in any run. The client downloads from the server, checks the binary against the discovered SHA-256, atomically replaces its installed executable, and restarts with the original arguments. If `cli_min_version` is set and the installed client is older, the client stops API requests and directs the user to update.
 
 ## AI discovery with llms.txt
 

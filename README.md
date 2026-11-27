@@ -82,7 +82,7 @@ countries-cli --server "$SERVER_URL" get US
 countries-cli --server "$SERVER_URL" request GET /api/v1/server/healthz
 ```
 
-With no command, the client opens its GUI when available, otherwise its terminal interface when attached to an interactive terminal. See the [CLI reference](docs/cli.md) for commands, flags, configuration, and output formats.
+With no configured server, the client runs setup in its GUI, TUI, or inline prompts and can validate an optional bearer token. A non-interactive run without a server exits with configuration guidance. See the [CLI reference](docs/cli.md) for commands, flags, setup, updates, configuration, and output formats.
 
 ## Configuration
 

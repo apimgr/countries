@@ -475,6 +475,7 @@ Each task accepts `enabled` and `schedule`; `retry_on_fail` and `retry_delay` ap
 | `server.logs.audit.rotate` | `daily` | Audit log rotation policy. |
 | `server.logs.audit.keep` | `none` | Retention policy for rotated audit logs. |
 | `server.logs.audit.compress` | `false` | Compress retained audit logs. |
+| `server.logs.audit.group` | empty | Existing Unix group allowed to read audit files in system mode; the service never creates groups, unknown names warn once and are ignored, and user mode always ignores this setting. |
 | `server.logs.audit.token_usage` | `false` | Include individual token usage events in the audit log. |
 | `server.logs.audit.events.configuration` | `true` | Include configuration audit events. |
 | `server.logs.audit.events.security` | `true` | Include security audit events. |
@@ -530,4 +531,4 @@ Use `server.tracking.url` for Matomo, Piwik, Open Web Analytics, and Umami. It i
 
 ## CLI settings
 
-The client optionally reads `cli.yml` under the operating system's user config directory at `apimgr/countries/cli.yml`. It supports `server.primary`, `server.token`, `defaults.output` (`table`, `plain`, or `json`), and `lang`. Config files are restricted to owner access. `--server` and `COUNTRIES_SERVER_PRIMARY` take precedence over the file.
+The client reads `cli.yml` under the operating system's user config directory at `apimgr/countries/cli.yml`. It supports `server.primary`, `auth.token`, `defaults.output` (`table`, `plain`, or `json`), `lang`, `display.mode`, `tui.theme`, and `update.auto`/`update.channel`. Config files are restricted to owner access. `--server` and `COUNTRIES_SERVER_PRIMARY` take precedence over the file. The first-run setup can save to a file selected by `--config`; “Set as default server” also saves to the default file.
