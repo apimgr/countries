@@ -29,13 +29,14 @@ type PoolOptions struct {
 }
 
 type DatabaseOptions struct {
-	Driver     string
-	URL        string
-	Token      string
-	DataDir    string
-	Pool       PoolOptions
-	Cache      ReplicaOptions
-	SkipSchema bool
+	Driver              string
+	URL                 string
+	Token               string
+	DataDir             string
+	Pool                PoolOptions
+	Cache               ReplicaOptions
+	SkipSchema          bool
+	AllowOfflineStartup bool
 }
 
 // OpenConfigured opens the SQLite or remote libSQL database selected by the
@@ -90,6 +91,15 @@ func OpenConfigured(options DatabaseOptions) (*sql.DB, error) {
 	err = db.PingContext(ctx)
 	cancel()
 	if err != nil {
+		if replica != nil && options.AllowOfflineStartup && options.Cache.OfflineMode && replica.HasFreshCache() {
+			replica.SetRemote(db)
+			replica.SetReady()
+			replica.mu.Lock()
+			replica.openedOffline = true
+			replica.mu.Unlock()
+			replicaRegistry.Store(db, replica)
+			return db, nil
+		}
 		_ = db.Close()
 		if replica != nil {
 			_ = replica.Close()
@@ -117,6 +127,19 @@ func OpenConfigured(options DatabaseOptions) (*sql.DB, error) {
 		replica.Start()
 	}
 	return db, nil
+}
+
+// OpenedOffline reports whether OpenConfigured returned this remote handle
+// using a previously synchronized local read cache.
+func OpenedOffline(db *sql.DB) bool {
+	value, ok := replicaRegistry.Load(db)
+	if !ok {
+		return false
+	}
+	replica := value.(*ReadReplica)
+	replica.mu.RLock()
+	defer replica.mu.RUnlock()
+	return replica.openedOffline
 }
 
 func normalizeDatabaseDriver(value string) string {

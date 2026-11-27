@@ -181,6 +181,15 @@ func (s *Server) contactRecipient(kind string) string {
 	return ""
 }
 
+func (s *Server) explicitSecurityReportRecipient() string {
+	candidate := strings.TrimSpace(s.config.Server.Contact.Security.Email)
+	parsed, err := mail.ParseAddress(candidate)
+	if err != nil || parsed.Address != candidate {
+		return ""
+	}
+	return candidate
+}
+
 func (s *Server) notifyReportWebhooks(r *http.Request, role, event string, values map[string]string) {
 	if s.notificationManager == nil {
 		return
@@ -1341,18 +1350,19 @@ func (s *Server) handleContactSubmit(w http.ResponseWriter, r *http.Request) {
 		webhookValues := map[string]string{"tracking_id": trackingID, "severity": webhookSeverity, "component": component}
 		s.notifyReportWebhooks(r, "security", "security.report_received", webhookValues)
 		s.notifyReportWebhooks(r, "admin", "security.report_received", webhookValues)
+		explicitSecurityRecipient := s.explicitSecurityReportRecipient()
 		recipient := s.contactRecipient("security")
-		if recipient != "" {
+		if explicitSecurityRecipient != "" {
 			kind := "security_encrypted"
 			if bodyAlg == "pgp" {
 				kind = "security_pgp"
 			}
-			if err := s.sendContactEmail(recipient, recipient, kind, "Report "+trackingID, base64.StdEncoding.EncodeToString(encryptedBody)); err != nil {
+			if err := s.sendContactEmail(explicitSecurityRecipient, explicitSecurityRecipient, kind, "Report "+trackingID, base64.StdEncoding.EncodeToString(encryptedBody)); err != nil {
 				log.Printf("Could not send encrypted security report notification tracking_id=%q", trackingID)
 			}
 		}
 		adminRecipient := strings.TrimSpace(s.config.Server.Contact.Admin.Email)
-		if adminRecipient != "" && adminRecipient != recipient {
+		if adminRecipient != "" && adminRecipient != explicitSecurityRecipient {
 			adminSummary := fmt.Sprintf("Tracking ID: %s\nSeverity: %s\nComponent: %s\n", trackingID, webhookSeverity, component)
 			if err := s.sendContactEmail(adminRecipient, adminRecipient, "security_summary", "Security report received", adminSummary); err != nil {
 				log.Printf("Could not send admin security report summary tracking_id=%q", trackingID)

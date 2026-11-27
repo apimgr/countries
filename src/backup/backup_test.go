@@ -167,6 +167,77 @@ func TestBackupExportsAndRestoresAllApplicationSecrets(t *testing.T) {
 	}
 }
 
+func TestRemoteBackupDoesNotRequireOrIncludeLocalServerDatabase(t *testing.T) {
+	root := createBackupTestRoot(t)
+	source := makeBackupFixture(t, root, "source\n")
+	source.options.DatabaseDriver = "libsql"
+	source.options.IncludeData = true
+	source.options.CachePath = "{data_dir}/db/cache.db"
+	if err := os.WriteFile(filepath.Join(source.options.DataDir, "db", "cache.db"), []byte("derived cache"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source.options.DataDir, "important.dat"), []byte("included data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secretsDB, err := sql.Open("sqlite", source.options.DatabasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = secretsDB.Close() }()
+	source.options.SecretsDB = secretsDB
+	archive := filepath.Join(root, "remote.tar.gz")
+	if _, err := Create(context.Background(), archive, source.options); err != nil {
+		t.Fatalf("Create() remote backup error = %v", err)
+	}
+	payload, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := readArchive(context.Background(), payload, int64(len(payload)), normalizedLimits(Limits{}))
+	if err != nil {
+		t.Fatalf("read remote archive: %v", err)
+	}
+	for _, excluded := range []string{"data/server.db", "data/db/server.db", "data/db/cache.db"} {
+		if _, exists := entries[excluded]; exists {
+			t.Fatalf("remote backup included derived or local database file %q", excluded)
+		}
+	}
+	if _, exists := entries["data/important.dat"]; !exists {
+		t.Fatal("remote backup omitted requested data files")
+	}
+	if _, exists := entries["app_secrets.json"]; !exists {
+		t.Fatal("remote backup omitted app_secrets.json")
+	}
+}
+
+func TestRestoreRemoteApplicationSecretsOnlyWhenTableIsEmpty(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(createBackupTestRoot(t), "remote.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`CREATE TABLE app_secrets(name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	secrets := []appSecretRecord{{Name: "installation_secret", Value: "archived", UpdatedAt: "2026-01-01T00:00:00Z"}}
+	if err := restoreAppSecretsIfAbsent(context.Background(), db, secrets); err != nil {
+		t.Fatalf("restore into empty remote secret table: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO app_secrets(name,value,updated_at) VALUES('cookie_signing_key','current','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreAppSecretsIfAbsent(context.Background(), db, []appSecretRecord{{Name: "installation_secret", Value: "replacement", UpdatedAt: "2026-01-01T00:00:00Z"}}); err != nil {
+		t.Fatalf("restore into existing remote secret table: %v", err)
+	}
+	var value string
+	if err := db.QueryRow(`SELECT value FROM app_secrets WHERE name='installation_secret'`).Scan(&value); err != nil || value != "archived" {
+		t.Fatalf("existing archived secret = %q, %v", value, err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM app_secrets`).Scan(new(int)); err != nil {
+		t.Fatalf("existing secret table query: %v", err)
+	}
+}
+
 func TestDecodeAppSecretsRejectsUnsafeDocuments(t *testing.T) {
 	for _, data := range []string{
 		`null`,

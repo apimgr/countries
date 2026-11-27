@@ -1911,6 +1911,33 @@ func TestThemeCSSUsesThemeClasses(t *testing.T) {
 	if !strings.Contains(commonCSS.Body.String(), "--color-text-muted: "+commontheme.ThemePaletteDark.Muted+";") {
 		t.Error("common stylesheet does not contain the shared muted text color")
 	}
+	for _, palette := range []commontheme.ThemePalette{commontheme.ThemePaletteDark, commontheme.ThemePaletteLight} {
+		for role, declaration := range map[string]string{
+			"background":       "--color-bg-primary: " + palette.Background + ";",
+			"surface":          "--color-bg-secondary: " + palette.Surface + ";",
+			"surface_alt":      "--color-bg-tertiary: " + palette.SurfaceAlt + ";",
+			"surface_elevated": "--color-bg-elevated: " + palette.Surface + ";",
+			"surface_hover":    "--color-bg-hover: " + palette.SurfaceHover + ";",
+			"foreground":       "--color-text-primary: " + palette.Foreground + ";",
+			"muted_secondary":  "--color-text-secondary: " + palette.Muted + ";",
+			"muted":            "--color-text-muted: " + palette.Muted + ";",
+			"primary":          "--color-accent-primary: " + palette.Primary + ";",
+			"secondary":        "--color-accent-secondary: " + palette.Secondary + ";",
+			"accent":           "--color-accent-gradient: linear-gradient(135deg, " + palette.Primary + " 0%, " + palette.Accent + " 100%);",
+			"accent_hover":     "--color-accent-hover: " + palette.AccentHover + ";",
+			"accent_glow":      "--color-accent-glow: " + palette.AccentGlow + ";",
+			"success":          "--color-success: " + palette.Success + ";",
+			"warning":          "--color-warning: " + palette.Warning + ";",
+			"error":            "--color-error: " + palette.Error + ";",
+			"info":             "--color-info: " + palette.Info + ";",
+			"border":           "--color-border: " + palette.Border + ";",
+			"border_hover":     "--color-border-hover: " + palette.Muted + ";",
+		} {
+			if !strings.Contains(commonCSS.Body.String(), declaration) {
+				t.Errorf("common stylesheet omitted shared %s role declaration %q", role, declaration)
+			}
+		}
+	}
 	for path, required := range assets {
 		response := doRequest(s, http.MethodGet, path, nil)
 		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), required) {

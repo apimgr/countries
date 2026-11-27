@@ -86,6 +86,7 @@ type Options struct {
 	DataDir            string
 	DatabasePath       string
 	DatabaseDriver     string
+	CachePath          string
 	SecretsDB          *sql.DB
 	SourceDatabasePath string
 	BackupDir          string
@@ -102,6 +103,7 @@ type Options struct {
 	BaseArchivePath    string
 	BaseSHA256         string
 	Deleted            []string
+	ExcludedDataPaths  []string
 	Limits             Limits
 	Snapshot           *Snapshot
 }
@@ -178,7 +180,8 @@ func Create(ctx context.Context, destination string, options Options) (Result, e
 		expandedSize += int64(len(file.content))
 	}
 	if options.Type == "full" {
-		if _, ok := files["data/server.db"]; !ok {
+		remoteDatabase := strings.EqualFold(strings.TrimSpace(options.DatabaseDriver), "libsql") || strings.EqualFold(strings.TrimSpace(options.DatabaseDriver), "turso")
+		if _, ok := files["data/server.db"]; !ok && !remoteDatabase {
 			return Result{}, errors.New("main database is missing from backup input")
 		}
 	}
@@ -316,6 +319,19 @@ func captureSnapshotFiles(ctx context.Context, options Options) (map[string]file
 	var snapshotDatabase *sql.DB
 	if remoteDatabase {
 		log.Printf("INFO: remote database backup is handled by the provider (driver=%s)", options.DatabaseDriver)
+		cachePath := strings.ReplaceAll(options.CachePath, "{data_dir}", options.DataDir)
+		if strings.TrimSpace(cachePath) == "" {
+			cachePath = filepath.Join(options.DataDir, "db", "cache.db")
+		}
+		if !filepath.IsAbs(cachePath) {
+			cachePath = filepath.Join(options.DataDir, cachePath)
+		}
+		if absoluteCachePath, err := filepath.Abs(cachePath); err == nil {
+			options.ExcludedDataPaths = append(options.ExcludedDataPaths, absoluteCachePath)
+		}
+		if absoluteDatabasePath, err := filepath.Abs(filepath.Join(options.DataDir, "db", "server.db")); err == nil {
+			options.ExcludedDataPaths = append(options.ExcludedDataPaths, absoluteDatabasePath)
+		}
 		options.DatabasePath = ""
 		options.SourceDatabasePath = ""
 	} else {
@@ -729,12 +745,14 @@ func Restore(ctx context.Context, path, password string, options RestoreOptions)
 	if options.RemoteDatabase != nil || hasAppSecrets {
 		afterInstall = func() error {
 			if options.RemoteDatabase != nil {
-				databasePath := options.DatabasePath
-				if databasePath == "" {
-					databasePath = filepath.Join(options.DataDir, "db", "server.db")
-				}
-				if _, err := database.SeedRemoteIfEmpty(ctx, options.RemoteDatabase, databasePath); err != nil {
-					return fmt.Errorf("seed empty remote database from restored server.db: %w", err)
+				if _, hasSQLiteDatabase := entries["data/server.db"]; hasSQLiteDatabase {
+					databasePath := options.DatabasePath
+					if databasePath == "" {
+						databasePath = filepath.Join(options.DataDir, "db", "server.db")
+					}
+					if _, err := database.SeedRemoteIfEmpty(ctx, options.RemoteDatabase, databasePath); err != nil {
+						return fmt.Errorf("seed empty remote database from restored server.db: %w", err)
+					}
 				}
 			}
 			if hasAppSecrets {
@@ -758,7 +776,11 @@ func Restore(ctx context.Context, path, password string, options RestoreOptions)
 				if closeDB {
 					defer func() { _ = db.Close() }()
 				}
-				if err := replaceAppSecrets(ctx, db, appSecrets); err != nil {
+				if options.RemoteDatabase != nil {
+					if err := restoreAppSecretsIfAbsent(ctx, db, appSecrets); err != nil {
+						return err
+					}
+				} else if err := replaceAppSecrets(ctx, db, appSecrets); err != nil {
 					return err
 				}
 			}
@@ -769,6 +791,31 @@ func Restore(ctx context.Context, path, password string, options RestoreOptions)
 		return Manifest{}, err
 	}
 	return verified.Manifest, nil
+}
+
+func restoreAppSecretsIfAbsent(ctx context.Context, db *sql.DB, secrets []appSecretRecord) error {
+	if err := database.Write(ctx, db, func(tx *sql.Tx) error {
+		var existing int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM app_secrets`).Scan(&existing); err != nil {
+			return fmt.Errorf("inspect remote application secrets: %w", err)
+		}
+		if existing != 0 {
+			return nil
+		}
+		for _, item := range secrets {
+			updatedAt, err := time.Parse(time.RFC3339Nano, item.UpdatedAt)
+			if err != nil {
+				return fmt.Errorf("parse application secret timestamp: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO app_secrets(name,value,updated_at) VALUES(?,?,?)`, item.Name, item.Value, updatedAt.UTC().Format(time.RFC3339Nano)); err != nil {
+				return fmt.Errorf("restore application secrets: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("restore remote application secrets: %w", err)
+	}
+	return nil
 }
 
 func replaceAppSecrets(ctx context.Context, db *sql.DB, secrets []appSecretRecord) error {
@@ -812,7 +859,7 @@ func backupInputs(options Options) ([]inputRoot, error) {
 		inputs = append(inputs, inputRoot{source: filepath.Join(configRoot, "ssl"), archive: "config/ssl", optional: true})
 	}
 	if options.IncludeData {
-		inputs = append(inputs, inputRoot{source: dataRoot, archive: "data", optional: true})
+		inputs = append(inputs, inputRoot{source: dataRoot, archive: "data", optional: true, excludes: options.ExcludedDataPaths})
 	}
 	databasePath := options.DatabasePath
 	if databasePath == "" {
@@ -833,7 +880,7 @@ func backupInputs(options Options) ([]inputRoot, error) {
 		}
 		for index := range inputs {
 			if inputs[index].archive == "data" {
-				inputs[index].exclude = excludedDatabase
+				inputs[index].excludes = append(inputs[index].excludes, excludedDatabase)
 			}
 		}
 	}
@@ -853,7 +900,7 @@ type inputRoot struct {
 	source   string
 	archive  string
 	optional bool
-	exclude  string
+	excludes []string
 }
 
 type fileData struct {
@@ -894,13 +941,15 @@ func collectFiles(ctx context.Context, roots []inputRoot, limits Limits) (map[st
 				if currentInfo.IsDir() {
 					return nil
 				}
-				if root.exclude != "" {
+				if len(root.excludes) > 0 {
 					currentAbs, err := filepath.Abs(current)
 					if err != nil {
 						return err
 					}
-					if currentAbs == root.exclude {
-						return nil
+					for _, excluded := range root.excludes {
+						if currentAbs == excluded {
+							return nil
+						}
 					}
 				}
 				relative, err := filepath.Rel(root.source, current)

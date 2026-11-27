@@ -13,7 +13,7 @@ docker run --detach --name "$container" "$image" >/dev/null
 
 deadline=$(( $(date +%s) + 180 ))
 while (( $(date +%s) < deadline )); do
-  health=$(docker exec "$container" curl -q -LSs --max-time 5 --header 'Accept: application/json' http://127.0.0.1/server/healthz 2>/dev/null || true)
+  health=$(docker exec "$container" curl -q -LSs --max-time 5 --header 'Accept: application/json' http://127.0.0.1/api/v1/server/healthz 2>/dev/null || true)
   tor_status=$(sed -nE 's/.*"features"[[:space:]]*:[[:space:]]*\{.*"tor"[[:space:]]*:[[:space:]]*\{[^}]*"status"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' <<<"${health//$'\n'/}")
   if [[ "$tor_status" == healthy ]]; then
     healthy=true

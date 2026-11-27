@@ -308,3 +308,19 @@ func TestSecurityDataEncryptionAndStorageValidation(t *testing.T) {
 		t.Fatalf("stored report metadata = (%q, token present=%v, alg=%q, body=%q)", trackingID, statusToken != "", algorithm, stored)
 	}
 }
+
+func TestExplicitSecurityReportRecipientDoesNotUseRoleFallback(t *testing.T) {
+	s := newTestServer(t)
+	s.config.Server.Contact.Admin.Email = "admin@example.test"
+	if got := s.explicitSecurityReportRecipient(); got != "" {
+		t.Fatalf("explicit security recipient = %q, want empty", got)
+	}
+	s.config.Server.Contact.Security.Email = "security@example.test"
+	if got := s.explicitSecurityReportRecipient(); got != "security@example.test" {
+		t.Fatalf("explicit security recipient = %q", got)
+	}
+	s.config.Server.Contact.Security.Email = "invalid address"
+	if got := s.explicitSecurityReportRecipient(); got != "" {
+		t.Fatalf("invalid explicit security recipient = %q, want empty", got)
+	}
+}

@@ -63,3 +63,32 @@ func TestStartupMaintenanceAllowsOnlyHealthAndDelegatesAfterRecovery(t *testing.
 		t.Fatalf("recovered request status = %d, want 204", ready.Code)
 	}
 }
+
+func TestStartupMaintenanceReadOnlyDelegateKeepsSecretsAndWritesUnavailable(t *testing.T) {
+	startup := &Server{config: config.DefaultConfig()}
+	startup.startupMaintenance.Store(true)
+	startup.SetMaintenanceMode(true)
+	delegated := chi.NewRouter()
+	delegated.Get(apiCountryPath, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	delegated.Get("/api/v1/server/preferences/tokens", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	startup.SetStartupReadOnlyDelegate(&Server{router: delegated})
+	handler := startup.startupMaintenanceMiddleware(http.NotFoundHandler())
+
+	public := httptest.NewRecorder()
+	handler.ServeHTTP(public, httptest.NewRequest(http.MethodGet, apiCountryPath, nil))
+	if public.Code != http.StatusOK {
+		t.Fatalf("public cached read status = %d, want 200", public.Code)
+	}
+	secret := httptest.NewRecorder()
+	handler.ServeHTTP(secret, httptest.NewRequest(http.MethodGet, "/api/v1/server/preferences/tokens", nil))
+	if secret.Code != http.StatusServiceUnavailable {
+		t.Fatalf("secret-dependent route status = %d, want 503", secret.Code)
+	}
+	write := httptest.NewRecorder()
+	handler.ServeHTTP(write, httptest.NewRequest(http.MethodPost, apiCountryPath, nil))
+	if write.Code != http.StatusServiceUnavailable {
+		t.Fatalf("write status = %d, want 503", write.Code)
+	}
+}
+
+const apiCountryPath = "/api/v1/countries"

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,19 +24,21 @@ type ReplicaOptions struct {
 }
 
 type ReadReplica struct {
-	store    *SQLiteStore
-	remote   *sql.DB
-	interval time.Duration
-	maxAge   time.Duration
-	offline  bool
-	mu       sync.RWMutex
-	dirty    map[string]bool
-	updated  map[string]time.Time
-	stop     chan struct{}
-	done     chan struct{}
-	started  bool
-	ready    bool
-	warnOnce sync.Once
+	store         *SQLiteStore
+	remote        *sql.DB
+	interval      time.Duration
+	maxAge        time.Duration
+	offline       bool
+	mu            sync.RWMutex
+	dirty         map[string]bool
+	updated       map[string]time.Time
+	watermark     map[string]string
+	stop          chan struct{}
+	done          chan struct{}
+	started       bool
+	ready         bool
+	openedOffline bool
+	warnOnce      sync.Once
 }
 
 type replicaSnapshot struct {
@@ -45,16 +49,18 @@ type replicaSnapshot struct {
 var replicaRegistry sync.Map
 
 var replicaTables = []string{
-	"owners", "api_tokens", "app_secrets", "audit_log", "backups", "captcha_challenges", "config", "config_meta",
-	"health_request_hours", "health_request_stats", "pgp_keys", "rate_limits", "scheduler_history", "scheduler_tasks",
+	"owners", "api_tokens", "backups", "captcha_challenges", "config", "config_meta",
+	"health_request_hours", "health_request_stats", "pgp_keys", "scheduler_history", "scheduler_tasks",
 	"security_reports", "security_thanks",
 }
 
+var replicaExcludedTables = []string{"app_secrets", "audit_log", "rate_limits"}
+
 var replicaPrimaryKeys = map[string][]string{
-	"owners": {"id"}, "api_tokens": {"id"}, "app_secrets": {"name"}, "audit_log": {"id"},
+	"owners": {"id"}, "api_tokens": {"id"},
 	"backups": {"id"}, "captcha_challenges": {"id"}, "config": {"key"}, "config_meta": {"id"},
 	"health_request_hours": {"hour"}, "health_request_stats": {"id"}, "pgp_keys": {"fingerprint"},
-	"rate_limits": {"key"}, "scheduler_history": {"id"}, "scheduler_tasks": {"id"},
+	"scheduler_history": {"id"}, "scheduler_tasks": {"id"},
 	"security_reports": {"tracking_id"}, "security_thanks": {"tracking_id"},
 }
 
@@ -67,33 +73,85 @@ func OpenReadReplica(path string, options ReplicaOptions) (*ReadReplica, error) 
 	if err != nil || maxAge <= 0 {
 		maxAge = time.Hour
 	}
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("replica cache path is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("create replica directory: %w", err)
+	}
+	if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("secure replica directory: %w", err)
+	}
 	store, err := OpenSQLiteStore(path, 4)
 	if err != nil {
 		return nil, err
 	}
-	replica := &ReadReplica{store: store, interval: interval, maxAge: maxAge, offline: options.OfflineMode, dirty: make(map[string]bool), updated: make(map[string]time.Time), stop: make(chan struct{}), done: make(chan struct{})}
+	replica := &ReadReplica{store: store, interval: interval, maxAge: maxAge, offline: options.OfflineMode, dirty: make(map[string]bool), updated: make(map[string]time.Time), watermark: make(map[string]string), stop: make(chan struct{}), done: make(chan struct{})}
 	if err := store.Write(context.Background(), func(tx *sql.Tx) error {
-		_, err := tx.Exec("CREATE TABLE IF NOT EXISTS replica_state (table_name TEXT PRIMARY KEY, updated_at INTEGER NOT NULL, dirty INTEGER NOT NULL DEFAULT 0)")
-		return err
+		_, err := tx.Exec("CREATE TABLE IF NOT EXISTS cache_meta (table_name TEXT PRIMARY KEY, synced_at TEXT NOT NULL DEFAULT '', watermark TEXT NOT NULL DEFAULT '', dirty INTEGER NOT NULL DEFAULT 0)")
+		if err != nil {
+			return err
+		}
+		var legacyState int
+		if err := tx.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='replica_state'").Scan(&legacyState); err != nil {
+			return err
+		}
+		if legacyState != 0 {
+			if _, err := tx.Exec("INSERT OR IGNORE INTO cache_meta(table_name,synced_at,watermark,dirty) SELECT table_name,strftime('%Y-%m-%dT%H:%M:%fZ',updated_at,'unixepoch'),'',dirty FROM replica_state"); err != nil {
+				return err
+			}
+			for _, table := range replicaTables {
+				var exists int
+				if err := tx.QueryRow("SELECT COUNT(*) FROM cache_meta WHERE table_name = ?", table).Scan(&exists); err != nil {
+					return err
+				}
+				if exists == 0 {
+					continue
+				}
+				watermark, err := replicaTableWatermark(tx, table)
+				if err != nil {
+					return err
+				}
+				if _, err := tx.Exec("UPDATE cache_meta SET watermark = ? WHERE table_name = ?", watermark, table); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.Exec("DROP TABLE replica_state"); err != nil {
+				return err
+			}
+		}
+		for _, table := range replicaExcludedTables {
+			if _, err := tx.Exec("DELETE FROM cache_meta WHERE table_name = ?", table); err != nil {
+				return err
+			}
+			if _, err := tx.Exec("DELETE FROM \"" + table + "\""); err != nil {
+				return err
+			}
+		}
+		return nil
 	}); err != nil {
 		_ = store.Close()
-		return nil, fmt.Errorf("initialize replica state: %w", err)
+		return nil, fmt.Errorf("initialize replica metadata: %w", err)
 	}
-	rows, err := store.readDB.Query("SELECT table_name, updated_at, dirty FROM replica_state")
+	rows, err := store.readDB.Query("SELECT table_name, synced_at, watermark, dirty FROM cache_meta")
 	if err != nil {
 		_ = store.Close()
 		return nil, err
 	}
 	for rows.Next() {
 		var table string
-		var updated int64
+		var syncedAt string
+		var watermark string
 		var dirty bool
-		if err := rows.Scan(&table, &updated, &dirty); err != nil {
+		if err := rows.Scan(&table, &syncedAt, &watermark, &dirty); err != nil {
 			_ = rows.Close()
 			_ = store.Close()
 			return nil, err
 		}
-		replica.updated[table] = time.Unix(updated, 0)
+		if updated, parseErr := time.Parse(time.RFC3339Nano, syncedAt); parseErr == nil {
+			replica.updated[table] = updated
+		}
+		replica.watermark[table] = watermark
 		if dirty {
 			replica.dirty[table] = true
 		}
@@ -111,6 +169,18 @@ func OpenReadReplica(path string, options ReplicaOptions) (*ReadReplica, error) 
 
 func (replica *ReadReplica) SetRemote(remote *sql.DB) { replica.remote = remote }
 func (replica *ReadReplica) SetReady()                { replica.mu.Lock(); replica.ready = true; replica.mu.Unlock() }
+
+func (replica *ReadReplica) HasFreshCache() bool {
+	replica.mu.RLock()
+	defer replica.mu.RUnlock()
+	for _, table := range replicaTables {
+		updated := replica.updated[table]
+		if replica.dirty[table] || updated.IsZero() || time.Since(updated) > replica.maxAge {
+			return false
+		}
+	}
+	return true
+}
 
 func (replica *ReadReplica) Start() {
 	replica.mu.Lock()
@@ -164,7 +234,7 @@ func (replica *ReadReplica) warn(err error) {
 func (replica *ReadReplica) MarkAllDirty() error {
 	err := replica.store.Write(context.Background(), func(tx *sql.Tx) error {
 		for _, table := range replicaTables {
-			if _, err := tx.Exec("INSERT INTO replica_state(table_name,updated_at,dirty) VALUES(?,0,1) ON CONFLICT(table_name) DO UPDATE SET dirty=1", table); err != nil {
+			if _, err := tx.Exec("INSERT INTO cache_meta(table_name,synced_at,dirty) VALUES(?,'',1) ON CONFLICT(table_name) DO UPDATE SET dirty=1", table); err != nil {
 				return err
 			}
 		}
@@ -282,23 +352,105 @@ func (replica *ReadReplica) Synchronize(ctx context.Context) error {
 	err = replica.store.Write(ctx, func(localTx *sql.Tx) error {
 		// Remove remote-deleted child rows before parents to respect the replica's
 		// foreign keys. A table is only changed when its primary-keyed contents differ.
-		for _, table := range []string{"api_tokens", "security_reports", "security_thanks", "scheduler_history", "scheduler_tasks", "owners", "app_secrets", "audit_log", "backups", "captcha_challenges", "config", "config_meta", "health_request_hours", "health_request_stats", "pgp_keys", "rate_limits"} {
+		for _, table := range []string{"api_tokens", "security_reports", "security_thanks", "scheduler_history", "scheduler_tasks", "owners", "backups", "captcha_challenges", "config", "config_meta", "health_request_hours", "health_request_stats", "pgp_keys"} {
 			if err := reconcileReplicaTable(ctx, localTx, table, snapshots[table]); err != nil {
 				return err
 			}
 		}
-		now := time.Now().Unix()
+		now := time.Now().UTC().Format(time.RFC3339Nano)
 		for _, table := range replicaTables {
-			if _, err := localTx.ExecContext(ctx, "INSERT INTO replica_state(table_name,updated_at,dirty) VALUES(?,?,0) ON CONFLICT(table_name) DO UPDATE SET updated_at=excluded.updated_at,dirty=0", table, now); err != nil {
+			watermark := replicaSnapshotWatermark(snapshots[table])
+			if _, err := localTx.ExecContext(ctx, "INSERT INTO cache_meta(table_name,synced_at,watermark,dirty) VALUES(?,?,?,0) ON CONFLICT(table_name) DO UPDATE SET synced_at=excluded.synced_at,watermark=excluded.watermark,dirty=0", table, now, watermark); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
 	if err == nil {
+		replica.mu.Lock()
+		for _, table := range replicaTables {
+			replica.watermark[table] = replicaSnapshotWatermark(snapshots[table])
+		}
+		replica.mu.Unlock()
 		replica.synchronized()
 	}
 	return err
+}
+
+func replicaSnapshotWatermark(snapshot replicaSnapshot) string {
+	updatedAtColumn := -1
+	for index, column := range snapshot.columns {
+		if strings.EqualFold(column, "updated_at") {
+			updatedAtColumn = index
+			break
+		}
+	}
+	if updatedAtColumn < 0 {
+		return ""
+	}
+	watermark := ""
+	var numeric float64
+	numericSet := false
+	for _, record := range snapshot.records {
+		if updatedAtColumn >= len(record) || record[updatedAtColumn] == nil {
+			continue
+		}
+		value := fmt.Sprint(record[updatedAtColumn])
+		if bytes, ok := record[updatedAtColumn].([]byte); ok {
+			value = string(bytes)
+		}
+		if number, err := strconv.ParseFloat(value, 64); err == nil {
+			if !numericSet || number > numeric {
+				watermark, numeric, numericSet = value, number, true
+			}
+			continue
+		}
+		if !numericSet && value > watermark {
+			watermark = value
+		}
+	}
+	return watermark
+}
+
+func replicaTableWatermark(tx *sql.Tx, table string) (string, error) {
+	rows, err := tx.Query("PRAGMA table_info(" + quoteReplicaIdentifier(table) + ")")
+	if err != nil {
+		return "", err
+	}
+	hasUpdatedAt := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return "", err
+		}
+		if strings.EqualFold(name, "updated_at") {
+			hasUpdatedAt = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", errors.Join(err, rows.Close())
+	}
+	if err := rows.Close(); err != nil {
+		return "", err
+	}
+	if !hasUpdatedAt {
+		return "", nil
+	}
+	var value any
+	if err := tx.QueryRow("SELECT MAX(updated_at) FROM " + quoteReplicaIdentifier(table)).Scan(&value); err != nil {
+		return "", err
+	}
+	if value == nil {
+		return "", nil
+	}
+	if bytes, ok := value.([]byte); ok {
+		return string(bytes), nil
+	}
+	return fmt.Sprint(value), nil
 }
 
 func reconcileReplicaTable(ctx context.Context, tx *sql.Tx, table string, remote replicaSnapshot) error {

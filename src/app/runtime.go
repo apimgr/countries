@@ -626,12 +626,13 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 	maxLifetime, _ := time.ParseDuration(cfg.Server.Database.Pool.MaxLifetime)
 	maxIdleTime, _ := time.ParseDuration(cfg.Server.Database.Pool.MaxIdleTime)
 	databaseOptions := database.DatabaseOptions{
-		Driver:  cfg.Server.Database.Driver,
-		URL:     cfg.Server.Database.URL,
-		Token:   cfg.Server.Database.Token,
-		DataDir: dataDir,
-		Pool:    database.PoolOptions{MaxOpen: cfg.Server.Database.Pool.MaxOpen, MaxIdle: cfg.Server.Database.Pool.MaxIdle, MaxLifetime: maxLifetime, MaxIdleTime: maxIdleTime},
-		Cache:   database.ReplicaOptions{Enabled: cfg.Server.Database.Cache.Enabled, Path: cfg.Server.Database.Cache.Path, SyncInterval: cfg.Server.Database.Cache.SyncInterval, OfflineMode: cfg.Server.Database.Cache.OfflineMode, MaxAge: cfg.Server.Database.Cache.MaxAge},
+		Driver:              cfg.Server.Database.Driver,
+		URL:                 cfg.Server.Database.URL,
+		Token:               cfg.Server.Database.Token,
+		DataDir:             dataDir,
+		Pool:                database.PoolOptions{MaxOpen: cfg.Server.Database.Pool.MaxOpen, MaxIdle: cfg.Server.Database.Pool.MaxIdle, MaxLifetime: maxLifetime, MaxIdleTime: maxIdleTime},
+		Cache:               database.ReplicaOptions{Enabled: cfg.Server.Database.Cache.Enabled, Path: cfg.Server.Database.Cache.Path, SyncInterval: cfg.Server.Database.Cache.SyncInterval, OfflineMode: cfg.Server.Database.Cache.OfflineMode, MaxAge: cfg.Server.Database.Cache.MaxAge},
+		AllowOfflineStartup: true,
 	}
 	databaseRetryInterval, retryErr := time.ParseDuration(cfg.Server.Maintenance.SelfHealing.RetryInterval)
 	if retryErr != nil || databaseRetryInterval <= 0 {
@@ -641,8 +642,29 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 	var databaseOpenErr error
 	var databaseAttempts int
 	databaseFailureLogged := false
+	var offlineDatabase *sql.DB
+	offlineDelegateReady := false
+	defer func() {
+		if offlineDatabase != nil {
+			_ = database.Close(offlineDatabase)
+		}
+	}()
 	for {
 		db, databaseOpenErr = database.OpenConfigured(databaseOptions)
+		if databaseOpenErr == nil && database.OpenedOffline(db) {
+			if offlineDatabase == nil {
+				offlineDatabase = db
+				offlineServer := server.New(countriesService, cfg, serverAddress, serverPort, Version, BuildDate, CommitID, offlineDatabase)
+				offlineServer.SetDataDir(dataDir)
+				offlineServer.SetAuditLogDir(logsDir)
+				offlineDelegateReady = true
+				startupServer.SetStartupReadOnlyDelegate(offlineServer)
+			} else {
+				_ = database.Close(db)
+			}
+			db = nil
+			databaseOpenErr = errors.New("remote database unavailable; serving synchronized cache in maintenance mode")
+		}
 		if databaseOpenErr == nil {
 			break
 		}
@@ -651,7 +673,11 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 		exhausted := maxAttempts > 0 && databaseAttempts >= maxAttempts
 		startupServer.SetSelfHealingState("database_connection", time.Now().UTC(), databaseAttempts, exhausted)
 		if !databaseFailureLogged {
-			log.Printf("Database initialization failed (%s); maintenance mode is active and self-healing will retry", safeDatabaseStartupFailure(databaseOpenErr))
+			if offlineDelegateReady {
+				log.Printf("Remote database unavailable; serving eligible cached reads in maintenance mode and retrying")
+			} else {
+				log.Printf("Database initialization failed (%s); maintenance mode is active and self-healing will retry", safeDatabaseStartupFailure(databaseOpenErr))
+			}
 			databaseFailureLogged = true
 		} else {
 			log.Printf("Database self-healing attempt %d failed", databaseAttempts)
@@ -891,6 +917,7 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 		ProjectName: projectName, BackupDir: backupDir,
 		Backup: backup.Options{
 			ConfigDir: configDir, DataDir: dataDir, DatabasePath: databasePath, DatabaseDriver: cfg.Server.Database.Driver,
+			CachePath: cfg.Server.Database.Cache.Path,
 			SecretsDB: db,
 			BackupDir: backupDir, AppVersion: Version, CreatedBy: "scheduler",
 			Password: cfg.Server.Backup.Password, Compliance: cfg.Server.Compliance.Enabled,
@@ -1580,6 +1607,10 @@ func runWithContext(serviceContext context.Context, startupConfig config.Config)
 		SetupToken: setupToken, ForceColor: forceColor, Lang: cfg.Lang,
 	})
 	startupServer.SetStartupDelegate(srv)
+	if offlineDatabase != nil {
+		_ = database.Close(offlineDatabase)
+		offlineDatabase = nil
+	}
 	log.Printf("Starting countries server on %s", primaryAddr)
 	ready, runErr := waitForListener(ctx, primaryAddr, serverDone)
 	started := ready
@@ -2931,6 +2962,7 @@ func manualBackupOptions(configDir, dataDir string, cfg *config.Config, includeS
 	}
 	return backup.Options{
 		ConfigDir: configDir, DataDir: dataDir, DatabasePath: databasePath, DatabaseDriver: cfg.Server.Database.Driver,
+		CachePath: cfg.Server.Database.Cache.Path,
 		SecretsDB: secretsDatabase,
 		BackupDir: backupDir, AppVersion: Version, CreatedBy: "operator",
 		Password: cfg.Server.Backup.Password, Compliance: cfg.Server.Compliance.Enabled,

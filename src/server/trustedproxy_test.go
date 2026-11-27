@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -8,6 +9,33 @@ import (
 	"github.com/apimgr/countries/src/config"
 	"github.com/apimgr/countries/src/countries"
 )
+
+func TestBuildTrustedProxiesIncludesListenAddressSubnets(t *testing.T) {
+	for _, test := range []struct {
+		listen  string
+		trusted string
+		outside string
+	}{
+		{listen: "192.0.2.10:8080", trusted: "192.0.2.250", outside: "192.0.3.1"},
+		{listen: "[2001:db8:1:2::10]:8080", trusted: "2001:db8:1:2::ffff", outside: "2001:db8:1:3::1"},
+	} {
+		t.Run(test.listen, func(t *testing.T) {
+			networks := buildTrustedProxies(test.listen, nil)
+			contains := func(value string) bool {
+				ip := net.ParseIP(value)
+				for _, network := range networks {
+					if network.Contains(ip) {
+						return true
+					}
+				}
+				return false
+			}
+			if !contains(test.trusted) || contains(test.outside) {
+				t.Fatalf("derived trusted network did not match %s and exclude %s", test.trusted, test.outside)
+			}
+		})
+	}
+}
 
 func TestTrustedProxyMiddlewareRejectsSpoofedPublicPeer(t *testing.T) {
 	svc, err := countries.NewService([]byte(fixtureJSON))

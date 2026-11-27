@@ -802,9 +802,18 @@ func (s *Server) SetStartupDelegate(delegate *Server) {
 	s.SetMaintenanceMode(false)
 }
 
+// SetStartupReadOnlyDelegate serves only database-independent public routes
+// while startup maintenance remains active.
+func (s *Server) SetStartupReadOnlyDelegate(delegate *Server) {
+	s.startupDelegate.Store(delegate)
+	s.startupMaintenance.Store(true)
+	s.SetMaintenanceMode(true)
+}
+
 func (s *Server) startupMaintenanceMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if delegate := s.startupDelegate.Load(); delegate != nil {
+		delegate := s.startupDelegate.Load()
+		if delegate != nil && (!s.startupMaintenance.Load() || startupReadOnlyRoute(r)) {
 			delegate.router.ServeHTTP(w, r)
 			return
 		}
