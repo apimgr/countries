@@ -34,7 +34,7 @@ The service stores no user accounts or profiles. Contact submissions are sent to
 
 ## Owner tokens and MCP
 
-There are no accounts or passwords. A primary owner token identifies an anonymous owner and manages linked tokens; linked tokens access the same owner's resources but cannot manage tokens. The operator bearer token grants global management access and is stored in `secrets.yml`. Owner and linked tokens are encrypted at rest and masked in token lists. Keep token values in the `Authorization: Bearer` header; the `/api/` routes ignore browser cookies. The MCP endpoint requires an owner or linked bearer token and never exposes token-management actions as tools. Give each MCP client its own linked token and revoke it when no longer needed.
+There are no accounts or passwords. A primary owner token has `global` scope and identifies an anonymous owner while managing linked tokens. Linked tokens have `read` or `read-write` scope (default `read-write`); read scope permits GET, HEAD and OPTIONS, while read-write also permits POST, PUT, PATCH and DELETE on owner resources. Linked tokens cannot manage tokens. The operator bearer token grants global management access and is stored in `secrets.yml`. Owner and linked tokens are encrypted at rest and masked in token lists. Keep token values in the `Authorization: Bearer` header; the `/api/` routes ignore browser cookies. A valid token without the required scope receives `403` and `WWW-Authenticate: Bearer error="insufficient_scope"`. The MCP endpoint requires an owner or linked bearer token and never exposes token-management actions as tools. Give each MCP client its own linked token and revoke it when no longer needed.
 
 ## Operator maintenance
 

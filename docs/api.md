@@ -87,12 +87,12 @@ The browser interface also includes `/`, `/search`, and `/coordinates`. Server p
 | POST | `/api/v1/server/graphql` | Read-only GraphQL query endpoint. The `read(path:)` field executes allowlisted GET JSON APIs with the caller's bearer token and request context; state-changing GET, text, internal, and documentation paths are excluded. |
 | POST | `/api/v1/server/mcp` | Streamable HTTP MCP endpoint; requires a valid owner or linked bearer token and protocol revision `2026-07-28`. |
 | GET | `/api/v1/server/help/mcp` | MCP connection details, endpoint URL, aliases, and available tools. |
-| GET | `/api/v1/server/preferences/tokens` | List masked owner and linked tokens; primary owner bearer token required. |
+| GET | `/api/v1/server/preferences/tokens` | List masked primary and linked tokens with their scope; primary global-scope owner bearer token required. |
 | POST | `/api/v1/server/preferences/tokens/primary` | Issue a primary owner token for a caller without a valid bearer token. |
 | POST | `/api/v1/server/preferences/tokens/primary/reveal` | Reveal the primary token; primary owner bearer token required. |
 | POST | `/api/v1/server/preferences/tokens/primary/rotate` | Rotate the primary token; primary owner bearer token required. |
 | DELETE | `/api/v1/server/preferences/tokens/primary` | Revoke the primary token and delete its owner, linked tokens, and resources; primary owner bearer token and the last four token characters are required. |
-| POST | `/api/v1/server/preferences/tokens` | Create a linked token; primary owner bearer token required. |
+| POST | `/api/v1/server/preferences/tokens` | Create a linked token with `read` or `read-write` scope; primary global-scope owner bearer token required. |
 | POST | `/api/v1/server/preferences/tokens/{id}/reveal` | Reveal a linked token; primary owner bearer token required. |
 | POST | `/api/v1/server/preferences/tokens/{id}/rotate` | Rotate a linked token; primary owner bearer token required. |
 | PATCH | `/api/v1/server/preferences/tokens/{id}` | Rename a linked token or change its expiry; primary owner bearer token required. |
@@ -136,19 +136,19 @@ The `/server/preferences` page saves theme (`dark`, `light`, or `auto`), languag
 
 ### Owner token and MCP authentication
 
-Owner tokens identify anonymous resource owners; there are no user accounts. A primary token manages linked tokens, while a linked token has access to its owner's resources and cannot manage tokens. Generate a primary token with `POST /api/v1/server/preferences/tokens/primary`, then create a linked token for each MCP client. Send the token only in the `Authorization: Bearer` header. `GET /api/v1/server/auth/check` validates operator and owner tokens without updating last-used timestamps. MCP does not accept cookies and never exposes token management as tools. Keep raw tokens out of URLs and logs. The token preferences page at `/server/preferences/tokens` provides the browser management flow.
+Owner tokens identify anonymous resource owners; there are no user accounts. Primary tokens have `global` scope and manage linked tokens. Linked tokens have `read` or `read-write` scope, defaulting to `read-write`; they can access their owner's resources but cannot manage tokens. A `read` token is limited to GET, HEAD and OPTIONS. Generate a primary token with `POST /api/v1/server/preferences/tokens/primary`, then create a linked token for each MCP client. Send the token only in the `Authorization: Bearer` header. A valid token without the required scope receives `403` and `WWW-Authenticate: Bearer error="insufficient_scope"`. `GET /api/v1/server/auth/check` validates operator and owner tokens without updating last-used timestamps. MCP does not accept cookies and never exposes token management as tools. Keep raw tokens out of URLs and logs. The token preferences page at `/server/preferences/tokens` provides the browser management flow.
 
 For MCP `POST` requests, send the required `MCP-Protocol-Version` and `Mcp-Method` headers matching the request body; tool calls also require `Mcp-Name`. Only protocol revision `2026-07-28` is supported. See `/server/help/mcp` for the deployment-specific endpoint URL and the live tool list.
 
-The token-list response contains masked values and metadata only: `id`, `kind`, `name`, `prefix`, `last4`, `masked`, `created_at`, `rotated_at`, `expires_at`, `last_used_at`, and `status`. Token `id` values are opaque UUID v7 identifiers, never sequential database integers. On upgraded databases that retain an integer primary key internally, the public UUID is stored as `public_id`; only that UUID appears in URLs, JSON, logs, and audit events. Reveal and rotate actions return the raw token only in that action's no-store response. They never return it in a later list response.
+The token-list response has `data.primary`, `data.linked`, and `data.max_linked`. Each token object includes `id`, `name`, `kind`, `scope`, `token_masked`, `created_at`, `last_used_at`, `expires_at`, and `status`. Token `id` values are opaque UUID v7 identifiers, never sequential database integers. On upgraded databases that retain an integer primary key internally, the public UUID is stored as `public_id`; only that UUID appears in URLs, JSON, logs, and audit events. Linked-token create, reveal, and rotate responses include the raw credential as `linked_token` alongside the masked token object; primary-token reveal and rotate use `owner_token`. These no-store responses never expose a raw token in a later list response.
 
-Create a linked token using the primary token and a JSON body. `expires` accepts `never`, `7d`, `30d`, `90d`, or `1y` (default `never`); alternatively, supply `expires_on` as a UTC date in `YYYY-MM-DD` format. Do not send both fields. A date may be today or later in UTC and remains valid through that day; it expires at 00:00 UTC the following day.
+Create a linked token using the primary token and a JSON body. `scope` accepts `read` or `read-write` (default `read-write`). `expires` accepts `never`, `7d`, `30d`, `90d`, or `1y` (default `never`); alternatively, supply `expires_on` as a UTC date in `YYYY-MM-DD` format. Do not send both expiry fields. A date may be today or later in UTC and remains valid through that day; it expires at 00:00 UTC the following day. An update can independently set `name`, `expires`, or `expires_on`; omitted fields remain unchanged.
 
 ```sh
 curl -q -LSsf -X POST \
   -H "Authorization: Bearer PRIMARY_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"mcp-client","expiry":"90d"}' \
+  -d '{"name":"mcp-client","scope":"read-write","expires":"90d"}' \
   http://YOUR_SERVER/api/v1/server/preferences/tokens
 ```
 

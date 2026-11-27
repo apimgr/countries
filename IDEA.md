@@ -137,12 +137,12 @@ Country-data and public information routes below require no authentication. Owne
 | GET | `/api/{api_version}/server/preferences/sync` | Public | Export guest preferences as a share URL and short code. |
 | POST | `/api/{api_version}/server/preferences/sync` | Public, CSRF | Save selected guest preferences for synchronization. |
 | GET | `/api/{api_version}/server/preferences/sync/import` | Public | Apply supported preferences from query values or a share code. |
-| GET | `/api/{api_version}/server/preferences/tokens` | Owner token | List owner-linked token metadata without exposing raw tokens. |
+| GET | `/api/{api_version}/server/preferences/tokens` | Primary owner token (`global` scope) | List primary and linked token metadata, including scope, without exposing raw tokens. |
 | POST | `/api/{api_version}/server/preferences/tokens/primary` | Public one-time issue flow | Create the owner and primary token once; later attempts conflict. |
 | POST | `/api/{api_version}/server/preferences/tokens/primary/reveal` | Owner token | Reveal the primary token through the protected one-time display flow. |
 | POST | `/api/{api_version}/server/preferences/tokens/primary/rotate` | Owner token | Rotate the primary token while preserving linked tokens. |
 | DELETE | `/api/{api_version}/server/preferences/tokens/primary` | Owner token | Revoke the primary token, its linked tokens, and all resources owned by the token. |
-| POST | `/api/{api_version}/server/preferences/tokens` | Owner token | Create a linked token with a name and optional expiry. |
+| POST | `/api/{api_version}/server/preferences/tokens` | Primary owner token (`global` scope) | Create a linked token with a name, `read` or `read-write` scope, and optional expiry. |
 | POST | `/api/{api_version}/server/preferences/tokens/{id}/reveal` | Owner token | Reveal a linked token through the protected one-time display flow. |
 | POST | `/api/{api_version}/server/preferences/tokens/{id}/rotate` | Owner token | Rotate one linked token. |
 | PATCH | `/api/{api_version}/server/preferences/tokens/{id}` | Owner token | Rename or change the expiry of one linked token. |
