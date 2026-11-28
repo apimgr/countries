@@ -129,7 +129,7 @@ make build
 make test
 ```
 
-`make build` creates debug server and CLI binaries for the local platform and all eight supported OS/architecture targets under `binaries/`. `make test` runs analysis, vulnerability checks, unit tests with coverage, and the Docker-based basic binary checks. Run `./tests/incus.sh` separately for systemd/OpenRC integration; run `./tests/e2e.sh` on demand for browser testing. See [development](docs/development.md) for details.
+`make build` creates debug server and CLI binaries for the local platform and all eight supported OS/architecture targets under `binaries/`. `make test` runs analysis, vulnerability checks, unit tests with coverage, and the Docker-based basic binary checks. Run `./tests/incus.sh` separately for systemd/OpenRC integration; run `./tests/e2e.sh` on demand for browser checks of registered pages, responsive layouts, accessibility, and component states. See [development](docs/development.md) for details.
 
 ## Disclaimer
 

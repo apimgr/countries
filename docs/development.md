@@ -15,7 +15,7 @@ make test
 
 The debug server and CLI are built with symbols for debugging; `make release` creates stripped production binaries, a source archive, and checksums under `releases/`. `make docker` builds and verifies the host-platform container image locally without publishing it.
 
-The GitHub license workflow runs `scripts/verify-licenses.sh` in `casjaysdev/go:latest`. It scans shipped packages under `src/`, applies only reviewed module overrides from `.github/license-overrides.txt`, and writes a CSV report and license notices to a project-scoped temporary directory. It does not change tracked files. When dependencies change, review the temporary report against `licenses.csv`, `third_party_licenses/`, and [`LICENSE.md`](https://github.com/apimgr/countries/blob/main/LICENSE.md), then update those tracked inventories separately as needed. An override requires reading the dependency's license terms and recording the license identifier and review note.
+Each CI provider runs `scripts/verify-licenses.sh` in `casjaysdev/go:latest`. It scans shipped packages under `src/`, applies only reviewed module overrides from `.github/license-overrides.txt`, and writes a CSV report and license notices to a project-scoped temporary directory. It does not change tracked files. When dependencies change, review the temporary report against `licenses.csv`, `third_party_licenses/`, and [`LICENSE.md`](https://github.com/apimgr/countries/blob/main/LICENSE.md), then update those tracked inventories separately as needed. An override requires reading the dependency's license terms and recording the license identifier and review note.
 
 ## CI/CD providers
 
@@ -30,7 +30,7 @@ mkdir -p "${TMPDIR:-/tmp}/apimgr"
 DOCS_TMP=$(mktemp -d "${TMPDIR:-/tmp}/apimgr/countries-XXXXXX")
 python3 -m venv "$DOCS_TMP/venv"
 "$DOCS_TMP/venv/bin/python" -m pip install -r docs/requirements.txt
-"$DOCS_TMP/venv/bin/python" -m mkdocs build --config-file mkdocs.yml --site-dir "$DOCS_TMP/site"
+"$DOCS_TMP/venv/bin/python" -m mkdocs build --strict --config-file mkdocs.yml --site-dir "$DOCS_TMP/site"
 ```
 
 Remove the temporary directory after previewing the generated site.
@@ -43,7 +43,7 @@ The Docker suite requires Docker, Make, GNU `timeout`, and locally available `al
 
 ## Browser E2E testing
 
-Run `./tests/e2e.sh` on demand for browser-level coverage of the server interface. This standalone suite is not part of `make test` or the commit gate. It requires Docker, network access for Go module downloads, and the locally available `casjaysdev/go:latest` and `chromedp/headless-shell:latest` images; the script does not pull missing images. It downloads modules before building and running the tagged Go suite in containers on an internal Docker network. Temporary artifacts are stored under the project-scoped OS temp directory and removed after success; artifacts are preserved and their location printed when the suite fails.
+Run `./tests/e2e.sh` on demand for browser-level coverage of the registered server pages, component gallery, and error pages. The layout/accessibility matrix checks 14 mobile, tablet, and desktop viewports in dark and light themes and LTR and RTL directions, including overflow, overlap, contrast, focus, hit targets, console output, and layout shift. This standalone suite is not part of `make test` or the commit gate. It requires Docker, network access for Go module downloads, and the locally available `casjaysdev/go:latest` and `chromedp/headless-shell:latest` images; the script does not pull missing images. It downloads modules before building and running the tagged Go suite in containers on an internal Docker network. Temporary artifacts are stored under the project-scoped OS temp directory and removed after success; artifacts are preserved and their location printed when the suite fails.
 
 ## Contributions
 
